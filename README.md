@@ -4,10 +4,10 @@ Dark React Router 8 platform for importing Cardano native-script multisig wallet
 
 ## Current MVP
 
-- Import an existing Cardano wallet by pasting payment script JSON and optional stake script JSON.
-- Parse native scripts, preview payment/stake policy summaries, and extract unique signer key hashes.
+- Import an existing Cardano wallet by pasting payment/stake native-script CBOR hex or JSON.
+- Parse native-script CBOR/JSON, preview payment/stake policy summaries, and extract unique signer key hashes.
 - Create a new M-of-N payment native script from signer key hashes.
-- Connect browser wallets through CIP-30.
+- Connect browser wallets through a compact header control with timeout/error handling.
 - Derive the connected wallet payment key hash when possible.
 - Create transaction signing rooms with recipient/amount/note and unsigned transaction CBOR.
 - Generate private invite links for signers.

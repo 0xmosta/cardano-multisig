@@ -1,17 +1,23 @@
 # Cardano Multisig
 
-Minimal dark React Router 8 platform for planning and importing Cardano native-script multisig wallets.
+Dark React Router 8 platform for importing Cardano native-script multisig wallets and coordinating transaction signatures.
 
 ## Current MVP
 
 - Import an existing Cardano wallet by pasting payment script JSON and optional stake script JSON.
 - Parse native scripts, preview payment/stake policy summaries, and extract unique signer key hashes.
 - Create a new M-of-N payment native script from signer key hashes.
-- Save wallet workspaces locally in the browser.
-- Export either script JSON or the whole wallet workspace JSON.
+- Connect browser wallets through CIP-30.
+- Derive the connected wallet payment key hash when possible.
+- Create transaction signing rooms with recipient/amount/note and unsigned transaction CBOR.
+- Generate private invite links for signers.
+- Let signers sign unsigned tx CBOR with `wallet.signTx(..., true)` and export/import signature packages.
+- Track signer status: signed vs pending and collected vs required signatures.
+- Store Ogmios/Kupo/Cardano submit endpoint settings locally for the next automated tx-building step.
+- Save wallet workspaces locally in the browser and export wallet JSON.
 - Full dark UI built with local shadcn-style components.
 
-> Safety: this MVP intentionally keeps everything client-side. Verify imported/exported scripts with independent tooling and complete a dust transaction before funding or migrating real assets.
+> Safety: this MVP intentionally keeps coordination client-side. Invite links and signature packages should be shared privately. Verify scripts, addresses, and transaction CBOR independently and complete a dust transaction before moving real value.
 
 ## Development
 

@@ -1,16 +1,17 @@
 # Cardano Multisig
 
-Minimal React Router 8 platform for planning Cardano native-script multisig wallets.
+Minimal dark React Router 8 platform for planning and importing Cardano native-script multisig wallets.
 
 ## Current MVP
 
-- Create an M-of-N multisig workspace.
-- Collect signer labels and 56-character payment key hashes.
-- Generate a Cardano native-script JSON preview.
-- Save workspaces locally in the browser.
-- Export either the native script or the whole wallet workspace JSON.
+- Import an existing Cardano wallet by pasting payment script JSON and optional stake script JSON.
+- Parse native scripts, preview payment/stake policy summaries, and extract unique signer key hashes.
+- Create a new M-of-N payment native script from signer key hashes.
+- Save wallet workspaces locally in the browser.
+- Export either script JSON or the whole wallet workspace JSON.
+- Full dark UI built with local shadcn-style components.
 
-> Safety: this MVP intentionally keeps everything client-side. Verify the exported script with independent tooling and complete a dust transaction before funding a multisig address with real assets.
+> Safety: this MVP intentionally keeps everything client-side. Verify imported/exported scripts with independent tooling and complete a dust transaction before funding or migrating real assets.
 
 ## Development
 
@@ -28,4 +29,4 @@ npm run build
 
 ## Deployment
 
-The repository includes the default React Router Dockerfile. Dokploy can build it with Docker and run `npm run start`.
+The repository includes a Dockerfile for Dokploy/Traefik deployment. The current public route is `https://cardano.0xm.sh/`.

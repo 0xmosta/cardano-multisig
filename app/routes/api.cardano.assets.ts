@@ -49,6 +49,18 @@ async function resolveHandle(name: string): Promise<HandleInfo | null> {
   return { name: body.name || handle, address, holder: body.holder, holderType: body.holder_type, image: body.image };
 }
 
+
+async function resolveHandleByStakeAddress(stakeAddress: string): Promise<HandleInfo | null> {
+  if (!/^stake(_test)?1[0-9a-z]+$/i.test(stakeAddress)) return null;
+  try {
+    const response = await fetch(`https://api.handle.me/holders/${encodeURIComponent(stakeAddress)}`, { headers: { accept: "application/json" } });
+    if (!response.ok) return null;
+    const body = await response.json() as { default_handle?: string; handles?: string[] };
+    const name = body.default_handle || body.handles?.[0];
+    return name ? await resolveHandle(name) : null;
+  } catch { return null; }
+}
+
 async function koiosAddressAssets(address: string): Promise<{ assets: AssetSummary[]; outputs: number } | null> {
   if (!validAddress(address)) return null;
   try {
@@ -110,10 +122,15 @@ export async function loader({ request }: { request: Request }) {
   const patterns = parsePatterns(url);
   const handleName = normalizeHandle(url.searchParams.get("handle") || "");
   const requestedAddress = (url.searchParams.get("address") || "").trim();
+  const stakeAddress = (url.searchParams.get("stakeAddress") || "").trim();
   let handle: HandleInfo | null = null;
   let address = requestedAddress;
   if (handleName) {
     handle = await resolveHandle(handleName);
+    if (handle) address = handle.address;
+  }
+  if (!handle && stakeAddress) {
+    handle = await resolveHandleByStakeAddress(stakeAddress);
     if (handle) address = handle.address;
   }
   if (address) {

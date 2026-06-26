@@ -10,7 +10,7 @@ import { Textarea } from "../components/ui/textarea";
 
 type NativeScript = { type: string; keyHash?: string; scripts?: NativeScript[]; required?: number; slot?: number; [key: string]: unknown };
 type Signer = { id: string; label: string; keyHash: string };
-type Wallet = { id: string; name: string; network: string; threshold: number; signers: Signer[]; paymentScript?: NativeScript; stakeScript?: NativeScript | null };
+type Wallet = { id: string; name: string; handle?: string; network: string; threshold: number; signers: Signer[]; paymentScript?: NativeScript; stakeScript?: NativeScript | null };
 type CardanoWalletApi = { getUsedAddresses(): Promise<string[]>; getUnusedAddresses(): Promise<string[]>; getChangeAddress(): Promise<string>; getNetworkId(): Promise<number>; signTx(txCbor: string, partialSign?: boolean): Promise<string> };
 type WalletProvider = { id: string; name: string; icon?: string; enable(): Promise<CardanoWalletApi> };
 type ConnectedWallet = { id: string; name: string; api: CardanoWalletApi; networkId: number };
@@ -50,15 +50,16 @@ function toRawQuantity(display: string, decimals = 0) {
   return (whole * (10n ** BigInt(decimals)) + BigInt(frac || "0")).toString();
 }
 function defaultDisplayAmount(asset: { unit: string; decimals?: number }) { return asset.unit === "lovelace" ? "2" : "1"; }
-function handleCandidate(wallet: { name?: string }) {
-  const candidate = (wallet.name || "").trim().replace(/^\$/, "").toLowerCase();
+function handleCandidate(wallet: { name?: string; handle?: string }) {
+  const candidate = (wallet.handle || wallet.name || "").trim().replace(/^\$/, "").toLowerCase();
   return /^[a-z0-9][a-z0-9_.-]{1,31}$/.test(candidate) ? candidate : "";
 }
-function assetQuery(patterns: string[], wallet: { name?: string }) {
+function assetQuery(patterns: string[], wallet: { name?: string; handle?: string }, stakeAddress?: string | null) {
   const params = new URLSearchParams();
   if (patterns.length) params.set("patterns", patterns.join(","));
   const handle = handleCandidate(wallet);
   if (handle) params.set("handle", handle);
+  if (stakeAddress) params.set("stakeAddress", stakeAddress);
   return params.toString();
 }
 function handleLabel(handle?: HandleInfo | null) { return handle ? `$${handle.name}` : ""; }
@@ -72,8 +73,24 @@ function scriptToCsl(CSL: any, script: NativeScript): any {
   if (script.type === "atLeast") return CSL.NativeScript.new_script_n_of_k(CSL.ScriptNOfK.new(Number(script.required || 1), children));
   throw new Error(`Unsupported native script type: ${script.type}`);
 }
-async function paymentScriptPatterns(wallet: Wallet) { if (!wallet.paymentScript) return []; try { const CSL = await import("@emurgo/cardano-serialization-lib-browser"); const paymentHash = scriptToCsl(CSL, wallet.paymentScript).hash().to_hex(); const isMainnet = wallet.network === "mainnet"; const patterns = [`${isMainnet ? "71" : "70"}${paymentHash}`]; if (wallet.stakeScript) { const stakeHash = scriptToCsl(CSL, wallet.stakeScript).hash().to_hex(); patterns.unshift(`${isMainnet ? "31" : "30"}${paymentHash}${stakeHash}`); } return Array.from(new Set(patterns)); } catch { return []; } }
-async function fetchMultisigAssets(wallet: Wallet): Promise<AssetFetch> { const patterns = await paymentScriptPatterns(wallet); const query = assetQuery(patterns, wallet); if (!query) throw new Error("Could not derive the wallet script hash or ADA Handle yet. Re-import the wallet if this persists."); const res = await fetch(`/api/cardano/assets?${query}`); const body = await res.json(); if (!res.ok) throw new Error(body.error || "Could not fetch multisig assets."); return { assets: (body.assets || []).map((asset: { unit: string; label: string; quantity: string; outputCount?: number; decimals?: number }) => ({ ...asset, source: "treasury" as const })), handle: body.handle, source: body.source, address: body.address, outputs: body.outputs }; }
+async function walletResolution(wallet: Wallet): Promise<{ patterns: string[]; stakeAddress: string | null }> {
+  if (!wallet.paymentScript) return { patterns: [], stakeAddress: null };
+  try {
+    const CSL = await import("@emurgo/cardano-serialization-lib-browser");
+    const paymentHash = scriptToCsl(CSL, wallet.paymentScript).hash().to_hex();
+    const isMainnet = wallet.network === "mainnet";
+    const networkId = isMainnet ? 1 : 0;
+    const patterns = [`${isMainnet ? "71" : "70"}${paymentHash}`];
+    let stakeAddress: string | null = null;
+    if (wallet.stakeScript) {
+      const stakeHash = scriptToCsl(CSL, wallet.stakeScript).hash().to_hex();
+      patterns.unshift(`${isMainnet ? "31" : "30"}${paymentHash}${stakeHash}`);
+      stakeAddress = CSL.RewardAddress.new(networkId, CSL.Credential.from_scripthash(CSL.ScriptHash.from_hex(stakeHash))).to_address().to_bech32();
+    }
+    return { patterns: Array.from(new Set(patterns)), stakeAddress };
+  } catch { return { patterns: [], stakeAddress: null }; }
+}
+async function fetchMultisigAssets(wallet: Wallet): Promise<AssetFetch> { const { patterns, stakeAddress } = await walletResolution(wallet); const query = assetQuery(patterns, wallet, stakeAddress); if (!query) throw new Error("Could not derive the wallet script hash or ADA Handle yet. Re-import the wallet if this persists."); const res = await fetch(`/api/cardano/assets?${query}`); const body = await res.json(); if (!res.ok) throw new Error(body.error || "Could not fetch multisig assets."); return { assets: (body.assets || []).map((asset: { unit: string; label: string; quantity: string; outputCount?: number; decimals?: number }) => ({ ...asset, source: "treasury" as const })), handle: body.handle, source: body.source, address: body.address, outputs: body.outputs }; }
 
 export default function NewTransaction() {
   const { walletId } = useParams();

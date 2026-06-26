@@ -132,16 +132,18 @@ export default function NewTransaction() {
     const body = await response.json();
     if (!response.ok || !body.ok) throw new Error(body.error || "Could not build transaction.");
     setUnsignedTxCbor(body.unsignedTxCbor);
-    setBuildInfo(`Built from ${body.inputCount} UTxO${body.inputCount === 1 ? "" : "s"}; fee ${formatRawQuantity(String(body.fee || "0"), "lovelace", 6)}.`);
-    return String(body.unsignedTxCbor || "");
+    const minAdaNote = body.adjustedMinAda ? ` Output ADA was raised to the minimum ${formatRawQuantity(String(body.minAda || "0"), "lovelace", 6)} required for native assets.` : "";
+    setBuildInfo(`Built from ${body.inputCount} UTxO${body.inputCount === 1 ? "" : "s"}; fee ${formatRawQuantity(String(body.fee || "0"), "lovelace", 6)}.${minAdaNote}`);
+    return { cbor: String(body.unsignedTxCbor || ""), assets: Array.isArray(body.assets) ? body.assets : txAssets };
   }
   async function createAndMaybeSign() {
     if (!wallet) return;
     const now = new Date().toISOString();
     const txAssets = assets.map((asset) => ({ ...asset, quantity: toRawQuantity(asset.quantity, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0)) }));
     let builtCbor = unsignedTxCbor.trim();
+    let builtAssets = txAssets;
     let signatures: TxDraft["signatures"] = [];
-    try { builtCbor = await buildUnsignedTx(txAssets); } catch (error) { setStatus(error instanceof Error ? error.message : "Could not build transaction."); return; }
+    try { const built = await buildUnsignedTx(txAssets); builtCbor = built.cbor; builtAssets = built.assets; } catch (error) { setStatus(error instanceof Error ? error.message : "Could not build transaction."); return; }
     if (connected) {
       try {
         setStatus(`Requesting ${connected.name} signature…`);
@@ -150,7 +152,7 @@ export default function NewTransaction() {
         setStatus("Transaction built and signed by connected wallet.");
       } catch (error) { setStatus(error instanceof Error ? error.message : "Wallet refused to sign."); return; }
     } else { setStatus("Transaction built as pending. Connect a signer wallet from the wallet page to sign it."); }
-    const tx: TxDraft = { id: createId("tx"), walletId: wallet.id, title: title.trim() || "Transaction", walletName: wallet.name, network: wallet.network, recipient: recipient.trim(), lovelace, note: note.trim(), unsignedTxCbor: builtCbor, requiredSignatures: Math.max(wallet.threshold || 1, 1), signerKeyHashes: wallet.signers.map((signer) => signer.keyHash), signatures, assets: txAssets, status: "pending", createdAt: now, updatedAt: now };
+    const tx: TxDraft = { id: createId("tx"), walletId: wallet.id, title: title.trim() || "Transaction", walletName: wallet.name, network: wallet.network, recipient: recipient.trim(), lovelace, note: note.trim(), unsignedTxCbor: builtCbor, requiredSignatures: Math.max(wallet.threshold || 1, 1), signerKeyHashes: wallet.signers.map((signer) => signer.keyHash), signatures, assets: builtAssets, status: "pending", createdAt: now, updatedAt: now };
     const next = [tx, ...readArray<TxDraft>(TX_KEY)]; writeArray(TX_KEY, next); navigate(`/wallets/${encodeURIComponent(wallet.id)}`);
   }
   if (!wallet) return <main className="mx-auto max-w-5xl px-4 py-8 text-slate-100"><Link className="text-sm text-sky-300" to="/">← Back</Link><Card className="glass-panel mt-6"><CardContent className="p-8 text-slate-300">Wallet not found. Import or create it first.</CardContent></Card></main>;

@@ -10,6 +10,7 @@ type KoiosUtxo = { tx_hash: string; tx_index: number; address: string; value: st
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }
+function errorMessage(error: unknown) { if (error instanceof Error) return error.message; if (typeof error === "string") return error; try { return JSON.stringify(error); } catch { return "Could not build transaction."; } }
 function normalizeHandle(input = "") { return input.trim().replace(/^\$/, "").toLowerCase(); }
 function handleCandidate(wallet: { name?: string; handle?: string }) {
   const candidate = normalizeHandle(wallet.handle || wallet.name || "");
@@ -102,6 +103,25 @@ function valueFromAssets(assets: AssetLine[]) {
   }
   return ma.len() ? CSL.Value.new_with_assets(CSL.BigNum.from_str(coin), ma) : CSL.Value.new(CSL.BigNum.from_str(coin));
 }
+function adjustOutputForMinAda(address: any, value: any, params: Record<string, unknown>) {
+  const output = CSL.TransactionOutput.new(address, value);
+  if (!value.multiasset()) return { output, value, adjustedCoin: value.coin().to_str(), minCoin: value.coin().to_str(), adjusted: false };
+  const coinsPerUtxo = String(params.coins_per_utxo_size || params.coins_per_utxo_byte || "4310");
+  const minCoin = CSL.min_ada_for_output(output, CSL.DataCost.new_coins_per_byte(CSL.BigNum.from_str(coinsPerUtxo)));
+  if (value.coin().compare(minCoin) >= 0) return { output, value, adjustedCoin: value.coin().to_str(), minCoin: minCoin.to_str(), adjusted: false };
+  value.set_coin(minCoin);
+  return { output: CSL.TransactionOutput.new(address, value), value, adjustedCoin: minCoin.to_str(), minCoin: minCoin.to_str(), adjusted: true };
+}
+function withAdjustedAda(assets: AssetLine[], adjustedCoin: string) {
+  let found = false;
+  const next = assets.map((asset) => {
+    if (asset.unit !== "lovelace") return asset;
+    found = true;
+    return { ...asset, quantity: adjustedCoin, decimals: 6 };
+  });
+  if (!found) next.unshift({ unit: "lovelace", quantity: adjustedCoin, decimals: 6 });
+  return next;
+}
 function valueFromUtxo(utxo: KoiosUtxo) {
   const ma = CSL.MultiAsset.new();
   for (const asset of utxo.asset_list || []) {
@@ -143,12 +163,14 @@ export async function action({ request }: { request: Request }) {
       const txInput = CSL.TransactionInput.new(CSL.TransactionHash.from_hex(utxo.tx_hash), Number(utxo.tx_index));
       builder.add_native_script_input(paymentScript, txInput, valueFromUtxo(utxo));
     }
-    const output = CSL.TransactionOutput.new(CSL.Address.from_bech32(input.recipient), valueFromAssets(input.assets));
-    builder.add_output(output);
+    const recipient = CSL.Address.from_bech32(input.recipient);
+    const adjustedOutput = adjustOutputForMinAda(recipient, valueFromAssets(input.assets), params);
+    builder.add_output(adjustedOutput.output);
     builder.add_change_if_needed(CSL.Address.from_bech32(source.address));
-    const tx = builder.build_tx();
-    return Response.json({ ok: true, unsignedTxCbor: tx.to_hex(), fee: tx.body().fee().to_str(), sourceAddress: source.address, handle: source.handle, inputCount: utxos.length });
+    const tx = builder.build_tx_unsafe();
+    return Response.json({ ok: true, unsignedTxCbor: tx.to_hex(), fee: tx.body().fee().to_str(), sourceAddress: source.address, handle: source.handle, inputCount: utxos.length, adjustedMinAda: adjustedOutput.adjusted, minAda: adjustedOutput.minCoin, assets: withAdjustedAda(input.assets, adjustedOutput.adjustedCoin) });
   } catch (error) {
-    return Response.json({ ok: false, error: error instanceof Error ? error.message : "Could not build transaction." }, { status: 400 });
+    console.error("build-tx failed", errorMessage(error));
+    return Response.json({ ok: false, error: errorMessage(error) }, { status: 400 });
   }
 }

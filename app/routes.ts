@@ -4,6 +4,7 @@ export default [
   index("routes/home.tsx"),
   route("api/cardano/provider", "routes/api.cardano.provider.ts"),
   route("api/cardano/assets", "routes/api.cardano.assets.ts"),
+  route("api/cardano/build-tx", "routes/api.cardano.build-tx.ts"),
   route("wallets/:walletId", "routes/wallet-detail.tsx"),
   route("wallets/:walletId/transactions/new", "routes/transaction-new.tsx"),
 ] satisfies RouteConfig;

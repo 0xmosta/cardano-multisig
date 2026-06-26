@@ -14,7 +14,7 @@ Dark React Router 8 platform for importing Cardano native-script multisig wallet
 - Let signers sign unsigned tx CBOR with `wallet.signTx(..., true)` and export/import signature packages.
 - Saved wallets appear at the top of the home screen and open into wallet detail pages.
 - Wallet detail pages recover pending transaction rooms from browser storage and show pending/succeeded/failed tables.
-- Transaction creation pages let operators select assets, set quantities, create pending rooms, and sign provided unsigned transaction CBOR.
+- Transaction creation pages fetch wallet assets from the server-managed Kupo indexer so operators select assets from a balance list, set quantities, create pending rooms, and sign provided unsigned transaction CBOR.
 - Track signer status: signed vs pending, collected vs required signatures, and per-room progress.
 - Use server-managed Ogmios/Kupo/Cardano submit configuration automatically; no browser-side provider setup is shown.
 - Save wallet workspaces locally in the browser and export wallet JSON.

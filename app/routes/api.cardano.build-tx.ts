@@ -76,7 +76,7 @@ async function addressUtxos(address: string): Promise<KoiosUtxo[]> {
   const response = await fetch("https://api.koios.rest/api/v1/address_utxos", {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify({ _addresses: [address] }),
+    body: JSON.stringify({ _addresses: [address], _extended: true }),
   });
   if (!response.ok) throw new Error(`Koios UTxO lookup failed (${response.status}).`);
   const body = await response.json();

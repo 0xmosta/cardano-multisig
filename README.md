@@ -12,7 +12,8 @@ Dark React Router 8 platform for importing Cardano native-script multisig wallet
 - Create transaction signing rooms with recipient/amount/note and unsigned transaction CBOR.
 - Generate private invite links for signers.
 - Let signers sign unsigned tx CBOR with `wallet.signTx(..., true)` and export/import signature packages.
-- Track signer status: signed vs pending and collected vs required signatures.
+- Recover pending transaction rooms from browser storage after reload.
+- Track signer status: signed vs pending, collected vs required signatures, and per-room progress.
 - Use server-managed Ogmios/Kupo/Cardano submit configuration automatically; no browser-side provider setup is shown.
 - Save wallet workspaces locally in the browser and export wallet JSON.
 - Full dark UI built with local shadcn-style components.

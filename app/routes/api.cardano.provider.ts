@@ -15,16 +15,19 @@ function configuredNetwork() {
 }
 
 export async function loader() {
+  const network = configuredNetwork();
+  const blockfrost = hasAnyEnv(["BLOCKFROST_PROJECT_ID", "CARDANO_BLOCKFROST_PROJECT_ID"]);
+  const submitEnv = hasAnyEnv(["CARDANO_SUBMIT_URL", "CARDANO_NODE_SUBMIT_URL", "CARDANO_SUBMIT_API_URL"]);
   const services: ServiceFlags = {
-    blockfrost: hasAnyEnv(["BLOCKFROST_PROJECT_ID", "CARDANO_BLOCKFROST_PROJECT_ID"]),
+    blockfrost,
     kupo: hasAnyEnv(["CARDANO_KUPO_URL", "KUPO_URL"]),
     ogmios: hasAnyEnv(["CARDANO_OGMIOS_URL", "OGMIOS_URL"]),
-    submit: hasAnyEnv(["CARDANO_SUBMIT_URL", "CARDANO_NODE_SUBMIT_URL", "CARDANO_SUBMIT_API_URL"]),
+    submit: network !== "mainnet" && (blockfrost || submitEnv),
   };
 
   return Response.json({
     mode: "server",
-    network: configuredNetwork(),
+    network,
     ready: services.blockfrost || services.kupo || services.ogmios || services.submit,
     services,
   });

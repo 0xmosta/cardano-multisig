@@ -69,6 +69,12 @@ type AssetOption = { unit: string; label: string; quantity: string; outputCount?
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 type AssetFetch = { assets: AssetOption[]; handle?: HandleInfo | null; source?: string; address?: string; outputs?: number };
 type TxPhase = "pending" | "ready" | "submitted";
+type ServerProviderStatus = {
+  mode: "server";
+  network: string;
+  ready: boolean;
+  services: { blockfrost: boolean; kupo: boolean; ogmios: boolean; submit: boolean };
+};
 
 export function meta() {
   return [{ title: "Wallet · Cardano Multisig" }];
@@ -247,6 +253,90 @@ function signerLabel(wallet: Wallet, keyHash: string) {
   return signer?.label || `${keyHash.slice(0, 10)}…`;
 }
 
+function mergeVkeyWitnesses(CSL: any, current: any, incoming: any) {
+  const merged = CSL.Vkeywitnesses.new();
+  const seen = new Set<string>();
+  const pushAll = (collection: any) => {
+    if (!collection) return;
+    for (let index = 0; index < collection.len(); index += 1) {
+      const witness = collection.get(index);
+      const key = witness.vkey().public_key().to_hex();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.add(witness);
+    }
+  };
+  pushAll(current);
+  pushAll(incoming);
+  return merged.len() ? merged : undefined;
+}
+
+function mergeBootstrapWitnesses(CSL: any, current: any, incoming: any) {
+  const merged = CSL.BootstrapWitnesses.new();
+  const seen = new Set<string>();
+  const pushAll = (collection: any) => {
+    if (!collection) return;
+    for (let index = 0; index < collection.len(); index += 1) {
+      const witness = collection.get(index);
+      const key = witness.vkey().public_key().to_hex();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.add(witness);
+    }
+  };
+  pushAll(current);
+  pushAll(incoming);
+  return merged.len() ? merged : undefined;
+}
+
+function mergeNativeScripts(CSL: any, current: any, incoming: any) {
+  const merged = CSL.NativeScripts.new();
+  const seen = new Set<string>();
+  const pushScript = (script: any) => {
+    const key = script.hash().to_hex();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.add(script);
+  };
+  const pushAll = (collection: any) => {
+    if (!collection) return;
+    for (let index = 0; index < collection.len(); index += 1) {
+      pushScript(collection.get(index));
+    }
+  };
+  pushAll(current);
+  pushAll(incoming);
+  return merged.len() ? merged : undefined;
+}
+
+async function buildSignedTxCbor(wallet: Wallet, tx: TxDraft) {
+  const CSL = await import("@emurgo/cardano-serialization-lib-browser");
+  const unsigned = CSL.Transaction.from_hex(tx.unsignedTxCbor.trim());
+  const witnessSet = CSL.TransactionWitnessSet.new();
+  const unsignedWitnessSet = unsigned.witness_set();
+
+  const paymentScript = scriptToCsl(CSL, wallet.paymentScript);
+  const walletScripts = CSL.NativeScripts.new();
+  walletScripts.add(paymentScript);
+
+  let vkeys = mergeVkeyWitnesses(CSL, undefined, unsignedWitnessSet.vkeys());
+  let bootstraps = mergeBootstrapWitnesses(CSL, undefined, unsignedWitnessSet.bootstraps());
+  let nativeScripts = mergeNativeScripts(CSL, walletScripts, unsignedWitnessSet.native_scripts());
+
+  for (const signature of tx.signatures || []) {
+    const incoming = CSL.TransactionWitnessSet.from_hex(signature.witnessCbor);
+    vkeys = mergeVkeyWitnesses(CSL, vkeys, incoming.vkeys());
+    bootstraps = mergeBootstrapWitnesses(CSL, bootstraps, incoming.bootstraps());
+    nativeScripts = mergeNativeScripts(CSL, nativeScripts, incoming.native_scripts());
+  }
+
+  if (vkeys?.len()) witnessSet.set_vkeys(vkeys);
+  if (bootstraps?.len()) witnessSet.set_bootstraps(bootstraps);
+  if (nativeScripts?.len()) witnessSet.set_native_scripts(nativeScripts);
+
+  return CSL.Transaction.new(unsigned.body(), witnessSet, unsigned.auxiliary_data()).to_hex();
+}
+
 function inviteLink(tx: TxDraft) {
   return `${window.location.origin}/#invite=${encodeInvite(tx)}`;
 }
@@ -267,11 +357,16 @@ export default function WalletDetail() {
   const [nameInput, setNameInput] = useState("");
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
   const [signaturePackageInput, setSignaturePackageInput] = useState("");
+  const [providerStatus, setProviderStatus] = useState<ServerProviderStatus | null>(null);
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
     setTxs(readArray<TxDraft>(TX_KEY));
     setProviders(installedWallets());
+    fetch("/api/cardano/provider")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => setProviderStatus(payload))
+      .catch(() => setProviderStatus(null));
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);
@@ -399,6 +494,69 @@ export default function WalletDetail() {
   async function copySignatures(tx: TxDraft) {
     await navigator.clipboard.writeText(createSignaturePackage(tx.id, tx.signatures || []));
     setSignStatus("Witness package copied.");
+  }
+
+  async function submitTransaction(tx: TxDraft) {
+    if (!wallet) {
+      setSignStatus("Wallet not loaded in this browser, so the signed transaction cannot be assembled yet.");
+      return;
+    }
+    if (tx.txHash) {
+      setSignStatus(`Submission already recorded for this transaction: ${tx.txHash}`);
+      return;
+    }
+    if (txPhase(tx) !== "ready") {
+      setSignStatus("Collect all required witnesses before submitting this transaction.");
+      return;
+    }
+    if (!providerStatus?.services.submit) {
+      setSignStatus("Server-side submit is not enabled for this deployment yet.");
+      return;
+    }
+
+    try {
+      setSignStatus(`Submitting signed transaction to ${providerStatus.network}…`);
+      const signedTxCbor = await buildSignedTxCbor(wallet, tx);
+      const response = await fetch("/api/cardano/submit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ signedTxCbor, network: tx.network }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body.ok) {
+        throw new Error(body.error || "Could not submit transaction.");
+      }
+
+      const next = txs.map((item) =>
+        item.id === tx.id
+          ? {
+              ...item,
+              txHash: String(body.txHash || ""),
+              status: "succeeded" as const,
+              failureReason: undefined,
+              updatedAt: nowIso(),
+            }
+          : item,
+      );
+      setTxs(next);
+      writeArray(TX_KEY, next);
+      setSignStatus(`Submitted on ${body.network}. Tx hash: ${body.txHash}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not submit transaction.";
+      const next = txs.map((item) =>
+        item.id === tx.id
+          ? {
+              ...item,
+              status: "failed" as const,
+              failureReason: message,
+              updatedAt: nowIso(),
+            }
+          : item,
+      );
+      setTxs(next);
+      writeArray(TX_KEY, next);
+      setSignStatus(message);
+    }
   }
 
   function importReturnedSignatures() {
@@ -599,6 +757,7 @@ export default function WalletDetail() {
                             <span>{signed}/{tx.requiredSignatures} matched signatures</span>
                             <span>{pendingSignatureCount(tx)} still needed</span>
                             {unmatched ? <span className="text-amber-300">{unmatched} unmatched signature{unmatched === 1 ? "" : "s"}</span> : null}
+                            {tx.txHash ? <span className="text-emerald-300">tx {tx.txHash.slice(0, 16)}…</span> : null}
                           </div>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-slate-300">
@@ -637,7 +796,9 @@ export default function WalletDetail() {
                                   ? "Submission already recorded for this transaction."
                                   : missing.length
                                     ? "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
-                                    : "All required witnesses are present. Review and submit from a separate controlled flow."}
+                                    : providerStatus?.services.submit
+                                      ? `All required witnesses are present. Submit to ${providerStatus.network} from this wallet page.`
+                                      : "All required witnesses are present, but this deployment still has submit disabled."}
                               </div>
                             </div>
                           </div>
@@ -645,6 +806,12 @@ export default function WalletDetail() {
                           {unmatched ? (
                             <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
                               {unmatched} signature{unmatched === 1 ? " was" : "s were"} captured but did not match a required signer key hash, so this transaction is not marked ready yet.
+                            </div>
+                          ) : null}
+
+                          {tx.failureReason && !tx.txHash ? (
+                            <div className="rounded-lg border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-100">
+                              Last submit attempt failed: {tx.failureReason}
                             </div>
                           ) : null}
 
@@ -664,6 +831,13 @@ export default function WalletDetail() {
                           </Button>
                           <Button className="w-full" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
                             <Copy className="size-4" /> Copy witness package
+                          </Button>
+                          <Button
+                            className="w-full"
+                            onClick={() => void submitTransaction(tx)}
+                            disabled={phase !== "ready" || !providerStatus?.services.submit}
+                          >
+                            <ShieldCheck className="size-4" /> Submit signed transaction
                           </Button>
                         </div>
                       </div>

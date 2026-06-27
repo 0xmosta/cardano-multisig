@@ -329,7 +329,9 @@ function signerSummary(draft: TxDraft) {
 
 function providerReadyLabel(serverProvider: ServerProviderStatus | null) {
   if (!serverProvider) return "Provider status unavailable";
-  if (serverProvider.ready) return `${serverProvider.network} provider ready`;
+  if (serverProvider.ready) {
+    return `${serverProvider.network} provider ready${serverProvider.services.submit ? " · submit enabled" : " · submit disabled"}`;
+  }
   return `${serverProvider.network} provider needs attention`;
 }
 

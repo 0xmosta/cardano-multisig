@@ -380,6 +380,7 @@ export default function Home() {
       setStatus("Invite link is malformed. Ask the coordinator to copy the signer invite again.");
       return;
     }
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     setDrafts((current) => (current.some((item) => item.id === draft.id) ? current : [draft, ...current]));
     setActiveDraftId(draft.id);
     setStatus("Invite loaded. Review the transaction below, connect a signer wallet, then click Sign.");
@@ -736,6 +737,9 @@ export default function Home() {
                   {unmatchedSignatureCount(activeDraft)} unmatched signature{unmatchedSignatureCount(activeDraft) === 1 ? " is" : "s are"} stored locally, so the coordinator still needs to confirm who signed.
                 </div>
               ) : null}
+              <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                Privacy note: this invite carries the recipient, asset amounts, coordinator note, signer list, and unsigned tx CBOR in the URL fragment. After load it is kept only in this browser's local storage, so use a trusted device and clear site data when the signing handoff is complete.
+              </div>
             </div>
 
             <div className="space-y-3">

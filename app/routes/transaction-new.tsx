@@ -681,7 +681,7 @@ export default function NewTransaction() {
                 1. Build and save the transaction.
               </div>
               <div className="rounded-lg border border-border bg-slate-950/60 p-3">
-                2. On the wallet page, copy the signer invite link for this transaction.
+                2. On the wallet page, copy the signer invite link for this transaction and share it privately only; it carries unsigned transaction details in the URL fragment.
               </div>
               <div className="rounded-lg border border-border bg-slate-950/60 p-3">
                 3. Each signer opens the link, connects a wallet, signs, and sends the witness package back.

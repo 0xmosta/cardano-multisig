@@ -636,7 +636,7 @@ export default function WalletDetail() {
                                 {phase === "submitted"
                                   ? "Submission already recorded for this transaction."
                                   : missing.length
-                                    ? "Copy the invite link, send it privately to a missing signer, then import the returned witness package."
+                                    ? "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
                                     : "All required witnesses are present. Review and submit from a separate controlled flow."}
                               </div>
                             </div>
@@ -680,7 +680,7 @@ export default function WalletDetail() {
             <CardHeader>
               <CardTitle>Import returned witness package</CardTitle>
               <CardDescription>
-                Paste a signature package from a signer. Both the old single-signature format and the new multi-signature format are accepted.
+                Paste a signature package from a signer. Both the old single-signature format and the new multi-signature format are accepted. Imported witnesses stay in this browser's local storage until you clear site data.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">

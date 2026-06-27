@@ -11,18 +11,40 @@ type BlockfrostUtxo = { tx_hash: string; output_index: number; address: string; 
 
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 
+type CardanoNetwork = "mainnet" | "preprod" | "preview";
+
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }
 function errorMessage(error: unknown) { if (error instanceof Error) return error.message; if (typeof error === "string") return error; try { return JSON.stringify(error); } catch { return "Could not build transaction."; } }
 function normalizeHandle(input = "") { return input.trim().replace(/^\$/, "").toLowerCase(); }
+function normalizeNetwork(value: string | null | undefined): CardanoNetwork {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized === "mainnet" || normalized === "preview" ? normalized : "preprod";
+}
 function configuredNetwork() {
-  const value = (process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod").trim().toLowerCase();
-  return value === "mainnet" || value === "preview" ? value : "preprod";
+  return normalizeNetwork(process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod");
+}
+function isMainnetNetwork(network: CardanoNetwork) { return network === "mainnet"; }
+function addressMatchesNetwork(address: string, network: CardanoNetwork) {
+  return isMainnetNetwork(network) ? /^addr1[0-9a-z]+$/i.test(address) : /^addr_test1[0-9a-z]+$/i.test(address);
+}
+function stakeAddressMatchesNetwork(stakeAddress: string, network: CardanoNetwork) {
+  return isMainnetNetwork(network) ? /^stake1[0-9a-z]+$/i.test(stakeAddress) : /^stake_test1[0-9a-z]+$/i.test(stakeAddress);
+}
+function assertBlockfrostUrlMatchesNetwork(url: string, network: CardanoNetwork) {
+  const host = (() => {
+    try { return new URL(url).hostname.toLowerCase(); }
+    catch { return ""; }
+  })();
+  if (!host.endsWith("blockfrost.io")) return;
+  const expected = `cardano-${network}.blockfrost.io`;
+  if (host !== expected) throw new Error(`Configured Cardano network is ${network}, but Blockfrost URL points to ${host}.`);
 }
 function getBlockfrostConfig() {
   const network = configuredNetwork();
   const defaultUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
   const url = (process.env.BLOCKFROST_URL || process.env.CARDANO_BLOCKFROST_URL || defaultUrl).replace(/\/$/, "");
   const projectId = process.env.BLOCKFROST_PROJECT_ID || process.env.CARDANO_BLOCKFROST_PROJECT_ID || "";
+  assertBlockfrostUrlMatchesNetwork(url, network);
   return { network, url, projectId };
 }
 function hasBlockfrost() { return Boolean(getBlockfrostConfig().projectId.trim()); }
@@ -33,24 +55,25 @@ function handleCandidate(wallet: { name?: string; handle?: string }) {
 function hexToBytes(hex: string) { const out = new Uint8Array(hex.length / 2); for (let i = 0; i < out.length; i += 1) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16); return out; }
 function unitFromBlockfrost(unit: string) { return unit === "lovelace" ? unit : `${unit.slice(0, 56)}.${unit.slice(56)}`; }
 
-async function resolveHandle(name: string): Promise<HandleInfo | null> {
+async function resolveHandle(name: string, network: CardanoNetwork): Promise<HandleInfo | null> {
+  if (!isMainnetNetwork(network)) return null;
   const handle = normalizeHandle(name);
   if (!/^[a-z0-9_.-]{1,32}$/.test(handle)) return null;
   const response = await fetch(`https://api.handle.me/handles/${encodeURIComponent(handle)}`, { headers: { accept: "application/json" } });
   if (!response.ok) return null;
   const body = await response.json() as { name?: string; holder?: string; holder_type?: string; image?: string; resolved_addresses?: { ada?: string } };
   const address = body.resolved_addresses?.ada;
-  if (!address || !validAddress(address)) return null;
+  if (!address || !validAddress(address) || !addressMatchesNetwork(address, network)) return null;
   return { name: body.name || handle, address, holder: body.holder, holderType: body.holder_type, image: body.image };
 }
-async function resolveHandleByStakeAddress(stakeAddress: string): Promise<HandleInfo | null> {
-  if (!/^stake(_test)?1[0-9a-z]+$/i.test(stakeAddress)) return null;
+async function resolveHandleByStakeAddress(stakeAddress: string, network: CardanoNetwork): Promise<HandleInfo | null> {
+  if (!isMainnetNetwork(network) || !stakeAddressMatchesNetwork(stakeAddress, network)) return null;
   try {
     const response = await fetch(`https://api.handle.me/holders/${encodeURIComponent(stakeAddress)}`, { headers: { accept: "application/json" } });
     if (!response.ok) return null;
     const body = await response.json() as { default_handle?: string; handles?: string[] };
     const name = body.default_handle || body.handles?.[0];
-    return name ? await resolveHandle(name) : null;
+    return name ? await resolveHandle(name, network) : null;
   } catch { return null; }
 }
 function scriptToCsl(script: NativeScriptJson): any {
@@ -69,17 +92,20 @@ function assertAddressMatchesPaymentScript(address: string, paymentScript: any) 
   if (actual && actual !== expected) throw new Error("Resolved ADA Handle address does not match the imported payment script. Re-check the handle or script before building a transaction.");
 }
 async function resolveSource(wallet: WalletInput) {
+  const network = configuredNetwork();
+  const walletNetwork = normalizeNetwork(wallet.network);
+  if (walletNetwork !== network) throw new Error(`Wallet network ${walletNetwork} does not match configured provider network ${network}.`);
   const paymentScript = scriptToCsl(wallet.paymentScript);
-  const networkId = wallet.network === "mainnet" ? 1 : 0;
+  const networkId = isMainnetNetwork(walletNetwork) ? 1 : 0;
   const handle = handleCandidate(wallet);
   if (handle) {
-    const resolved = await resolveHandle(handle);
+    const resolved = await resolveHandle(handle, walletNetwork);
     if (resolved) { assertAddressMatchesPaymentScript(resolved.address, paymentScript); return { address: resolved.address, handle: resolved }; }
   }
   if (wallet.stakeScript) {
     const stakeHash = scriptToCsl(wallet.stakeScript).hash().to_hex();
     const stakeAddress = CSL.RewardAddress.new(networkId, CSL.Credential.from_scripthash(CSL.ScriptHash.from_hex(stakeHash))).to_address().to_bech32();
-    const resolved = await resolveHandleByStakeAddress(stakeAddress);
+    const resolved = await resolveHandleByStakeAddress(stakeAddress, walletNetwork);
     if (resolved) { assertAddressMatchesPaymentScript(resolved.address, paymentScript); return { address: resolved.address, handle: resolved }; }
     const paymentHash = paymentScript.hash().to_hex();
     return { address: CSL.BaseAddress.new(networkId, CSL.Credential.from_scripthash(CSL.ScriptHash.from_hex(paymentHash)), CSL.Credential.from_scripthash(CSL.ScriptHash.from_hex(stakeHash))).to_address().to_bech32(), handle: null };
@@ -202,6 +228,7 @@ function assertBuildRequest(body: unknown): BuildRequest {
   const input = body as BuildRequest;
   if (!input?.wallet?.paymentScript) throw new Error("Missing payment script.");
   if (!input.recipient || !validAddress(input.recipient)) throw new Error("Enter a valid recipient address.");
+  if (!addressMatchesNetwork(input.recipient, configuredNetwork())) throw new Error(`Recipient address does not match configured provider network ${configuredNetwork()}.`);
   if (!Array.isArray(input.assets) || !input.assets.length) throw new Error("Select at least one asset.");
   return input;
 }

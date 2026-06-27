@@ -10,16 +10,38 @@ type BlockfrostAmount = { unit: string; quantity: string };
 type BlockfrostUtxo = { tx_hash?: string; output_index?: number; amount?: BlockfrostAmount[] };
 type BlockfrostAsset = { decimals?: number | null; fingerprint?: string };
 
+type CardanoNetwork = "mainnet" | "preprod" | "preview";
+
 function getKupoUrl() { return (process.env.CARDANO_KUPO_URL || process.env.KUPO_URL || "").replace(/\/$/, ""); }
+function normalizeNetwork(value: string | null | undefined): CardanoNetwork {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized === "mainnet" || normalized === "preview" ? normalized : "preprod";
+}
 function configuredNetwork() {
-  const value = (process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod").trim().toLowerCase();
-  return value === "mainnet" || value === "preview" ? value : "preprod";
+  return normalizeNetwork(process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod");
+}
+function isMainnetNetwork(network: CardanoNetwork) { return network === "mainnet"; }
+function addressMatchesNetwork(address: string, network: CardanoNetwork) {
+  return isMainnetNetwork(network) ? /^addr1[0-9a-z]+$/i.test(address) : /^addr_test1[0-9a-z]+$/i.test(address);
+}
+function stakeAddressMatchesNetwork(stakeAddress: string, network: CardanoNetwork) {
+  return isMainnetNetwork(network) ? /^stake1[0-9a-z]+$/i.test(stakeAddress) : /^stake_test1[0-9a-z]+$/i.test(stakeAddress);
+}
+function assertBlockfrostUrlMatchesNetwork(url: string, network: CardanoNetwork) {
+  const host = (() => {
+    try { return new URL(url).hostname.toLowerCase(); }
+    catch { return ""; }
+  })();
+  if (!host.endsWith("blockfrost.io")) return;
+  const expected = `cardano-${network}.blockfrost.io`;
+  if (host !== expected) throw new Error(`Configured Cardano network is ${network}, but Blockfrost URL points to ${host}.`);
 }
 function getBlockfrostConfig() {
   const network = configuredNetwork();
   const defaultUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
   const url = (process.env.BLOCKFROST_URL || process.env.CARDANO_BLOCKFROST_URL || defaultUrl).replace(/\/$/, "");
   const projectId = process.env.BLOCKFROST_PROJECT_ID || process.env.CARDANO_BLOCKFROST_PROJECT_ID || "";
+  assertBlockfrostUrlMatchesNetwork(url, network);
   return { network, url, projectId };
 }
 function hasBlockfrost() { return Boolean(getBlockfrostConfig().projectId.trim()); }
@@ -54,26 +76,27 @@ function parsePatterns(url: URL) {
 function normalizeHandle(input: string) { return input.trim().replace(/^\$/, "").toLowerCase(); }
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }
 
-async function resolveHandle(name: string): Promise<HandleInfo | null> {
+async function resolveHandle(name: string, network: CardanoNetwork): Promise<HandleInfo | null> {
+  if (!isMainnetNetwork(network)) return null;
   const handle = normalizeHandle(name);
   if (!/^[a-z0-9_.-]{1,32}$/.test(handle)) return null;
   const response = await fetch(`https://api.handle.me/handles/${encodeURIComponent(handle)}`, { headers: { accept: "application/json" } });
   if (!response.ok) return null;
   const body = await response.json() as { name?: string; holder?: string; holder_type?: string; image?: string; resolved_addresses?: { ada?: string } };
   const address = body.resolved_addresses?.ada;
-  if (!address || !validAddress(address)) return null;
+  if (!address || !validAddress(address) || !addressMatchesNetwork(address, network)) return null;
   return { name: body.name || handle, address, holder: body.holder, holderType: body.holder_type, image: body.image };
 }
 
 
-async function resolveHandleByStakeAddress(stakeAddress: string): Promise<HandleInfo | null> {
-  if (!/^stake(_test)?1[0-9a-z]+$/i.test(stakeAddress)) return null;
+async function resolveHandleByStakeAddress(stakeAddress: string, network: CardanoNetwork): Promise<HandleInfo | null> {
+  if (!isMainnetNetwork(network) || !stakeAddressMatchesNetwork(stakeAddress, network)) return null;
   try {
     const response = await fetch(`https://api.handle.me/holders/${encodeURIComponent(stakeAddress)}`, { headers: { accept: "application/json" } });
     if (!response.ok) return null;
     const body = await response.json() as { default_handle?: string; handles?: string[] };
     const name = body.default_handle || body.handles?.[0];
-    return name ? await resolveHandle(name) : null;
+    return name ? await resolveHandle(name, network) : null;
   } catch { return null; }
 }
 
@@ -179,6 +202,11 @@ async function kupoPatternAssets(patterns: string[], kupoUrl: string) {
 
 export async function loader({ request }: { request: Request }) {
   const url = new URL(request.url);
+  const requestNetwork = normalizeNetwork(url.searchParams.get("network") || undefined);
+  const network = configuredNetwork();
+  if (requestNetwork !== network) {
+    return Response.json({ ready: false, assets: [], outputs: 0, error: `Wallet network ${requestNetwork} does not match configured provider network ${network}.` }, { status: 409 });
+  }
   const patterns = parsePatterns(url);
   const handleName = normalizeHandle(url.searchParams.get("handle") || "");
   const requestedAddress = (url.searchParams.get("address") || "").trim();
@@ -186,11 +214,11 @@ export async function loader({ request }: { request: Request }) {
   let handle: HandleInfo | null = null;
   let address = requestedAddress;
   if (handleName) {
-    handle = await resolveHandle(handleName);
+    handle = await resolveHandle(handleName, network);
     if (handle) address = handle.address;
   }
   if (!handle && stakeAddress) {
-    handle = await resolveHandleByStakeAddress(stakeAddress);
+    handle = await resolveHandleByStakeAddress(stakeAddress, network);
     if (handle) address = handle.address;
   }
   if (address) {

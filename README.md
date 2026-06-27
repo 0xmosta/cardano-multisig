@@ -38,4 +38,36 @@ npm run build
 
 ## Deployment
 
-The repository includes a Dockerfile for Dokploy/Traefik deployment. The current public route is `https://cardano.0xm.sh/`.
+The repository includes a Dockerfile for Dokploy/Traefik deployment.
+
+Preprod target defaults:
+
+- branch: `preprod`
+- public route: `https://cardano-preprod.0xm.sh/`
+- required env: `CARDANO_NETWORK=preprod` and `VITE_CARDANO_NETWORK=preprod`
+- server-side secret: preprod `BLOCKFROST_PROJECT_ID` from the existing Disco/ops secret store
+
+Recommended image build for preprod:
+
+```bash
+docker build \
+  --build-arg CARDANO_NETWORK=preprod \
+  --build-arg VITE_CARDANO_NETWORK=preprod \
+  -t cardano-multisig:preprod .
+```
+
+Recommended runtime env for preprod:
+
+```bash
+CARDANO_NETWORK=preprod
+VITE_CARDANO_NETWORK=preprod
+BLOCKFROST_PROJECT_ID=***
+```
+
+Verify the deployed route with:
+
+```bash
+curl -fsS https://cardano-preprod.0xm.sh/api/cardano/provider
+```
+
+Expected response shape includes `mode: "server"`, `network: "preprod"`, and `services.blockfrost: true` when the secret is present.

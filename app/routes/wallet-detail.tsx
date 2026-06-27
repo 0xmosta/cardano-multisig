@@ -64,8 +64,9 @@ function handleCandidate(wallet: { name?: string; handle?: string }) {
   const candidate = (wallet.handle || wallet.name || "").trim().replace(/^\$/, "").toLowerCase();
   return /^[a-z0-9][a-z0-9_.-]{1,31}$/.test(candidate) ? candidate : "";
 }
-function assetQuery(patterns: string[], wallet: { name?: string; handle?: string }, stakeAddress?: string | null) {
+function assetQuery(patterns: string[], wallet: { name?: string; handle?: string; network?: string }, stakeAddress?: string | null) {
   const params = new URLSearchParams();
+  params.set("network", wallet.network || "preprod");
   if (patterns.length) params.set("patterns", patterns.join(","));
   const handle = handleCandidate(wallet);
   if (handle) params.set("handle", handle);

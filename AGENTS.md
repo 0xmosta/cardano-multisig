@@ -38,9 +38,11 @@
 - Automated QA can use the local CDP CIP-30 harness:
   - signer vault: `/home/ultra/.secrets/cardano-multisig-preprod-wallets/`
   - helper scripts: `/home/ultra/.local/share/cardano-multisig-qa-tools/cip30-cdp-harness.mjs` and `cip30-shim-server.mjs`
+  - Node-side Cardano serialization helpers are installed under `/home/ultra/.local/share/cardano-multisig-qa-tools/node_modules/`; do not expect `@emurgo/cardano-serialization-lib-nodejs` inside the React app repo.
   - user service: `cardano-multisig-cip30-shim.service`
   - Chrome/Xvfb must inject providers before page load; expect `window.cardano.hermesQaSigner01` through `hermesQaSigner12`.
   - Handoff must label these runs as `CDP QA harness`, not third-party wallet extension tests.
+- For scripted QA that needs chain access, prefer the live app APIs (`/api/cardano/build-tx`, `/api/cardano/submit`) so server-side preprod Blockfrost env is used. Only call Blockfrost directly from scripts when the preprod env has been explicitly injected from the running preprod service, and never print the token.
 - Run E2E thresholds in order: `2-of-3`, then `4-of-7`, then `6-of-12`. Do not scale up until the smaller case has produced a tx hash or a concrete blocker.
 - Any local helper server, Playwright session, shim, or long-running process started for QA must be stopped or explicitly documented in the handoff.
 

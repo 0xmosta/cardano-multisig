@@ -1,4 +1,5 @@
 type ServiceFlags = {
+  blockfrost: boolean;
   kupo: boolean;
   ogmios: boolean;
   submit: boolean;
@@ -8,8 +9,14 @@ function hasAnyEnv(names: string[]) {
   return names.some((name) => Boolean(process.env[name]?.trim()));
 }
 
+function configuredNetwork() {
+  const value = (process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod").trim().toLowerCase();
+  return value === "mainnet" || value === "preview" ? value : "preprod";
+}
+
 export async function loader() {
   const services: ServiceFlags = {
+    blockfrost: hasAnyEnv(["BLOCKFROST_PROJECT_ID", "CARDANO_BLOCKFROST_PROJECT_ID"]),
     kupo: hasAnyEnv(["CARDANO_KUPO_URL", "KUPO_URL"]),
     ogmios: hasAnyEnv(["CARDANO_OGMIOS_URL", "OGMIOS_URL"]),
     submit: hasAnyEnv(["CARDANO_SUBMIT_URL", "CARDANO_NODE_SUBMIT_URL", "CARDANO_SUBMIT_API_URL"]),
@@ -17,7 +24,8 @@ export async function loader() {
 
   return Response.json({
     mode: "server",
-    ready: services.kupo || services.ogmios || services.submit,
+    network: configuredNetwork(),
+    ready: services.blockfrost || services.kupo || services.ogmios || services.submit,
     services,
   });
 }

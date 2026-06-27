@@ -6,17 +6,32 @@ type AssetLine = { unit: string; quantity: string; decimals?: number };
 type BuildRequest = { wallet: WalletInput; recipient: string; assets: AssetLine[] };
 type KoiosUtxoAsset = { policy_id?: string; asset_name?: string; quantity?: string };
 type KoiosUtxo = { tx_hash: string; tx_index: number; address: string; value: string; asset_list?: KoiosUtxoAsset[] | null };
+type BlockfrostAmount = { unit: string; quantity: string };
+type BlockfrostUtxo = { tx_hash: string; output_index: number; address: string; amount: BlockfrostAmount[] };
 
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }
 function errorMessage(error: unknown) { if (error instanceof Error) return error.message; if (typeof error === "string") return error; try { return JSON.stringify(error); } catch { return "Could not build transaction."; } }
 function normalizeHandle(input = "") { return input.trim().replace(/^\$/, "").toLowerCase(); }
+function configuredNetwork() {
+  const value = (process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod").trim().toLowerCase();
+  return value === "mainnet" || value === "preview" ? value : "preprod";
+}
+function getBlockfrostConfig() {
+  const network = configuredNetwork();
+  const defaultUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
+  const url = (process.env.BLOCKFROST_URL || process.env.CARDANO_BLOCKFROST_URL || defaultUrl).replace(/\/$/, "");
+  const projectId = process.env.BLOCKFROST_PROJECT_ID || process.env.CARDANO_BLOCKFROST_PROJECT_ID || "";
+  return { network, url, projectId };
+}
+function hasBlockfrost() { return Boolean(getBlockfrostConfig().projectId.trim()); }
 function handleCandidate(wallet: { name?: string; handle?: string }) {
   const candidate = normalizeHandle(wallet.handle || wallet.name || "");
   return /^[a-z0-9][a-z0-9_.-]{1,31}$/.test(candidate) ? candidate : "";
 }
 function hexToBytes(hex: string) { const out = new Uint8Array(hex.length / 2); for (let i = 0; i < out.length; i += 1) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16); return out; }
+function unitFromBlockfrost(unit: string) { return unit === "lovelace" ? unit : `${unit.slice(0, 56)}.${unit.slice(56)}`; }
 
 async function resolveHandle(name: string): Promise<HandleInfo | null> {
   const handle = normalizeHandle(name);
@@ -73,6 +88,26 @@ async function resolveSource(wallet: WalletInput) {
   return { address: CSL.EnterpriseAddress.new(networkId, CSL.Credential.from_scripthash(CSL.ScriptHash.from_hex(paymentHash))).to_address().to_bech32(), handle: null };
 }
 async function addressUtxos(address: string): Promise<KoiosUtxo[]> {
+  if (hasBlockfrost()) {
+    const pages: BlockfrostUtxo[][] = [];
+    for (let page = 1; page <= 10; page += 1) {
+      const rows = await blockfrostGet<BlockfrostUtxo[]>(`/addresses/${encodeURIComponent(address)}/utxos?order=asc&page=${page}&count=100`);
+      pages.push(rows);
+      if (rows.length < 100) break;
+    }
+    return pages.flat().map((utxo) => ({
+      tx_hash: utxo.tx_hash,
+      tx_index: utxo.output_index,
+      address: utxo.address,
+      value: String(utxo.amount.find((amount) => amount.unit === "lovelace")?.quantity || "0"),
+      asset_list: utxo.amount.filter((amount) => amount.unit !== "lovelace").map((amount) => {
+        const unit = unitFromBlockfrost(amount.unit);
+        const [policy_id, asset_name = ""] = unit.split(".");
+        return { policy_id, asset_name, quantity: amount.quantity };
+      }),
+    }));
+  }
+  if (configuredNetwork() !== "mainnet") throw new Error("Blockfrost is required for non-mainnet transaction building.");
   const response = await fetch("https://api.koios.rest/api/v1/address_utxos", {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
@@ -82,7 +117,28 @@ async function addressUtxos(address: string): Promise<KoiosUtxo[]> {
   const body = await response.json();
   return Array.isArray(body) ? body.filter((row) => !row.is_spent) as KoiosUtxo[] : [];
 }
+async function blockfrostGet<T>(path: string): Promise<T> {
+  const config = getBlockfrostConfig();
+  const response = await fetch(`${config.url}${path}`, {
+    headers: { accept: "application/json", project_id: config.projectId },
+  });
+  if (!response.ok) throw new Error(`Blockfrost returned ${response.status}`);
+  return response.json() as Promise<T>;
+}
 async function epochParams() {
+  if (hasBlockfrost()) {
+    const params = await blockfrostGet<Record<string, unknown>>("/epochs/latest/parameters");
+    return {
+      min_fee_a: params.min_fee_a,
+      min_fee_b: params.min_fee_b,
+      coins_per_utxo_size: params.coins_per_utxo_size || params.coins_per_utxo_word,
+      pool_deposit: params.pool_deposit,
+      key_deposit: params.key_deposit,
+      max_val_size: params.max_val_size,
+      max_tx_size: params.max_tx_size,
+    };
+  }
+  if (configuredNetwork() !== "mainnet") throw new Error("Blockfrost is required for non-mainnet protocol parameters.");
   const response = await fetch("https://api.koios.rest/api/v1/epoch_params", { headers: { accept: "application/json" } });
   if (!response.ok) throw new Error(`Koios protocol params failed (${response.status}).`);
   const rows = await response.json() as Array<Record<string, unknown>>;

@@ -6,10 +6,26 @@ type HandleInfo = { name: string; address: string; holder?: string; holderType?:
 type KoiosAsset = { decimals?: number | null; quantity?: string; policy_id?: string; asset_name?: string; fingerprint?: string };
 type KoiosUtxo = { value?: string; asset_list?: KoiosAsset[] };
 type KoiosAddressInfo = { address?: string; balance?: string; utxo_set?: KoiosUtxo[] };
+type BlockfrostAmount = { unit: string; quantity: string };
+type BlockfrostUtxo = { tx_hash?: string; output_index?: number; amount?: BlockfrostAmount[] };
+type BlockfrostAsset = { decimals?: number | null; fingerprint?: string };
 
 function getKupoUrl() { return (process.env.CARDANO_KUPO_URL || process.env.KUPO_URL || "").replace(/\/$/, ""); }
+function configuredNetwork() {
+  const value = (process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod").trim().toLowerCase();
+  return value === "mainnet" || value === "preview" ? value : "preprod";
+}
+function getBlockfrostConfig() {
+  const network = configuredNetwork();
+  const defaultUrl = `https://cardano-${network}.blockfrost.io/api/v0`;
+  const url = (process.env.BLOCKFROST_URL || process.env.CARDANO_BLOCKFROST_URL || defaultUrl).replace(/\/$/, "");
+  const projectId = process.env.BLOCKFROST_PROJECT_ID || process.env.CARDANO_BLOCKFROST_PROJECT_ID || "";
+  return { network, url, projectId };
+}
+function hasBlockfrost() { return Boolean(getBlockfrostConfig().projectId.trim()); }
 function addQuantity(a: string, b: string) { return (BigInt(a || "0") + BigInt(b || "0")).toString(); }
 function subjectFromUnit(unit: string) { if (unit === "lovelace") return undefined; const [policy, nameHex = ""] = unit.split("."); return `${policy}${nameHex}`; }
+function unitFromBlockfrost(unit: string) { return unit === "lovelace" ? unit : `${unit.slice(0, 56)}.${unit.slice(56)}`; }
 function decodeAssetName(nameHex = "") { try { const text = Buffer.from(nameHex, "hex").toString("utf8"); if (/^[\x20-\x7E]{1,32}$/.test(text)) return text; } catch {} return ""; }
 function assetLabel(unit: string) { if (unit === "lovelace") return "ADA"; const [, nameHex = ""] = unit.split("."); const decoded = decodeAssetName(nameHex); if (decoded) return decoded; return nameHex ? nameHex.slice(0, 12) + (nameHex.length > 12 ? "…" : "") : unit.slice(0, 16) + "…"; }
 
@@ -93,6 +109,50 @@ async function koiosAddressAssets(address: string): Promise<{ assets: AssetSumma
   } catch { return null; }
 }
 
+async function blockfrostGet<T>(path: string): Promise<T> {
+  const config = getBlockfrostConfig();
+  const response = await fetch(`${config.url}${path}`, {
+    headers: { accept: "application/json", project_id: config.projectId },
+  });
+  if (!response.ok) throw new Error(`Blockfrost returned ${response.status}`);
+  return response.json() as Promise<T>;
+}
+
+async function blockfrostAssetInfo(unit: string): Promise<BlockfrostAsset | null> {
+  if (unit === "lovelace") return null;
+  try {
+    return await blockfrostGet<BlockfrostAsset>(`/assets/${unit.replace(".", "")}`);
+  } catch {
+    return null;
+  }
+}
+
+async function blockfrostAddressAssets(address: string): Promise<{ assets: AssetSummary[]; outputs: number } | null> {
+  if (!validAddress(address) || !hasBlockfrost()) return null;
+  const pages: BlockfrostUtxo[][] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const rows = await blockfrostGet<BlockfrostUtxo[]>(`/addresses/${encodeURIComponent(address)}/utxos?order=asc&page=${page}&count=100`);
+    pages.push(rows);
+    if (rows.length < 100) break;
+  }
+  const utxos = pages.flat();
+  const totals = new Map<string, { quantity: string; outputCount: number; decimals: number; fingerprint?: string }>();
+  for (const utxo of utxos) {
+    for (const amount of utxo.amount || []) {
+      const unit = unitFromBlockfrost(amount.unit);
+      const current = totals.get(unit) || { quantity: "0", outputCount: 0, decimals: unit === "lovelace" ? 6 : 0 };
+      totals.set(unit, { ...current, quantity: addQuantity(current.quantity, String(amount.quantity || "0")), outputCount: current.outputCount + 1 });
+    }
+  }
+  const assets = await Promise.all(Array.from(totals, async ([unit, info]) => {
+    const [metadata, chainInfo] = await Promise.all([registryMetadata(unit), blockfrostAssetInfo(unit)]);
+    const decimals = metadata.decimals || (Number.isInteger(Number(chainInfo?.decimals)) ? Number(chainInfo?.decimals) : info.decimals);
+    return { unit, label: metadata.label || assetLabel(unit), quantity: info.quantity, outputCount: info.outputCount, decimals, subject: metadata.subject, fingerprint: chainInfo?.fingerprint || info.fingerprint } satisfies AssetSummary;
+  }));
+  assets.sort((a, b) => a.unit === "lovelace" ? -1 : b.unit === "lovelace" ? 1 : a.label.localeCompare(b.label));
+  return { outputs: utxos.length, assets };
+}
+
 async function kupoPatternAssets(patterns: string[], kupoUrl: string) {
   const uniqueOutputs = new Map<string, KupoOutput>();
   for (const pattern of patterns) {
@@ -134,7 +194,9 @@ export async function loader({ request }: { request: Request }) {
     if (handle) address = handle.address;
   }
   if (address) {
-    const exact = await koiosAddressAssets(address);
+    const blockfrost = await blockfrostAddressAssets(address);
+    if (blockfrost) return Response.json({ ready: true, source: "blockfrost", handle, address, patterns, outputs: blockfrost.outputs, assets: blockfrost.assets });
+    const exact = configuredNetwork() === "mainnet" ? await koiosAddressAssets(address) : null;
     if (exact) return Response.json({ ready: true, source: "koios", handle, address, patterns, outputs: exact.outputs, assets: exact.assets });
   }
 

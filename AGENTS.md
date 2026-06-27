@@ -35,6 +35,12 @@
 
 - A headless shim or script-signed transaction is useful only as a technical smoke test. Mark it clearly as `shim` or `scripted`; do not call it a real CIP-30 wallet test.
 - A real signer UX pass requires an actual browser wallet extension or equivalent CIP-30 wallet session on preprod, with the user-facing invite/sign/return-witness flow exercised end to end.
+- Automated QA can use the local CDP CIP-30 harness:
+  - signer vault: `/home/ultra/.secrets/cardano-multisig-preprod-wallets/`
+  - helper scripts: `/home/ultra/.local/share/cardano-multisig-qa-tools/cip30-cdp-harness.mjs` and `cip30-shim-server.mjs`
+  - user service: `cardano-multisig-cip30-shim.service`
+  - Chrome/Xvfb must inject providers before page load; expect `window.cardano.hermesQaSigner01` through `hermesQaSigner12`.
+  - Handoff must label these runs as `CDP QA harness`, not third-party wallet extension tests.
 - Run E2E thresholds in order: `2-of-3`, then `4-of-7`, then `6-of-12`. Do not scale up until the smaller case has produced a tx hash or a concrete blocker.
 - Any local helper server, Playwright session, shim, or long-running process started for QA must be stopped or explicitly documented in the handoff.
 

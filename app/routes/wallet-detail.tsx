@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   CheckCircle2,
   Clock3,
   Copy,
@@ -14,11 +15,15 @@ import {
   Trash2,
   WalletCards,
 } from "lucide-react";
+import { cn } from "../lib/utils";
+import { AppWindow } from "../components/ui/app-window";
+import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Progress } from "../components/ui/progress";
 import {
   type MultisigWallet as Wallet,
   type NativeScript,
@@ -732,16 +737,15 @@ export default function WalletDetail() {
             </CardContent>
           </Card>
 
-          <Card className="glass-panel">
-            <CardHeader>
-              <CardTitle>Transactions</CardTitle>
-              <CardDescription>
+          <AppWindow title="Transactions" contentClassName="space-y-4">
+            <div>
+              <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>
+              <p className="mt-1 text-sm text-zinc-400">
                 Copy a signer invite, collect witness packages, and watch the missing-signer list shrink to zero.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              </p>
+            </div>
               {walletTxs.length === 0 ? (
-                <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-400">
+                <div className="rounded-lg border border-white/7 bg-black/20 p-4 text-sm text-zinc-400">
                   No transactions yet. Create one to start collecting signatures.
                 </div>
               ) : (
@@ -756,17 +760,22 @@ export default function WalletDetail() {
                   return (
                     <article
                       key={tx.id}
-                      className={`rounded-xl border p-4 ${highlighted ? "border-sky-400/50 bg-sky-400/10" : "border-border bg-slate-950/60"}`}
+                      className={cn(
+                        "rounded-xl border p-4",
+                        highlighted ? "border-sky-400/50 bg-sky-400/10" : "border-white/7 bg-white/[0.02]",
+                      )}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
+                        <div className="flex min-w-0 gap-3">
+                          <Avatar label={tx.title} tone={phase === "submitted" || phase === "ready" ? "success" : "primary"} />
+                          <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-lg font-semibold text-slate-100">{tx.title}</h3>
+                            <h3 className="text-lg font-semibold text-zinc-50">{tx.title}</h3>
                             <Badge variant={phaseBadge(phase)}>{phaseLabel(phase)}</Badge>
                             {highlighted ? <Badge variant="outline">new</Badge> : null}
                           </div>
-                          <div className="mt-1 text-sm text-slate-400">{tx.recipient || "No recipient address saved"}</div>
-                          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                          <div className="mt-1 break-all text-sm text-zinc-400">{tx.recipient || "No recipient address saved"}</div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
                             <span>{signed}/{tx.requiredSignatures} matched signatures</span>
                             <span>{pendingSignatureCount(tx)} still needed</span>
                             {pendingSignatureCount(tx) === 0 && optional.length ? (
@@ -775,44 +784,69 @@ export default function WalletDetail() {
                             {unmatched ? <span className="text-amber-300">{unmatched} unmatched signature{unmatched === 1 ? "" : "s"}</span> : null}
                             {tx.txHash ? <span className="text-emerald-300">tx {tx.txHash.slice(0, 16)}…</span> : null}
                           </div>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-slate-300">
+                        <div className="flex shrink-0 items-center gap-2 text-sm text-zinc-300">
                           {phaseIcon(phase)} {new Date(tx.createdAt).toLocaleString()}
                         </div>
+                      </div>
+
+                      <div className="mt-4 space-y-2">
+                        <div className="flex items-center justify-between text-xs text-zinc-400">
+                          <span>Required signatures</span>
+                          <span>{signed} / {tx.requiredSignatures}</span>
+                        </div>
+                        <Progress value={signed} max={tx.requiredSignatures} />
                       </div>
 
                       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
                         <div className="space-y-3">
                           <div>
-                            <div className="text-xs uppercase tracking-wide text-slate-500">Assets</div>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {(tx.assets?.length ? tx.assets : [{ label: "ADA", quantity: tx.lovelace || "0", unit: "lovelace", id: "ada", decimals: 6 } as AssetLine]).map((asset) => (
-                                <div key={asset.id} className="rounded-full border border-border px-3 py-1 text-sm text-slate-200">
+                              <div className="text-xs uppercase text-zinc-500">Assets</div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {(tx.assets?.length ? tx.assets : [{ label: "ADA", quantity: tx.lovelace || "0", unit: "lovelace", id: "ada", decimals: 6 } as AssetLine]).map((asset) => (
+                                <div key={asset.id} className="rounded-full border border-white/8 px-3 py-1 text-sm text-zinc-200">
                                   {formatRawQuantity(asset.quantity, asset.unit, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0))}
                                 </div>
                               ))}
                             </div>
                           </div>
 
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="rounded-lg border border-border bg-slate-900/70 p-3">
-                              <div className="text-xs uppercase tracking-wide text-slate-500">Needed signers</div>
-                              <div className="mt-2 space-y-1 text-sm text-slate-200">
-                                {missing.length ? (
-                                  missing.map((keyHash) => <div key={keyHash}>{signerLabel(wallet, keyHash)}</div>)
-                                ) : (
-                                  <div className="text-emerald-200">All required signers collected.</div>
-                                )}
-                              </div>
-                              {!missing.length && optional.length ? (
-                                <div className="mt-2 text-xs text-slate-400">
-                                  {optional.length} policy signer{optional.length === 1 ? "" : "s"} can still add a witness, but submit is no longer blocked.
+                          <div className="space-y-3">
+                            {tx.signerKeyHashes.map((keyHash) => {
+                              const hasSigned = tx.signatures.some((signature) => signature.signerKeyHash.toLowerCase() === keyHash.toLowerCase());
+                              const label = signerLabel(wallet, keyHash);
+                              return (
+                                <div
+                                  key={keyHash}
+                                  className={cn(
+                                    "flex items-center justify-between gap-3 rounded-lg border p-3",
+                                    hasSigned ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/7 bg-black/20",
+                                  )}
+                                >
+                                  <div className="flex min-w-0 items-center gap-3">
+                                    <Avatar label={label} tone={hasSigned ? "success" : "muted"} />
+                                    <div className="min-w-0">
+                                      <div className="font-semibold text-zinc-50">{label}</div>
+                                      <div className="truncate font-mono text-xs text-zinc-500">{keyHash}</div>
+                                    </div>
+                                  </div>
+                                  <div
+                                    className={cn(
+                                      "flex size-9 shrink-0 items-center justify-center rounded-full border",
+                                      hasSigned ? "border-emerald-400 text-emerald-300" : "border-white/10 text-transparent",
+                                    )}
+                                  >
+                                    <Check className="size-4" />
+                                  </div>
                                 </div>
-                              ) : null}
-                            </div>
-                            <div className="rounded-lg border border-border bg-slate-900/70 p-3">
-                              <div className="text-xs uppercase tracking-wide text-slate-500">Next coordinator step</div>
-                              <div className="mt-2 text-sm text-slate-200">
+                              );
+                            })}
+                          </div>
+
+                          <div className="rounded-lg border border-white/7 bg-black/20 p-3">
+                              <div className="text-xs uppercase text-zinc-500">Next coordinator step</div>
+                              <div className="mt-2 text-sm text-zinc-200">
                                 {phase === "submitted"
                                   ? "Submission already recorded for this transaction."
                                   : missing.length
@@ -821,7 +855,6 @@ export default function WalletDetail() {
                                       ? `All required witnesses are present. Submit to ${providerStatus.network} from this wallet page.`
                                       : "All required witnesses are present, but this deployment still has submit disabled."}
                               </div>
-                            </div>
                           </div>
 
                           {unmatched ? (
@@ -871,8 +904,7 @@ export default function WalletDetail() {
                   );
                 })
               )}
-            </CardContent>
-          </Card>
+          </AppWindow>
         </div>
 
         <div className="space-y-6">

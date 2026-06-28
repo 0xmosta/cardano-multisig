@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Database, RefreshCw, WalletCards } from "lucide-react";
+import { AppWindow } from "../components/ui/app-window";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -583,15 +584,14 @@ export default function NewTransaction() {
       </div>
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <Card className="glass-panel">
-          <CardHeader>
-            <CardTitle>Transaction details</CardTitle>
-            <CardDescription>
+        <AppWindow title="New transaction" contentClassName="space-y-5">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-50">Transaction details</h2>
+            <p className="mt-1 text-sm text-zinc-400">
               Select assets, enter the recipient, then build the unsigned transaction. After saving, the wallet page becomes the
               coordinator view for copying invite links and tracking missing signers.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
+            </p>
+          </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>Title</Label>
@@ -667,8 +667,7 @@ export default function NewTransaction() {
               />
               {buildInfo ? <div className="text-xs text-slate-400">{buildInfo}</div> : null}
             </div>
-          </CardContent>
-        </Card>
+        </AppWindow>
 
         <div className="space-y-6">
           <Card className="glass-panel">

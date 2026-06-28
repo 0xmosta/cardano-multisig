@@ -7,15 +7,15 @@ import {
   Import,
   Link2,
   Plus,
-  Shield,
   ShieldCheck,
   Trash2,
   Users,
   WalletCards,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
+import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -364,227 +364,6 @@ function signerCountLabel(draft: TxDraft) {
   return `${pending} signer${pending === 1 ? "" : "s"} still needed`;
 }
 
-function WindowDots() {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="size-2.5 rounded-full bg-rose-400/80" />
-      <span className="size-2.5 rounded-full bg-amber-400/80" />
-      <span className="size-2.5 rounded-full bg-emerald-400/80" />
-    </div>
-  );
-}
-
-function MiniWindow({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="min-w-0 overflow-hidden rounded-xl border border-white/8 bg-[#121214] shadow-[0_18px_50px_-34px_rgba(0,0,0,0.95)]">
-      <div className="flex items-center gap-4 border-b border-white/7 px-4 py-3">
-        <WindowDots />
-        <div className="truncate text-xs font-semibold text-zinc-400">{title}</div>
-      </div>
-      <div className="p-4">{children}</div>
-    </div>
-  );
-}
-
-function FeatureCard({ icon, title, description, children }: { icon: ReactNode; title: string; description: string; children: ReactNode }) {
-  return (
-    <article className="glass-panel flex min-h-[330px] min-w-0 flex-col gap-5 p-5">
-      <div className="flex items-start gap-4">
-        <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-[#202124] text-zinc-300 ring-1 ring-white/5">
-          {icon}
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-2xl font-semibold leading-tight text-zinc-50">{title}</h2>
-          <p className="mt-3 text-sm leading-6 text-zinc-400">{description}</p>
-        </div>
-      </div>
-      <div className="mt-auto">{children}</div>
-    </article>
-  );
-}
-
-function ShowcaseGrid({ walletCount, draftCount }: { walletCount: number; draftCount: number }) {
-  return (
-    <section className="grid min-w-0 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-      <FeatureCard
-        icon={<ShieldCheck className="size-6" />}
-        title="Multi-signature security"
-        description="M-of-N policies keep every treasury payment gated by the threshold your team chose."
-      >
-        <MiniWindow title="Treasury · Core Team">
-          <div className="space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex size-11 items-center justify-center rounded-lg bg-white/7 text-zinc-300">
-                  <WalletCards className="size-5" />
-                </div>
-                <div>
-                  <div className="font-semibold text-zinc-50">Core Team Treasury</div>
-                  <div className="text-xs text-zinc-500">addr_test...m4f3k8</div>
-                </div>
-              </div>
-              <Badge variant="secondary"><Shield className="size-3" /> 2 of 3</Badge>
-            </div>
-            <div className="grid grid-cols-2 gap-3 border-y border-white/7 py-4">
-              <div className="text-sm font-semibold text-zinc-50">Balance</div>
-              <div className="text-right font-mono text-sm text-zinc-300">A 128,450</div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="-space-x-2">
-                {["Alice Blue", "Chris Doe", "Evan Frost"].map((label) => (
-                  <Avatar key={label} label={label} className="border border-[#121214]" />
-                ))}
-              </div>
-              <div className="text-sm text-zinc-400">3 signers</div>
-            </div>
-          </div>
-        </MiniWindow>
-      </FeatureCard>
-
-      <FeatureCard
-        icon={<Users className="size-6" />}
-        title="Invite and verify signers"
-        description="A signer opens one private link, connects the right wallet, signs, and returns a witness package."
-      >
-        <MiniWindow title="Signers">
-          <div className="space-y-3">
-            {[
-              ["alice.ada", "Verified", "success"],
-              ["bob.cardano", "Verified", "success"],
-              ["carol.io", "Pending", "pending"],
-            ].map(([name, state, tone]) => (
-              <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-white/7 bg-white/[0.02] p-3">
-                <div className="flex items-center gap-3">
-                  <Avatar label={name} tone={tone === "success" ? "success" : "muted"} />
-                  <div>
-                    <div className="font-semibold text-zinc-50">{name}</div>
-                    <div className="text-xs text-zinc-500">addr_test...{tone === "success" ? "m4f3k8" : "h8t6w0"}</div>
-                  </div>
-                </div>
-                <Badge variant={tone === "success" ? "default" : "secondary"}>
-                  {tone === "success" ? <Check className="size-3" /> : <Clock className="size-3" />} {state}
-                </Badge>
-              </div>
-            ))}
-          </div>
-        </MiniWindow>
-      </FeatureCard>
-
-      <FeatureCard
-        icon={<WalletCards className="size-6" />}
-        title="Manage all your wallets"
-        description="Keep several multisig wallets for teams, grants, payroll, and campaign operations."
-      >
-        <MiniWindow title="Your wallets">
-          <div className="space-y-3">
-            {[
-              ["Core Team Treasury", "2 of 3 signers", "A 128,450"],
-              ["Grants Multisig", "3 of 5 signers", "A 64,900"],
-              ["Marketing", "2 of 4 signers", "A 12,300"],
-            ].map(([name, rule, balance]) => (
-              <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-white/7 bg-white/[0.02] p-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/7 text-zinc-400">
-                    <WalletCards className="size-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-semibold text-zinc-50">{name}</div>
-                    <div className="text-xs text-zinc-500">{rule}</div>
-                  </div>
-                </div>
-                <div className="shrink-0 font-mono text-sm font-semibold text-zinc-100">{balance}</div>
-              </div>
-            ))}
-          </div>
-        </MiniWindow>
-      </FeatureCard>
-
-      <FeatureCard
-        icon={<ArrowRight className="size-6" />}
-        title="Create new transactions"
-        description="Build a treasury payment, attach the signer policy, then share it with the required approvers."
-      >
-        <MiniWindow title="New transaction">
-          <div className="space-y-3">
-            <div>
-              <div className="text-[10px] font-semibold uppercase text-zinc-500">Recipient</div>
-              <div className="mt-2 rounded-md border border-white/8 bg-black/20 px-3 py-2 font-mono text-sm text-zinc-300">addr_test...k2p9z1</div>
-            </div>
-            <div>
-              <div className="text-[10px] font-semibold uppercase text-zinc-500">Amount</div>
-              <div className="mt-2 flex items-center justify-between rounded-md border border-white/8 bg-black/20 px-3 py-2 text-lg font-semibold text-zinc-50">
-                A 5,000.00 <span className="text-sm text-zinc-400">ADA</span>
-              </div>
-            </div>
-            <div className="rounded-md bg-white/[0.04] px-3 py-2 text-sm text-zinc-300"><Shield className="mr-2 inline size-4" /> Requires 2 of 3 signatures</div>
-            <Button className="w-full"><ArrowRight className="size-4" /> Create and sign</Button>
-          </div>
-        </MiniWindow>
-      </FeatureCard>
-
-      <FeatureCard
-        icon={<Clock className="size-6" />}
-        title="Complete transaction history"
-        description="Every local room shows who signed, what changed, and whether the threshold is ready."
-      >
-        <MiniWindow title="Transactions">
-          <div className="space-y-3">
-            {[
-              ["Sent · vendor pay...", "-A 5,000", "up"],
-              ["Received · grant", "+A 18,200", "down"],
-              ["Sent · payroll", "-A 1,250", "up"],
-            ].map(([name, amount, dir]) => (
-              <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-white/7 bg-white/[0.02] p-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-full", dir === "down" ? "bg-emerald-500/15 text-emerald-300" : "bg-white/7 text-zinc-400")}>
-                    <ArrowRight className={cn("size-4", dir === "down" ? "rotate-[135deg]" : "-rotate-45")} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-semibold text-zinc-50">{name}</div>
-                    <div className="text-xs text-zinc-500">2d ago</div>
-                  </div>
-                </div>
-                <div className={cn("font-mono text-sm font-semibold", amount.startsWith("+") ? "text-emerald-300" : "text-zinc-100")}>{amount}</div>
-              </div>
-            ))}
-          </div>
-        </MiniWindow>
-      </FeatureCard>
-
-      <FeatureCard
-        icon={<Clock className="size-6" />}
-        title="Pending transactions"
-        description="Approvers can scan what is missing and finish signature collection without guesswork."
-      >
-        <MiniWindow title="Pending">
-          <div className="space-y-4">
-            {[
-              ["Payroll · March", 2, 3],
-              ["Ecosystem grant", 1, 3],
-            ].map(([name, signed, required]) => (
-              <div key={name} className="rounded-lg border border-white/7 bg-white/[0.02] p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-semibold text-zinc-50">{name}</div>
-                  <div className="text-xs text-zinc-400"><Clock className="mr-1 inline size-3" /> {signed} of {required} signed</div>
-                </div>
-                <Progress value={Number(signed)} max={Number(required)} className="mt-3" />
-                <div className="mt-4 flex -space-x-2">
-                  {Array.from({ length: Number(required) }).map((_, index) => (
-                    <span
-                      key={index}
-                      className={cn("size-7 rounded-full border border-[#121214]", index < Number(signed) ? "bg-emerald-400" : "bg-zinc-700")}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </MiniWindow>
-      </FeatureCard>
-    </section>
-  );
-}
-
 export default function Home() {
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
@@ -926,29 +705,27 @@ export default function Home() {
         </Card>
       </section>
 
-      <ShowcaseGrid walletCount={wallets.length} draftCount={drafts.length} />
-
       {activeDraft ? (
-        <Card className="glass-panel border-emerald-400/25">
-          <CardHeader>
+        <AppWindow title="Pending signature request" className="border-emerald-400/25">
+          <div className="px-5 pt-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-4">
                 <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-[#202124] text-zinc-300 ring-1 ring-white/6">
                   <ShieldCheck className="size-6" />
                 </div>
                 <div className="min-w-0">
-                  <CardTitle className="truncate">Sign {activeDraft.title}</CardTitle>
-                  <CardDescription>
+                  <h2 className="truncate text-2xl font-semibold leading-tight text-zinc-50">Sign {activeDraft.title}</h2>
+                  <p className="mt-1 text-sm text-zinc-400">
                     {activeDraft.walletName} · {activeDraft.requiredSignatures}-of-{activeDraft.signerKeyHashes.length || activeDraft.requiredSignatures}
-                  </CardDescription>
+                  </p>
                 </div>
               </div>
               <Badge variant="secondary">
                 <Clock className="size-3" /> {pendingSignatureCount(activeDraft) <= 0 ? "ready" : `${pendingSignatureCount(activeDraft)} more`}
               </Badge>
             </div>
-          </CardHeader>
-          <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          </div>
+          <div className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="space-y-4">
               <div className="rounded-xl border border-border bg-[#111114] p-5">
                 <div className="flex items-start justify-between gap-4">
@@ -1054,29 +831,28 @@ export default function Home() {
                 <Copy className="size-4" /> Copy witness package
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </AppWindow>
       ) : null}
 
-      <Card className="glass-panel">
-        <CardHeader>
+      <AppWindow title="Your wallets">
+        <div className="mb-4 flex items-center justify-between gap-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <CardTitle>Saved wallets</CardTitle>
-              <CardDescription>Open a wallet to create transactions, copy signer invites, and track who is still missing.</CardDescription>
+              <h2 className="text-xl font-semibold text-zinc-50">Saved wallets</h2>
+              <p className="mt-1 text-sm text-zinc-400">Open a wallet to create transactions, copy signer invites, and track who is still missing.</p>
             </div>
             <Badge variant="secondary">{wallets.length} saved</Badge>
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
           {wallets.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-slate-950/40 p-8 text-center text-slate-400">
+            <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
               No wallets saved yet. Import scripts or create a new policy to start.
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {wallets.map((wallet) => (
-                <article className="rounded-lg border border-border bg-slate-950/55 p-4 transition hover:border-emerald-400/40 hover:bg-slate-900/70" key={wallet.id}>
+                <article className="rounded-lg border border-white/7 bg-white/[0.02] p-4 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.04]" key={wallet.id}>
                   <a href={walletHref(wallet)} className="block space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-3">
@@ -1084,20 +860,20 @@ export default function Home() {
                           <WalletCards className="size-5" />
                         </div>
                         <div>
-                          <h3 className="text-lg font-semibold text-slate-100">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</h3>
-                          <div className="text-xs text-slate-500">{wallet.threshold} of {wallet.signers.length} signers</div>
+                          <h3 className="text-lg font-semibold text-zinc-50">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</h3>
+                          <div className="text-xs text-zinc-500">{wallet.threshold} of {wallet.signers.length} signers</div>
                         </div>
                       </div>
                       <Badge variant={wallet.imported ? "default" : "secondary"}>{wallet.imported ? "imported" : "created"}</Badge>
                     </div>
-                    <p className="text-sm text-slate-400">
+                    <p className="text-sm text-zinc-400">
                       {wallet.handle ? `${wallet.name} · ` : ""}
                       {wallet.network} · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)}
                     </p>
                     <div className="flex items-center justify-between gap-3">
                       <div className="-space-x-2">
                         {wallet.signers.slice(0, 5).map((signer) => (
-                          <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-slate-950" />
+                          <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-[#121214]" />
                         ))}
                       </div>
                       <div className="inline-flex items-center gap-1 text-sm font-medium text-emerald-300">
@@ -1105,7 +881,7 @@ export default function Home() {
                       </div>
                     </div>
                   </a>
-                  <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+                  <div className="mt-3 flex flex-wrap gap-2 border-t border-white/7 pt-3">
                     <Button variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
                       <Download className="size-4" /> Export
                     </Button>
@@ -1117,16 +893,14 @@ export default function Home() {
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </AppWindow>
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <Card className="glass-panel">
-          <CardHeader>
+        <AppWindow title={mode === "import" ? "Import wallet" : "Create policy"} contentClassName="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <CardTitle>Wallet workspace</CardTitle>
-                <CardDescription>Import an existing native script or create a new M-of-N policy.</CardDescription>
+                <h2 className="text-xl font-semibold text-zinc-50">Wallet workspace</h2>
+                <p className="mt-1 text-sm text-zinc-400">Import an existing native script or create a new M-of-N policy.</p>
               </div>
               <div className="grid grid-cols-2 rounded-lg border border-border bg-slate-950/70 p-1">
                 {(["import", "create"] as Mode[]).map((item) => (
@@ -1137,10 +911,9 @@ export default function Home() {
                 ))}
               </div>
             </div>
-          </CardHeader>
 
           {mode === "import" ? (
-            <CardContent className="space-y-5">
+            <>
               <div className="space-y-2">
                 <Label>ADA Handle (optional)</Label>
                 <Input value={importHandle} onChange={(event) => setImportHandle(event.target.value)} placeholder="$discatalyst" />
@@ -1172,9 +945,9 @@ export default function Home() {
                 </div>
               </div>
               <Button onClick={importWallet} disabled={!canImport}>Save imported wallet</Button>
-            </CardContent>
+            </>
           ) : (
-            <CardContent className="space-y-5">
+            <>
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
                 <div className="space-y-2">
                   <Label>Signer threshold</Label>
@@ -1206,19 +979,18 @@ export default function Home() {
                 <Textarea readOnly value={scriptJson} className="min-h-48 font-mono text-xs" />
               </div>
               <Button onClick={saveCreatedWallet} disabled={!canSave}>Save created wallet</Button>
-            </CardContent>
+            </>
           )}
-        </Card>
+        </AppWindow>
 
         <div className="space-y-6">
-          <Card className="glass-panel">
-            <CardHeader>
-              <CardTitle>Quick local signing room</CardTitle>
-              <CardDescription>
+          <AppWindow title="New transaction" contentClassName="space-y-4">
+            <div>
+              <h2 className="text-xl font-semibold text-zinc-50">Quick local signing room</h2>
+              <p className="mt-1 text-sm text-zinc-400">
                 Compatibility helper for local-only flows. The wallet page remains the main coordinator experience.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              </p>
+            </div>
               <div className="space-y-2">
                 <Label>Title</Label>
                 <Input value={txTitle} onChange={(event) => setTxTitle(event.target.value)} />
@@ -1240,19 +1012,16 @@ export default function Home() {
                 <Textarea value={txCbor} onChange={(event) => setTxCbor(event.target.value)} placeholder="Paste unsigned tx CBOR for a local signing room" className="min-h-32 font-mono text-xs" />
               </div>
               <Button onClick={createDraft}>Create local transaction room</Button>
-            </CardContent>
-          </Card>
+          </AppWindow>
 
-          <Card className="glass-panel">
-            <CardHeader>
-              <CardTitle>Import witness package</CardTitle>
-              <CardDescription>Paste a returned witness package from any signer. Both legacy and new formats work.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
+          <AppWindow title="Witness package" contentClassName="space-y-3">
+              <div>
+                <h2 className="text-xl font-semibold text-zinc-50">Import witness package</h2>
+                <p className="mt-1 text-sm text-zinc-400">Paste a returned witness package from any signer. Both legacy and new formats work.</p>
+              </div>
               <Textarea value={signaturePackage} onChange={(event) => setSignaturePackage(event.target.value)} placeholder="Paste witness package JSON here" className="min-h-40 font-mono text-xs" />
               <Button variant="secondary" onClick={importSignature}>Import witness package</Button>
-            </CardContent>
-          </Card>
+          </AppWindow>
         </div>
       </section>
 
@@ -1283,7 +1052,7 @@ export default function Home() {
                     <Users className="size-3" /> {signatureCount(draft)} / {draft.requiredSignatures}
                   </Badge>
                 </div>
-                <div className="mt-2 text-sm text-slate-400">{draft.recipient || "No recipient saved"}</div>
+                <div className="mt-2 break-all text-sm text-slate-400">{draft.recipient || "No recipient saved"}</div>
                 <div className="mt-3 space-y-2">
                   <Progress value={signatureCount(draft)} max={draft.requiredSignatures} />
                   <div className="flex items-center justify-between text-xs text-slate-500">

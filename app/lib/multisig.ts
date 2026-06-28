@@ -202,6 +202,21 @@ export function pendingSignerKeyHashes(draft: Pick<TxDraft, "signatures" | "sign
   return draft.signerKeyHashes.filter((keyHash) => !signed.has(normalizeKeyHash(keyHash)));
 }
 
+export function requiredPendingSignerKeyHashes(
+  draft: Pick<TxDraft, "signatures" | "signerKeyHashes" | "requiredSignatures">,
+) {
+  return pendingSignerKeyHashes(draft).slice(0, pendingSignatureCount(draft));
+}
+
+export function optionalSignerKeyHashes(draft: Pick<TxDraft, "signatures" | "signerKeyHashes" | "requiredSignatures">) {
+  return pendingSignerKeyHashes(draft).slice(pendingSignatureCount(draft));
+}
+
+export function removeUnmatchedSignatures(draft: Pick<TxDraft, "signatures" | "signerKeyHashes">) {
+  const expected = new Set(draft.signerKeyHashes.map(normalizeKeyHash));
+  return draft.signatures.filter((signature) => expected.has(normalizeKeyHash(signature.signerKeyHash)));
+}
+
 export function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "cardano-multisig";
 }

@@ -22,6 +22,8 @@
 - Validate network assumptions in code and UI. Preprod addresses use `addr_test...`; mainnet uses `addr...`.
 - Do not invent policy IDs, script hashes, addresses, transaction CBOR, protocol parameters, or CIP behavior.
 - Before changing UX around signing/submission, inspect the full flow: import wallet, create transaction, invite signer, connect signer wallet, sign, export/import witnesses, submit/confirm.
+- In M-of-N coordinator UI, distinguish signatures still required for threshold from optional unsigned policy members. Once threshold is met, never present remaining optional signers as blockers.
+- If an imported witness does not match the policy signer hashes, surface it as non-counting and provide a clear remove/discard action before submit.
 
 ## QA Wallets And Test Funds
 
@@ -51,6 +53,7 @@
 - Run `npm run typecheck` after TypeScript changes.
 - Run `npm run build` after route, Vite, or deployment changes.
 - For UX changes, verify desktop and mobile layout. Signing flows need a manual wallet smoke test on preprod before production use.
+- For multisig threshold UX, include at least one test state where threshold is met but optional policy signers remain unsigned, plus one unmatched-witness state with cleanup.
 
 ## Kanban Handoff
 

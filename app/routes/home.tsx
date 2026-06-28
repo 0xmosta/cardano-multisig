@@ -30,8 +30,11 @@ import {
   mergeSignatures,
   networkLabel,
   nowIso,
+  optionalSignerKeyHashes,
   parseSignaturePackage,
   pendingSignatureCount,
+  removeUnmatchedSignatures,
+  requiredPendingSignerKeyHashes,
   signatureCount,
   slugify,
   summarizeScript,
@@ -337,7 +340,10 @@ function providerReadyLabel(serverProvider: ServerProviderStatus | null) {
 
 function signerCountLabel(draft: TxDraft) {
   const pending = pendingSignatureCount(draft);
-  if (pending <= 0) return "All required signers collected";
+  const optional = optionalSignerKeyHashes(draft).length;
+  if (pending <= 0) {
+    return optional ? `Threshold reached · ${optional} optional signer${optional === 1 ? "" : "s"} unsigned` : "All policy signers collected";
+  }
   return `${pending} signer${pending === 1 ? "" : "s"} still needed`;
 }
 
@@ -607,6 +613,17 @@ export default function Home() {
     }
   }
 
+  function discardUnmatchedSignatures(draftId: string) {
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.id === draftId
+          ? { ...draft, signatures: removeUnmatchedSignatures(draft), updatedAt: nowIso() }
+          : draft,
+      ),
+    );
+    setStatus("Unmatched witness packages removed from this local transaction room.");
+  }
+
   async function copySignaturePackage() {
     if (!signaturePackage.trim()) return;
     await navigator.clipboard.writeText(signaturePackage);
@@ -722,6 +739,11 @@ export default function Home() {
                   <div className="mt-1 text-lg font-semibold text-slate-100">{pendingSignatureCount(activeDraft)}</div>
                 </div>
               </div>
+              {optionalSignerKeyHashes(activeDraft).length && pendingSignatureCount(activeDraft) === 0 ? (
+                <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                  Threshold reached. {optionalSignerKeyHashes(activeDraft).length} policy signer{optionalSignerKeyHashes(activeDraft).length === 1 ? "" : "s"} can still sign, but they are no longer required for submit.
+                </div>
+              ) : null}
               {(activeDraft.assets?.length ? activeDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: activeDraft.lovelace || "0" }]).length ? (
                 <div className="rounded-xl border border-border bg-slate-950/60 p-4">
                   <div className="text-sm text-slate-400">Assets</div>
@@ -735,8 +757,13 @@ export default function Home() {
                 </div>
               ) : null}
               {unmatchedSignatureCount(activeDraft) ? (
-                <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                  {unmatchedSignatureCount(activeDraft)} unmatched signature{unmatchedSignatureCount(activeDraft) === 1 ? " is" : "s are"} stored locally, so the coordinator still needs to confirm who signed.
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                  <span>
+                    {unmatchedSignatureCount(activeDraft)} unmatched signature{unmatchedSignatureCount(activeDraft) === 1 ? " is" : "s are"} stored locally and will not count toward submit.
+                  </span>
+                  <Button size="sm" variant="secondary" onClick={() => discardUnmatchedSignatures(activeDraft.id)}>
+                    <Trash2 className="size-4" /> Remove unmatched
+                  </Button>
                 </div>
               ) : null}
               <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
@@ -955,10 +982,20 @@ export default function Home() {
                 </div>
                 <div className="mt-2 text-sm text-slate-400">{draft.recipient || "No recipient saved"}</div>
                 <div className="mt-2 text-xs text-slate-500">{signerCountLabel(draft)}</div>
+                {requiredPendingSignerKeyHashes(draft).length ? (
+                  <div className="mt-2 text-xs text-slate-400">
+                    Need {requiredPendingSignerKeyHashes(draft).length} more matching signer{requiredPendingSignerKeyHashes(draft).length === 1 ? "" : "s"} before submit.
+                  </div>
+                ) : null}
                 {unmatchedSignatureCount(draft) ? <div className="mt-2 text-xs text-amber-300">{unmatchedSignatureCount(draft)} unmatched signature{unmatchedSignatureCount(draft) === 1 ? "" : "s"}</div> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button variant="secondary" size="sm" onClick={() => setActiveDraftId(draft.id)}>Open</Button>
                   <Button variant="secondary" size="sm" onClick={() => void copyInvite(draft)}><Copy className="size-4" /> Invite</Button>
+                  {unmatchedSignatureCount(draft) ? (
+                    <Button variant="secondary" size="sm" onClick={() => discardUnmatchedSignatures(draft.id)}>
+                      <Trash2 className="size-4" /> Unmatched
+                    </Button>
+                  ) : null}
                   <Button variant="destructive" size="sm" onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}><Trash2 className="size-4" /> Delete</Button>
                 </div>
               </article>

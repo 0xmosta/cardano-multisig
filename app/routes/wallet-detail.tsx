@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   WalletCards,
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
@@ -33,9 +34,11 @@ import {
   mergeSignatures,
   networkLabel,
   nowIso,
+  optionalSignerKeyHashes,
   parseSignaturePackage,
   pendingSignatureCount,
-  pendingSignerKeyHashes,
+  removeUnmatchedSignatures,
+  requiredPendingSignerKeyHashes,
   signatureCount,
   summarizeScript,
   unmatchedSignatureCount,
@@ -579,6 +582,15 @@ export default function WalletDetail() {
     }
   }
 
+  function discardUnmatchedSignatures(txId: string) {
+    const next = txs.map((tx) =>
+      tx.id === txId ? { ...tx, signatures: removeUnmatchedSignatures(tx), updatedAt: nowIso() } : tx,
+    );
+    setTxs(next);
+    writeArray(TX_KEY, next);
+    setSignStatus("Unmatched witness packages removed from this transaction.");
+  }
+
   function saveHandle() {
     if (!wallet) return;
     const clean = handleInput.trim().replace(/^\$/, "");
@@ -737,7 +749,8 @@ export default function WalletDetail() {
                   const phase = txPhase(tx);
                   const signed = signatureCount(tx);
                   const unmatched = unmatchedSignatureCount(tx);
-                  const missing = pendingSignerKeyHashes(tx);
+                  const missing = requiredPendingSignerKeyHashes(tx);
+                  const optional = optionalSignerKeyHashes(tx);
                   const highlighted = draftIdFromQuery === tx.id;
                   const canSign = Boolean(tx.unsignedTxCbor?.trim());
                   return (
@@ -756,6 +769,9 @@ export default function WalletDetail() {
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
                             <span>{signed}/{tx.requiredSignatures} matched signatures</span>
                             <span>{pendingSignatureCount(tx)} still needed</span>
+                            {pendingSignatureCount(tx) === 0 && optional.length ? (
+                              <span className="text-emerald-300">{optional.length} optional signer{optional.length === 1 ? "" : "s"} unsigned</span>
+                            ) : null}
                             {unmatched ? <span className="text-amber-300">{unmatched} unmatched signature{unmatched === 1 ? "" : "s"}</span> : null}
                             {tx.txHash ? <span className="text-emerald-300">tx {tx.txHash.slice(0, 16)}…</span> : null}
                           </div>
@@ -780,7 +796,7 @@ export default function WalletDetail() {
 
                           <div className="grid gap-3 md:grid-cols-2">
                             <div className="rounded-lg border border-border bg-slate-900/70 p-3">
-                              <div className="text-xs uppercase tracking-wide text-slate-500">Missing signers</div>
+                              <div className="text-xs uppercase tracking-wide text-slate-500">Needed signers</div>
                               <div className="mt-2 space-y-1 text-sm text-slate-200">
                                 {missing.length ? (
                                   missing.map((keyHash) => <div key={keyHash}>{signerLabel(wallet, keyHash)}</div>)
@@ -788,6 +804,11 @@ export default function WalletDetail() {
                                   <div className="text-emerald-200">All required signers collected.</div>
                                 )}
                               </div>
+                              {!missing.length && optional.length ? (
+                                <div className="mt-2 text-xs text-slate-400">
+                                  {optional.length} policy signer{optional.length === 1 ? "" : "s"} can still add a witness, but submit is no longer blocked.
+                                </div>
+                              ) : null}
                             </div>
                             <div className="rounded-lg border border-border bg-slate-900/70 p-3">
                               <div className="text-xs uppercase tracking-wide text-slate-500">Next coordinator step</div>
@@ -804,8 +825,13 @@ export default function WalletDetail() {
                           </div>
 
                           {unmatched ? (
-                            <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                              {unmatched} signature{unmatched === 1 ? " was" : "s were"} captured but did not match a required signer key hash, so this transaction is not marked ready yet.
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                              <span>
+                                {unmatched} signature{unmatched === 1 ? " was" : "s were"} captured but did not match a policy signer key hash and will not count toward submit.
+                              </span>
+                              <Button size="sm" variant="secondary" onClick={() => discardUnmatchedSignatures(tx.id)}>
+                                <Trash2 className="size-4" /> Remove unmatched
+                              </Button>
                             </div>
                           ) : null}
 

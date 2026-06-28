@@ -381,11 +381,6 @@ export default function Home() {
   const [stakeScriptText, setStakeScriptText] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const [txTitle, setTxTitle] = useState("Treasury payment");
-  const [txRecipient, setTxRecipient] = useState("");
-  const [txLovelace, setTxLovelace] = useState("2000000");
-  const [txCbor, setTxCbor] = useState("");
-  const [txNote, setTxNote] = useState("");
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [signaturePackage, setSignaturePackage] = useState("");
   const [status, setStatus] = useState("");
@@ -432,8 +427,6 @@ export default function Home() {
   const canImport = Boolean(parsedPayment.script) && !parsedPayment.error && !parsedStake.error;
 
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
-  const selectedSignerHashes = (mode === "import" ? importedSigners : validSigners).map((signer) => signer.keyHash);
-  const selectedRequired = mode === "import" ? Math.max(importThreshold, 1) : clampedThreshold;
   const activeNetworkWarning =
     connected && activeDraft && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(activeDraft.network)
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this transaction targets ${formatTargetNetwork(activeDraft.network)}.`
@@ -539,32 +532,6 @@ export default function Home() {
     await navigator.clipboard.writeText(scriptJson);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
-  }
-
-  function createDraft() {
-    const hashes = uniqueSigners(
-      selectedSignerHashes.map((keyHash, index) => ({ id: createId("txsigner"), label: `Signer ${index + 1}`, keyHash })),
-    ).map((signer) => signer.keyHash);
-    const draft: TxDraft = {
-      id: createId("tx"),
-      title: txTitle.trim() || "Transaction",
-      walletName: mode === "import" ? importHandle.trim().replace(/^\$/, "") || "Imported wallet" : "New multisig wallet",
-      network: DEFAULT_NETWORK,
-      recipient: txRecipient.trim(),
-      lovelace: txLovelace.trim(),
-      note: txNote.trim(),
-      unsignedTxCbor: txCbor.trim(),
-      requiredSignatures: Math.min(Math.max(selectedRequired, 1), Math.max(hashes.length, 1)),
-      signerKeyHashes: hashes,
-      signatures: [],
-      assets: [{ id: createId("asset"), unit: "lovelace", label: "ADA", quantity: txLovelace.trim() }],
-      status: "pending",
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-    };
-    setDrafts((current) => [draft, ...current]);
-    setActiveDraftId(draft.id);
-    setStatus("Local signing room created. Copy the signer invite link and send it privately.");
   }
 
   async function copyInvite(draft: TxDraft) {
@@ -955,36 +922,6 @@ export default function Home() {
         </AppWindow>
 
         <div className="space-y-6">
-          <AppWindow title="New transaction" contentClassName="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-zinc-50">Quick local signing room</h2>
-              <p className="mt-1 text-sm text-zinc-400">
-                Compatibility helper for local-only flows. The wallet page remains the main coordinator experience.
-              </p>
-            </div>
-              <div className="space-y-2">
-                <Label>Title</Label>
-                <Input value={txTitle} onChange={(event) => setTxTitle(event.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Recipient</Label>
-                <Input value={txRecipient} onChange={(event) => setTxRecipient(event.target.value)} placeholder="addr_test..." />
-              </div>
-              <div className="space-y-2">
-                <Label>ADA (lovelace)</Label>
-                <Input value={txLovelace} onChange={(event) => setTxLovelace(event.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Coordinator note</Label>
-                <Input value={txNote} onChange={(event) => setTxNote(event.target.value)} placeholder="What the signer should verify before approving" />
-              </div>
-              <div className="space-y-2">
-                <Label>Unsigned transaction CBOR</Label>
-                <Textarea value={txCbor} onChange={(event) => setTxCbor(event.target.value)} placeholder="Paste unsigned tx CBOR for a local signing room" className="min-h-32 font-mono text-xs" />
-              </div>
-              <Button onClick={createDraft}>Create local transaction room</Button>
-          </AppWindow>
-
           <AppWindow title="Witness package" contentClassName="space-y-3">
               <div>
                 <h2 className="text-xl font-semibold text-zinc-50">Import witness package</h2>

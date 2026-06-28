@@ -24,6 +24,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Progress } from "../components/ui/progress";
 import { Textarea } from "../components/ui/textarea";
+import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
 import {
   type MultisigWallet,
   type NativeScript,
@@ -649,60 +650,30 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
-      <section className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">preprod</Badge>
-            <Badge variant="secondary">{providerReadyLabel(serverProvider)}</Badge>
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">preprod</Badge>
+              <Badge variant="secondary">{providerReadyLabel(serverProvider)}</Badge>
+            </div>
+            <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-50 sm:text-4xl">Cardano multisig workspace</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+              Import policies, manage wallets, create transactions, invite signers, and collect witnesses from one signer-friendly control room.
+            </p>
           </div>
-          <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-50 sm:text-4xl">Cardano multisig workspace</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-            Import policies, manage wallets, create transactions, invite signers, and collect witnesses from one signer-friendly control room.
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">{wallets.length} wallet{wallets.length === 1 ? "" : "s"}</Badge>
+            <Badge variant="secondary">{drafts.length} room{drafts.length === 1 ? "" : "s"}</Badge>
+          </div>
         </div>
-
-        <Card className="glass-panel w-full max-w-md overflow-hidden">
-          <CardContent className="space-y-4 p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-                  <WalletCards className="size-4 text-zinc-400" /> Signer wallet
-                </div>
-                <div className="mt-1 text-xs text-zinc-400">
-                  {connected ? `${connected.name} · ${networkLabel(connected.networkId)}` : providers.length ? "Connect a signer wallet" : "No browser wallet detected"}
-                </div>
-              </div>
-              <Badge variant={connected ? "default" : "secondary"}>{connected ? "connected" : "off"}</Badge>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {providers.map((provider) => (
-                <Button
-                  key={provider.id}
-                  size="sm"
-                  variant={connected?.id === provider.id ? "default" : "secondary"}
-                  disabled={Boolean(connectingWalletId)}
-                  onClick={() => void connectWallet(provider)}
-                >
-                  {provider.icon ? <img alt="" className="size-4" src={provider.icon} /> : null}
-                  {connectingWalletId === provider.id ? "Waiting..." : provider.name}
-                </Button>
-              ))}
-            </div>
-            {connected?.keyHash ? (
-              <div className="truncate rounded-md border border-border bg-black/20 px-3 py-2 font-mono text-[11px] text-zinc-300">{connected.keyHash}</div>
-            ) : null}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-border bg-[#111114] p-3">
-                <div className="text-2xl font-semibold text-zinc-100">{wallets.length}</div>
-                <div className="text-xs text-zinc-400">wallets saved</div>
-              </div>
-              <div className="rounded-lg border border-border bg-[#111114] p-3">
-                <div className="text-2xl font-semibold text-emerald-300">{drafts.length}</div>
-                <div className="text-xs text-zinc-400">transaction rooms</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <WalletConnectorBar
+          providers={providers}
+          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+          connectingId={connectingWalletId}
+          onConnect={(provider) => void connectWallet(provider)}
+          emptyLabel={providers.length ? "Connect a signer wallet" : "No browser wallet detected"}
+        />
       </section>
 
       {activeDraft ? (

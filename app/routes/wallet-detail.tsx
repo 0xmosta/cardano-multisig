@@ -13,7 +13,6 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
-  WalletCards,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { AppWindow } from "../components/ui/app-window";
@@ -24,6 +23,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
+import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
 import {
   type MultisigWallet as Wallet,
   type NativeScript,
@@ -663,12 +663,23 @@ export default function WalletDetail() {
             {wallet.network} · {wallet.signers.length} signers · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript)}
           </p>
         </div>
-        <a
-          href={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
-        >
-          <Plus className="size-4" /> Create transaction
-        </a>
+        <div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[560px]">
+          <div className="flex justify-end">
+            <a
+              href={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
+            >
+              <Plus className="size-4" /> Create transaction
+            </a>
+          </div>
+          <WalletConnectorBar
+            providers={providers}
+            connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+            connectingId={connecting}
+            onConnect={(provider) => void connectSigner(provider)}
+            emptyLabel={providers.length ? "Choose a signer wallet" : "No CIP-30 browser wallet detected"}
+          />
+        </div>
       </div>
 
       <section className="grid gap-4 md:grid-cols-3">
@@ -692,51 +703,15 @@ export default function WalletDetail() {
         </Card>
       </section>
 
+      {connectWarning ? (
+        <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+          <AlertTriangle className="mr-2 inline size-4" /> {connectWarning}
+        </div>
+      ) : null}
+      {signStatus ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{signStatus}</div> : null}
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6">
-          <Card className="glass-panel">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <WalletCards className="size-5 text-sky-300" /> Signer wallet
-              </CardTitle>
-              <CardDescription>
-                Connect once, then sign pending transactions below. The coordinator state is derived from matched witness packages, not manual status toggles.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-sm text-slate-300">
-                  {connected
-                    ? `${connected.name} · ${networkLabel(connected.networkId)}${connected.keyHash ? ` · ${connected.keyHash.slice(0, 12)}…` : ""}`
-                    : providers.length
-                      ? "Choose a signer wallet, approve the popup, then click Sign on a pending transaction."
-                      : "No CIP-30 browser wallet detected."}
-                </div>
-                <Badge variant={connected ? "default" : "secondary"}>{connected ? "connected" : "off"}</Badge>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {providers.map((provider) => (
-                  <Button
-                    key={provider.id}
-                    variant={connected?.id === provider.id ? "default" : "secondary"}
-                    size="sm"
-                    disabled={Boolean(connecting)}
-                    onClick={() => void connectSigner(provider)}
-                  >
-                    {provider.icon ? <img alt="" className="size-4" src={provider.icon} /> : null}
-                    {connecting === provider.id ? "Waiting…" : provider.name}
-                  </Button>
-                ))}
-              </div>
-              {connectWarning ? (
-                <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                  <AlertTriangle className="mr-2 inline size-4" /> {connectWarning}
-                </div>
-              ) : null}
-              {signStatus ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{signStatus}</div> : null}
-            </CardContent>
-          </Card>
-
           <AppWindow title="Transactions" contentClassName="space-y-4">
             <div>
               <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>

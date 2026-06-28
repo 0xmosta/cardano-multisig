@@ -1,12 +1,12 @@
 import { Link, useNavigate, useParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Database, RefreshCw, WalletCards } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Database, RefreshCw } from "lucide-react";
 import { AppWindow } from "../components/ui/app-window";
-import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
 import {
   type AssetLine,
   type MultisigWallet as Wallet,
@@ -557,30 +557,14 @@ export default function NewTransaction() {
           </p>
         </div>
 
-        <Card className="glass-panel w-full max-w-sm">
-          <CardContent className="space-y-3 p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
-                <WalletCards className="size-4 text-sky-300" /> Signer wallet
-              </div>
-              <Badge variant={connected ? "default" : "secondary"}>{connected ? "connected" : "off"}</Badge>
-            </div>
-            <div className="text-xs text-slate-400">
-              {connected
-                ? `${connected.name} · ${networkLabel(connected.networkId)}${connected.keyHash ? ` · ${connected.keyHash.slice(0, 12)}…` : ""}`
-                : providers.length
-                  ? "Connect only to sign. Assets still come from the multisig wallet, not the browser wallet."
-                  : "No browser wallet detected"}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {providers.map((provider) => (
-                <Button key={provider.id} size="sm" variant="secondary" disabled={Boolean(connecting)} onClick={() => connect(provider)}>
-                  {connecting === provider.id ? "Waiting..." : provider.name}
-                </Button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        <WalletConnectorBar
+          className="w-full lg:max-w-xl"
+          providers={providers}
+          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+          connectingId={connecting}
+          onConnect={(provider) => void connect(provider)}
+          emptyLabel={providers.length ? "Connect only to sign" : "No browser wallet detected"}
+        />
       </div>
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">

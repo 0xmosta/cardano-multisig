@@ -1,11 +1,28 @@
-import { Check, Copy, Download, Import, Plus, ShieldCheck, Trash2, WalletCards } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  ArrowRight,
+  Check,
+  Clock,
+  Copy,
+  Download,
+  Import,
+  Link2,
+  Plus,
+  Shield,
+  ShieldCheck,
+  Trash2,
+  Users,
+  WalletCards,
+} from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import type { Route } from "./+types/home";
+import { cn } from "../lib/utils";
+import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Progress } from "../components/ui/progress";
 import { Textarea } from "../components/ui/textarea";
 import {
   type MultisigWallet,
@@ -347,6 +364,227 @@ function signerCountLabel(draft: TxDraft) {
   return `${pending} signer${pending === 1 ? "" : "s"} still needed`;
 }
 
+function WindowDots() {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="size-2.5 rounded-full bg-rose-400/80" />
+      <span className="size-2.5 rounded-full bg-amber-400/80" />
+      <span className="size-2.5 rounded-full bg-emerald-400/80" />
+    </div>
+  );
+}
+
+function MiniWindow({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-xl border border-white/8 bg-[#121214] shadow-[0_18px_50px_-34px_rgba(0,0,0,0.95)]">
+      <div className="flex items-center gap-4 border-b border-white/7 px-4 py-3">
+        <WindowDots />
+        <div className="truncate text-xs font-semibold text-zinc-400">{title}</div>
+      </div>
+      <div className="p-4">{children}</div>
+    </div>
+  );
+}
+
+function FeatureCard({ icon, title, description, children }: { icon: ReactNode; title: string; description: string; children: ReactNode }) {
+  return (
+    <article className="glass-panel flex min-h-[330px] min-w-0 flex-col gap-5 p-5">
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-[#202124] text-zinc-300 ring-1 ring-white/5">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-2xl font-semibold leading-tight text-zinc-50">{title}</h2>
+          <p className="mt-3 text-sm leading-6 text-zinc-400">{description}</p>
+        </div>
+      </div>
+      <div className="mt-auto">{children}</div>
+    </article>
+  );
+}
+
+function ShowcaseGrid({ walletCount, draftCount }: { walletCount: number; draftCount: number }) {
+  return (
+    <section className="grid min-w-0 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+      <FeatureCard
+        icon={<ShieldCheck className="size-6" />}
+        title="Multi-signature security"
+        description="M-of-N policies keep every treasury payment gated by the threshold your team chose."
+      >
+        <MiniWindow title="Treasury · Core Team">
+          <div className="space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex size-11 items-center justify-center rounded-lg bg-white/7 text-zinc-300">
+                  <WalletCards className="size-5" />
+                </div>
+                <div>
+                  <div className="font-semibold text-zinc-50">Core Team Treasury</div>
+                  <div className="text-xs text-zinc-500">addr_test...m4f3k8</div>
+                </div>
+              </div>
+              <Badge variant="secondary"><Shield className="size-3" /> 2 of 3</Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-3 border-y border-white/7 py-4">
+              <div className="text-sm font-semibold text-zinc-50">Balance</div>
+              <div className="text-right font-mono text-sm text-zinc-300">A 128,450</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="-space-x-2">
+                {["Alice Blue", "Chris Doe", "Evan Frost"].map((label) => (
+                  <Avatar key={label} label={label} className="border border-[#121214]" />
+                ))}
+              </div>
+              <div className="text-sm text-zinc-400">3 signers</div>
+            </div>
+          </div>
+        </MiniWindow>
+      </FeatureCard>
+
+      <FeatureCard
+        icon={<Users className="size-6" />}
+        title="Invite and verify signers"
+        description="A signer opens one private link, connects the right wallet, signs, and returns a witness package."
+      >
+        <MiniWindow title="Signers">
+          <div className="space-y-3">
+            {[
+              ["alice.ada", "Verified", "success"],
+              ["bob.cardano", "Verified", "success"],
+              ["carol.io", "Pending", "pending"],
+            ].map(([name, state, tone]) => (
+              <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-white/7 bg-white/[0.02] p-3">
+                <div className="flex items-center gap-3">
+                  <Avatar label={name} tone={tone === "success" ? "success" : "muted"} />
+                  <div>
+                    <div className="font-semibold text-zinc-50">{name}</div>
+                    <div className="text-xs text-zinc-500">addr_test...{tone === "success" ? "m4f3k8" : "h8t6w0"}</div>
+                  </div>
+                </div>
+                <Badge variant={tone === "success" ? "default" : "secondary"}>
+                  {tone === "success" ? <Check className="size-3" /> : <Clock className="size-3" />} {state}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </MiniWindow>
+      </FeatureCard>
+
+      <FeatureCard
+        icon={<WalletCards className="size-6" />}
+        title="Manage all your wallets"
+        description="Keep several multisig wallets for teams, grants, payroll, and campaign operations."
+      >
+        <MiniWindow title="Your wallets">
+          <div className="space-y-3">
+            {[
+              ["Core Team Treasury", "2 of 3 signers", "A 128,450"],
+              ["Grants Multisig", "3 of 5 signers", "A 64,900"],
+              ["Marketing", "2 of 4 signers", "A 12,300"],
+            ].map(([name, rule, balance]) => (
+              <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-white/7 bg-white/[0.02] p-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/7 text-zinc-400">
+                    <WalletCards className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold text-zinc-50">{name}</div>
+                    <div className="text-xs text-zinc-500">{rule}</div>
+                  </div>
+                </div>
+                <div className="shrink-0 font-mono text-sm font-semibold text-zinc-100">{balance}</div>
+              </div>
+            ))}
+          </div>
+        </MiniWindow>
+      </FeatureCard>
+
+      <FeatureCard
+        icon={<ArrowRight className="size-6" />}
+        title="Create new transactions"
+        description="Build a treasury payment, attach the signer policy, then share it with the required approvers."
+      >
+        <MiniWindow title="New transaction">
+          <div className="space-y-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase text-zinc-500">Recipient</div>
+              <div className="mt-2 rounded-md border border-white/8 bg-black/20 px-3 py-2 font-mono text-sm text-zinc-300">addr_test...k2p9z1</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase text-zinc-500">Amount</div>
+              <div className="mt-2 flex items-center justify-between rounded-md border border-white/8 bg-black/20 px-3 py-2 text-lg font-semibold text-zinc-50">
+                A 5,000.00 <span className="text-sm text-zinc-400">ADA</span>
+              </div>
+            </div>
+            <div className="rounded-md bg-white/[0.04] px-3 py-2 text-sm text-zinc-300"><Shield className="mr-2 inline size-4" /> Requires 2 of 3 signatures</div>
+            <Button className="w-full"><ArrowRight className="size-4" /> Create and sign</Button>
+          </div>
+        </MiniWindow>
+      </FeatureCard>
+
+      <FeatureCard
+        icon={<Clock className="size-6" />}
+        title="Complete transaction history"
+        description="Every local room shows who signed, what changed, and whether the threshold is ready."
+      >
+        <MiniWindow title="Transactions">
+          <div className="space-y-3">
+            {[
+              ["Sent · vendor pay...", "-A 5,000", "up"],
+              ["Received · grant", "+A 18,200", "down"],
+              ["Sent · payroll", "-A 1,250", "up"],
+            ].map(([name, amount, dir]) => (
+              <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-white/7 bg-white/[0.02] p-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-full", dir === "down" ? "bg-emerald-500/15 text-emerald-300" : "bg-white/7 text-zinc-400")}>
+                    <ArrowRight className={cn("size-4", dir === "down" ? "rotate-[135deg]" : "-rotate-45")} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold text-zinc-50">{name}</div>
+                    <div className="text-xs text-zinc-500">2d ago</div>
+                  </div>
+                </div>
+                <div className={cn("font-mono text-sm font-semibold", amount.startsWith("+") ? "text-emerald-300" : "text-zinc-100")}>{amount}</div>
+              </div>
+            ))}
+          </div>
+        </MiniWindow>
+      </FeatureCard>
+
+      <FeatureCard
+        icon={<Clock className="size-6" />}
+        title="Pending transactions"
+        description="Approvers can scan what is missing and finish signature collection without guesswork."
+      >
+        <MiniWindow title="Pending">
+          <div className="space-y-4">
+            {[
+              ["Payroll · March", 2, 3],
+              ["Ecosystem grant", 1, 3],
+            ].map(([name, signed, required]) => (
+              <div key={name} className="rounded-lg border border-white/7 bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold text-zinc-50">{name}</div>
+                  <div className="text-xs text-zinc-400"><Clock className="mr-1 inline size-3" /> {signed} of {required} signed</div>
+                </div>
+                <Progress value={Number(signed)} max={Number(required)} className="mt-3" />
+                <div className="mt-4 flex -space-x-2">
+                  {Array.from({ length: Number(required) }).map((_, index) => (
+                    <span
+                      key={index}
+                      className={cn("size-7 rounded-full border border-[#121214]", index < Number(signed) ? "bg-emerald-400" : "bg-zinc-700")}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </MiniWindow>
+      </FeatureCard>
+    </section>
+  );
+}
+
 export default function Home() {
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
@@ -631,40 +869,27 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-        <div className="space-y-4">
-          <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">Cardano native scripts</Badge>
-          <div className="space-y-3">
-            <h1 className="text-4xl font-semibold tracking-[-0.06em] text-slate-50 sm:text-6xl">Signer-friendly multisig control room.</h1>
-            <p className="max-w-3xl text-base leading-7 text-slate-400 sm:text-lg">
-              Import a wallet once, create transactions from the wallet page, then send each signer a single invite link. Signers only need to review, connect, sign, and return a witness package.
-            </p>
+    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
+      <section className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">preprod</Badge>
+            <Badge variant="secondary">{providerReadyLabel(serverProvider)}</Badge>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-border bg-slate-950/60 p-4">
-              <div className="text-sm font-medium text-slate-100">1. Import or create wallet</div>
-              <div className="mt-2 text-sm text-slate-400">Save the policy locally, then open the wallet workspace.</div>
-            </div>
-            <div className="rounded-xl border border-border bg-slate-950/60 p-4">
-              <div className="text-sm font-medium text-slate-100">2. Coordinator copies invite</div>
-              <div className="mt-2 text-sm text-slate-400">Each transaction gets one private signer link with clear next steps.</div>
-            </div>
-            <div className="rounded-xl border border-border bg-slate-950/60 p-4">
-              <div className="text-sm font-medium text-slate-100">3. Signer connects and signs</div>
-              <div className="mt-2 text-sm text-slate-400">Returned witness packages can be imported without blockchain jargon.</div>
-            </div>
-          </div>
+          <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-50 sm:text-4xl">Cardano multisig workspace</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+            Import policies, manage wallets, create transactions, invite signers, and collect witnesses from one signer-friendly control room.
+          </p>
         </div>
 
-        <Card className="glass-panel overflow-hidden">
+        <Card className="glass-panel w-full max-w-md overflow-hidden">
           <CardContent className="space-y-4 p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-                  <WalletCards className="size-4 text-sky-300" /> Signer wallet
+                <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+                  <WalletCards className="size-4 text-zinc-400" /> Signer wallet
                 </div>
-                <div className="mt-1 text-xs text-slate-400">
+                <div className="mt-1 text-xs text-zinc-400">
                   {connected ? `${connected.name} · ${networkLabel(connected.networkId)}` : providers.length ? "Connect a signer wallet" : "No browser wallet detected"}
                 </div>
               </div>
@@ -685,59 +910,96 @@ export default function Home() {
               ))}
             </div>
             {connected?.keyHash ? (
-              <div className="truncate rounded-md border border-border bg-slate-950/60 px-3 py-2 font-mono text-[11px] text-slate-300">{connected.keyHash}</div>
+              <div className="truncate rounded-md border border-border bg-black/20 px-3 py-2 font-mono text-[11px] text-zinc-300">{connected.keyHash}</div>
             ) : null}
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-border bg-slate-950/60 p-3">
-                <div className="text-2xl font-semibold text-sky-200">{wallets.length}</div>
-                <div className="text-xs text-slate-400">wallets saved</div>
+              <div className="rounded-lg border border-border bg-[#111114] p-3">
+                <div className="text-2xl font-semibold text-zinc-100">{wallets.length}</div>
+                <div className="text-xs text-zinc-400">wallets saved</div>
               </div>
-              <div className="rounded-lg border border-border bg-slate-950/60 p-3">
+              <div className="rounded-lg border border-border bg-[#111114] p-3">
                 <div className="text-2xl font-semibold text-emerald-300">{drafts.length}</div>
-                <div className="text-xs text-slate-400">transaction rooms</div>
+                <div className="text-xs text-zinc-400">transaction rooms</div>
               </div>
-            </div>
-            <div className="rounded-lg border border-border bg-slate-950/60 p-3 text-sm text-slate-300">
-              {providerReadyLabel(serverProvider)}
             </div>
           </CardContent>
         </Card>
       </section>
 
+      <ShowcaseGrid walletCount={wallets.length} draftCount={drafts.length} />
+
       {activeDraft ? (
-        <Card className="glass-panel border-sky-400/30">
+        <Card className="glass-panel border-emerald-400/25">
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <CardTitle>Loaded signer invite</CardTitle>
-                <CardDescription>
-                  Review the transaction, connect a signer wallet, then sign. The witness package can be copied back to the coordinator.
-                </CardDescription>
+              <div className="flex min-w-0 items-center gap-4">
+                <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-[#202124] text-zinc-300 ring-1 ring-white/6">
+                  <ShieldCheck className="size-6" />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle className="truncate">Sign {activeDraft.title}</CardTitle>
+                  <CardDescription>
+                    {activeDraft.walletName} · {activeDraft.requiredSignatures}-of-{activeDraft.signerKeyHashes.length || activeDraft.requiredSignatures}
+                  </CardDescription>
+                </div>
               </div>
-              <Badge variant="secondary">{signerSummary(activeDraft)}</Badge>
+              <Badge variant="secondary">
+                <Clock className="size-3" /> {pendingSignatureCount(activeDraft) <= 0 ? "ready" : `${pendingSignatureCount(activeDraft)} more`}
+              </Badge>
             </div>
           </CardHeader>
           <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="space-y-4">
-              <div className="rounded-xl border border-border bg-slate-950/60 p-4">
-                <div className="text-sm text-slate-400">Transaction</div>
-                <div className="mt-1 text-xl font-semibold text-slate-100">{activeDraft.title}</div>
-                <div className="mt-2 text-sm text-slate-400">Recipient: {activeDraft.recipient || "Not provided"}</div>
-                {activeDraft.note ? <div className="mt-3 text-sm text-slate-300">Coordinator note: {activeDraft.note}</div> : null}
-              </div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-xl border border-border bg-slate-950/60 p-4">
-                  <div className="text-sm text-slate-400">Required</div>
-                  <div className="mt-1 text-lg font-semibold text-slate-100">{activeDraft.requiredSignatures} signatures</div>
+              <div className="rounded-xl border border-border bg-[#111114] p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm text-zinc-400">Required signatures</div>
+                    <div className="mt-1 text-3xl font-semibold text-zinc-50">
+                      {signatureCount(activeDraft)} / {activeDraft.requiredSignatures}
+                    </div>
+                    <div className="mt-2 break-all text-sm text-zinc-400">Recipient: {activeDraft.recipient || "Not provided"}</div>
+                  </div>
+                  <Avatar label={activeDraft.walletName} tone={pendingSignatureCount(activeDraft) ? "primary" : "success"} />
                 </div>
-                <div className="rounded-xl border border-border bg-slate-950/60 p-4">
-                  <div className="text-sm text-slate-400">Matched</div>
-                  <div className="mt-1 text-lg font-semibold text-slate-100">{signatureCount(activeDraft)}</div>
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-zinc-400">
+                    <span>Required signatures</span>
+                    <span>{signatureCount(activeDraft)} / {activeDraft.requiredSignatures}</span>
+                  </div>
+                  <Progress value={signatureCount(activeDraft)} max={activeDraft.requiredSignatures} />
                 </div>
-                <div className="rounded-xl border border-border bg-slate-950/60 p-4">
-                  <div className="text-sm text-slate-400">Still needed</div>
-                  <div className="mt-1 text-lg font-semibold text-slate-100">{pendingSignatureCount(activeDraft)}</div>
+                <div className="mt-5 space-y-3">
+                  {activeDraft.signerKeyHashes.map((hash, index) => {
+                    const signed = activeDraft.signatures.some((signature) => signature.signerKeyHash.toLowerCase() === hash.toLowerCase());
+                    const label = `Signer ${index + 1}`;
+                    return (
+                      <div
+                        key={hash}
+                        className={cn(
+                          "flex items-center justify-between gap-4 rounded-xl border p-3",
+                          signed ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/7 bg-black/20",
+                        )}
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar label={label} tone={signed ? "success" : "muted"} />
+                          <div className="min-w-0">
+                            <div className="font-semibold text-zinc-50">{label}</div>
+                            <div className="truncate font-mono text-xs text-zinc-500">{hash}</div>
+                          </div>
+                        </div>
+                        <div
+                          className={cn(
+                            "flex size-9 shrink-0 items-center justify-center rounded-full border",
+                            signed ? "border-emerald-400 text-emerald-300" : "border-white/10 text-transparent",
+                          )}
+                        >
+                          <Check className="size-4" />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+                {activeDraft.note ? <div className="mt-4 text-sm text-zinc-300">Coordinator note: {activeDraft.note}</div> : null}
               </div>
               {optionalSignerKeyHashes(activeDraft).length && pendingSignatureCount(activeDraft) === 0 ? (
                 <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
@@ -814,17 +1076,34 @@ export default function Home() {
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {wallets.map((wallet) => (
-                <article className="rounded-lg border border-border bg-slate-950/55 p-4 transition hover:border-sky-400/50 hover:bg-slate-900/70" key={wallet.id}>
+                <article className="rounded-lg border border-border bg-slate-950/55 p-4 transition hover:border-emerald-400/40 hover:bg-slate-900/70" key={wallet.id}>
                   <a href={walletHref(wallet)} className="block space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-lg font-semibold text-slate-100">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</h3>
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-11 items-center justify-center rounded-lg bg-white/5 text-zinc-300 ring-1 ring-white/10">
+                          <WalletCards className="size-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-slate-100">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</h3>
+                          <div className="text-xs text-slate-500">{wallet.threshold} of {wallet.signers.length} signers</div>
+                        </div>
+                      </div>
                       <Badge variant={wallet.imported ? "default" : "secondary"}>{wallet.imported ? "imported" : "created"}</Badge>
                     </div>
                     <p className="text-sm text-slate-400">
                       {wallet.handle ? `${wallet.name} · ` : ""}
-                      {wallet.network} · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)} · {wallet.signers.length} signers
+                      {wallet.network} · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)}
                     </p>
-                    <div className="text-sm font-medium text-sky-200">Open wallet →</div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="-space-x-2">
+                        {wallet.signers.slice(0, 5).map((signer) => (
+                          <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-slate-950" />
+                        ))}
+                      </div>
+                      <div className="inline-flex items-center gap-1 text-sm font-medium text-emerald-300">
+                        Open wallet <ArrowRight className="size-4" />
+                      </div>
+                    </div>
                   </a>
                   <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
                     <Button variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
@@ -883,7 +1162,14 @@ export default function Home() {
                 {parsedStake.error ? <p className="text-sm text-red-300">{parsedStake.error}</p> : null}
               </div>
               <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
-                Detected {importedSigners.length} signer{importedSigners.length === 1 ? "" : "s"} · payment {summarizeScript(parsedPayment.script)} · stake {summarizeScript(parsedStake.script)}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span>Detected {importedSigners.length} signer{importedSigners.length === 1 ? "" : "s"} · payment {summarizeScript(parsedPayment.script)} · stake {summarizeScript(parsedStake.script)}</span>
+                  <div className="-space-x-2">
+                    {importedSigners.slice(0, 5).map((signer) => (
+                      <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-slate-950" />
+                    ))}
+                  </div>
+                </div>
               </div>
               <Button onClick={importWallet} disabled={!canImport}>Save imported wallet</Button>
             </CardContent>
@@ -902,7 +1188,10 @@ export default function Home() {
               <div className="space-y-3">
                 {signers.map((signer, index) => (
                   <div key={signer.id} className="grid gap-2 md:grid-cols-[160px_minmax(0,1fr)_40px]">
-                    <Input value={signer.label} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, label: event.target.value } : item))} placeholder={`Signer ${index + 1}`} />
+                    <div className="flex items-center gap-2">
+                      <Avatar label={signer.label || `Signer ${index + 1}`} />
+                      <Input value={signer.label} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, label: event.target.value } : item))} placeholder={`Signer ${index + 1}`} />
+                    </div>
                     <Input value={signer.keyHash} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, keyHash: event.target.value } : item))} placeholder="56-char key hash" />
                     <Button variant="ghost" onClick={() => setSigners((current) => current.filter((item) => item.id !== signer.id))}>×</Button>
                   </div>
@@ -975,13 +1264,33 @@ export default function Home() {
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {drafts.map((draft) => (
-              <article key={draft.id} className={`rounded-lg border p-4 ${activeDraftId === draft.id ? "border-sky-400/50 bg-sky-400/10" : "border-border bg-slate-950/60"}`}>
+              <article
+                key={draft.id}
+                className={cn(
+                  "rounded-lg border p-4",
+                  activeDraftId === draft.id ? "border-sky-400/50 bg-sky-400/10" : "border-border bg-slate-950/60",
+                )}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-semibold text-slate-100">{draft.title}</h3>
-                  <Badge variant="secondary">{signerSummary(draft)}</Badge>
+                  <div className="flex items-center gap-3">
+                    <Avatar label={draft.walletName} tone={pendingSignatureCount(draft) ? "primary" : "success"} />
+                    <div>
+                      <h3 className="font-semibold text-slate-100">{draft.title}</h3>
+                      <div className="text-xs text-slate-500">{draft.walletName}</div>
+                    </div>
+                  </div>
+                  <Badge variant="secondary">
+                    <Users className="size-3" /> {signatureCount(draft)} / {draft.requiredSignatures}
+                  </Badge>
                 </div>
                 <div className="mt-2 text-sm text-slate-400">{draft.recipient || "No recipient saved"}</div>
-                <div className="mt-2 text-xs text-slate-500">{signerCountLabel(draft)}</div>
+                <div className="mt-3 space-y-2">
+                  <Progress value={signatureCount(draft)} max={draft.requiredSignatures} />
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>{signerCountLabel(draft)}</span>
+                    <span>{draft.status}</span>
+                  </div>
+                </div>
                 {requiredPendingSignerKeyHashes(draft).length ? (
                   <div className="mt-2 text-xs text-slate-400">
                     Need {requiredPendingSignerKeyHashes(draft).length} more matching signer{requiredPendingSignerKeyHashes(draft).length === 1 ? "" : "s"} before submit.
@@ -990,7 +1299,7 @@ export default function Home() {
                 {unmatchedSignatureCount(draft) ? <div className="mt-2 text-xs text-amber-300">{unmatchedSignatureCount(draft)} unmatched signature{unmatchedSignatureCount(draft) === 1 ? "" : "s"}</div> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button variant="secondary" size="sm" onClick={() => setActiveDraftId(draft.id)}>Open</Button>
-                  <Button variant="secondary" size="sm" onClick={() => void copyInvite(draft)}><Copy className="size-4" /> Invite</Button>
+                  <Button variant="secondary" size="sm" onClick={() => void copyInvite(draft)}><Link2 className="size-4" /> Invite</Button>
                   {unmatchedSignatureCount(draft) ? (
                     <Button variant="secondary" size="sm" onClick={() => discardUnmatchedSignatures(draft.id)}>
                       <Trash2 className="size-4" /> Unmatched

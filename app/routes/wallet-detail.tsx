@@ -650,7 +650,7 @@ export default function WalletDetail() {
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300">
             <ArrowLeft className="size-4" /> Back to wallets
           </Link>
-          <h1 className="mt-3 text-4xl font-semibold tracking-[-0.06em] text-slate-50">
+          <h1 className="mt-3 text-4xl font-semibold text-slate-50">
             {resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}
           </h1>
           <p className="mt-2 text-slate-400">

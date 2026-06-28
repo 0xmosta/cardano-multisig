@@ -549,7 +549,7 @@ export default function NewTransaction() {
           <Link to={`/wallets/${encodeURIComponent(wallet.id)}`} className="inline-flex items-center gap-2 text-sm text-sky-300">
             <ArrowLeft className="size-4" /> Back to wallet
           </Link>
-          <h1 className="mt-3 text-4xl font-semibold tracking-[-0.06em] text-slate-50">Create transaction</h1>
+          <h1 className="mt-3 text-4xl font-semibold text-slate-50">Create transaction</h1>
           <p className="mt-2 max-w-3xl text-slate-400">
             Pick assets from the multisig wallet “{resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}”. The server builds
             the unsigned transaction from multisig UTxOs; any connected browser wallet is used only for signing.

@@ -25,6 +25,13 @@
 - In M-of-N coordinator UI, distinguish signatures still required for threshold from optional unsigned policy members. Once threshold is met, never present remaining optional signers as blockers.
 - If an imported witness does not match the policy signer hashes, surface it as non-counting and provide a clear remove/discard action before submit.
 
+## UI Rules
+
+- Treat screenshots and design references as component and interaction specifications for real app flows. Do not paste them into the home page as static showcase/demo cards.
+- Avoid hardcoded fake treasury names, balances, signer handles, addresses, or transaction history in product UI. If a screen needs examples, they must be isolated to tests, story fixtures, or screenshots generated outside the shipped app.
+- Reuse the shadcn dark visual vocabulary on real surfaces: saved wallets, transaction creation, signer invites, approval status, witness import/export, and coordinator transaction tracking.
+- For signer-friendly flows, make the current action obvious: connect wallet, verify network, sign, copy witness, import witness, or submit. Keep signer rows tied to actual policy key hashes and matched signatures.
+
 ## QA Wallets And Test Funds
 
 - QA wallet seed phrases/private keys live only in `/home/ultra/.secrets/cardano-multisig-preprod-wallets/` with `0600` files. Never copy them into the repo, Kanban comments, logs, screenshots, browser localStorage exports, or final summaries.

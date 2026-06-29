@@ -18,6 +18,7 @@ type CardanoWindowWallet<TApi extends BrowserWalletApi = BrowserWalletApi> = {
   name?: string;
   icon?: string;
   enable?: () => Promise<TApi>;
+  apiVersion?: string;
 };
 
 const KNOWN_PROVIDER_NAMES: Record<string, string> = {
@@ -51,14 +52,10 @@ export function installedBrowserWallets<TApi extends BrowserWalletApi = BrowserW
   }).cardano;
   if (!cardano) return [];
 
-  const ids = Array.from(
-    new Set([
-      ...Reflect.ownKeys(cardano).filter((key): key is string => typeof key === "string"),
-      ...Object.keys(KNOWN_PROVIDER_NAMES),
-    ]),
-  );
+  const ids = Reflect.ownKeys(cardano).filter((key): key is string => typeof key === "string");
 
-  return ids
+  const seenWallets = new WeakSet<object>();
+  const providers = ids
     .map((id) => {
       try {
         return [id, cardano[id]] as const;
@@ -67,6 +64,12 @@ export function installedBrowserWallets<TApi extends BrowserWalletApi = BrowserW
       }
     })
     .filter((entry): entry is readonly [string, CardanoWindowWallet<TApi>] => typeof entry[1]?.enable === "function")
+    .filter(([, wallet]) => {
+      if (typeof wallet !== "object" || wallet === null) return true;
+      if (seenWallets.has(wallet)) return false;
+      seenWallets.add(wallet);
+      return true;
+    })
     .map(([id, wallet]) => ({
       id,
       name: prettyProviderName(id, wallet),
@@ -74,6 +77,14 @@ export function installedBrowserWallets<TApi extends BrowserWalletApi = BrowserW
       enable: wallet.enable!.bind(wallet),
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
+
+  const seen = new Set<string>();
+  return providers.filter((provider) => {
+    const key = `${provider.id.toLowerCase()}|${provider.name.toLowerCase()}|${provider.icon || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function watchInstalledBrowserWallets<TApi extends BrowserWalletApi = BrowserWalletApi>(

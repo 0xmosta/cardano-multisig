@@ -8,6 +8,7 @@ import {
   Import,
   Link2,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
@@ -359,6 +360,23 @@ async function keyHashFromAddress(addressHex: string): Promise<string | null> {
   }
 }
 
+async function keyHashFromSignerInput(value: string): Promise<string | null> {
+  const input = value.trim();
+  if (isKeyHash(input)) return input.toLowerCase();
+  try {
+    const CSL = await import("@emurgo/cardano-serialization-lib-browser");
+    const address = /^[0-9a-f]+$/i.test(input) ? CSL.Address.from_bytes(hexToBytes(input)) : CSL.Address.from_bech32(input);
+    const base = CSL.BaseAddress.from_address(address);
+    const enterprise = CSL.EnterpriseAddress.from_address(address);
+    const reward = CSL.RewardAddress.from_address(address);
+    const credential = base?.payment_cred() ?? enterprise?.payment_cred() ?? reward?.payment_cred();
+    const keyHash = credential?.to_keyhash();
+    return keyHash ? keyHash.to_hex() : null;
+  } catch {
+    return null;
+  }
+}
+
 function looksLikeAddress(value: string) {
   return /^addr(_test)?1[0-9a-z]+$/i.test(value.trim());
 }
@@ -430,6 +448,9 @@ export default function Home() {
   const [discoveringAddress, setDiscoveringAddress] = useState(false);
   const [addressDiscovery, setAddressDiscovery] = useState<AddressDiscovery | null>(null);
   const [addressDiscoveryError, setAddressDiscoveryError] = useState("");
+  const [signerSearchInput, setSignerSearchInput] = useState("");
+  const [signerSearchKeyHash, setSignerSearchKeyHash] = useState("");
+  const [signerSearchError, setSignerSearchError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
@@ -491,10 +512,15 @@ export default function Home() {
     parsedImportSource.kind === "wallet"
       ? Boolean(parsedImportSource.wallet.paymentScript || parsedImportSource.wallet.discovery?.address)
       : Boolean(parsedPayment.script) && !parsedPayment.error && !parsedStake.error;
+  const activeSignerKeyHash = signerSearchKeyHash;
   const signerWalletMatches = useMemo(
-    () => (connected?.keyHash ? wallets.filter((wallet) => wallet.signers.some((signer) => signer.keyHash.toLowerCase() === connected.keyHash!.toLowerCase())) : []),
-    [connected?.keyHash, wallets],
+    () =>
+      activeSignerKeyHash
+        ? wallets.filter((wallet) => wallet.signers.some((signer) => signer.keyHash.toLowerCase() === activeSignerKeyHash.toLowerCase()))
+        : [],
+    [activeSignerKeyHash, wallets],
   );
+  const visibleWallets = importMode === "signer" && activeSignerKeyHash ? signerWalletMatches : wallets;
 
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
   const activeNetworkWarning =
@@ -543,6 +569,11 @@ export default function Home() {
         keyHash = null;
       }
       setConnected({ id: provider.id, name: provider.name, api, networkId, addressHex, keyHash });
+      if (keyHash) {
+        setSignerSearchKeyHash(keyHash);
+        setSignerSearchInput(keyHash);
+        setSignerSearchError("");
+      }
 
       if (activeDraft && networkId >= 0 && networkId !== expectedNetworkId(activeDraft.network)) {
         setStatus(`Connected ${provider.name}, but it is on ${networkLabel(networkId)}. Switch to ${formatTargetNetwork(activeDraft.network)} before signing.`);
@@ -558,6 +589,51 @@ export default function Home() {
     } finally {
       setConnectingWalletId(null);
     }
+  }
+
+  async function refreshConnectedSigner() {
+    if (!connected) {
+      setSignerSearchError("Connect Lace, Eternl, or VESPR first, or paste a signer address/key hash below.");
+      return;
+    }
+    try {
+      const used = await withTimeout(connected.api.getUsedAddresses(), 5000, "Address lookup timed out.");
+      const unused = used.length ? [] : await withTimeout(connected.api.getUnusedAddresses(), 5000, "Unused address lookup timed out.");
+      const addressHex = used[0] || unused[0] || (await withTimeout(connected.api.getChangeAddress(), 5000, "Change address lookup timed out."));
+      const keyHash = addressHex ? await keyHashFromAddress(addressHex) : null;
+      setConnected({ ...connected, addressHex, keyHash });
+      if (!keyHash) throw new Error("Could not derive a payment key hash from the connected signer wallet.");
+      setSignerSearchInput(keyHash);
+      setSignerSearchKeyHash(keyHash);
+      setSignerSearchError("");
+      setStatus(`Signer search refreshed from ${connected.name}.`);
+    } catch (error) {
+      setSignerSearchError(error instanceof Error ? error.message : "Could not refresh signer search.");
+    }
+  }
+
+  async function searchSignerWallets() {
+    const input = signerSearchInput.trim();
+    if (!input) {
+      setSignerSearchError("Paste a signer address or 56-character key hash, or refresh from the connected wallet.");
+      return;
+    }
+    const keyHash = await keyHashFromSignerInput(input);
+    if (!keyHash) {
+      setSignerSearchKeyHash("");
+      setSignerSearchError("Could not derive a signer key hash from that value.");
+      return;
+    }
+    setSignerSearchKeyHash(keyHash);
+    setSignerSearchInput(keyHash);
+    setSignerSearchError("");
+    setStatus(`Signer search active. ${wallets.filter((wallet) => wallet.signers.some((signer) => signer.keyHash.toLowerCase() === keyHash)).length} saved wallet match${wallets.filter((wallet) => wallet.signers.some((signer) => signer.keyHash.toLowerCase() === keyHash)).length === 1 ? "" : "es"}.`);
+  }
+
+  function clearSignerSearch() {
+    setSignerSearchInput("");
+    setSignerSearchKeyHash("");
+    setSignerSearchError("");
   }
 
   function importWallet() {
@@ -1091,36 +1167,40 @@ export default function Home() {
               {importMode === "signer" ? (
                 <div className="space-y-3">
                   <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
-                    {connected?.keyHash ? (
-                      <>
-                        <div className="font-semibold text-zinc-100">Connected signer key hash</div>
-                        <div className="mt-1 break-all font-mono text-xs text-zinc-400">{connected.keyHash}</div>
-                        <p className="mt-3 text-sm text-zinc-400">Known multisigs are the ones already saved in this browser. If nothing appears below, connect a different signer wallet or import a wallet export/script directly.</p>
-                      </>
-                    ) : (
-                      <p>Connect a signer wallet above to search saved multisigs that already include its key hash.</p>
-                    )}
+                    <div className="font-semibold text-zinc-100">Find saved wallets by signer</div>
+                    <p className="mt-1 text-sm text-zinc-400">Refresh from the connected signer wallet, or paste a signer address/key hash. Matching saved wallets appear on the right.</p>
+                    <div className="mt-4 space-y-2">
+                      <Label>Signer address or key hash</Label>
+                      <Input
+                        value={signerSearchInput}
+                        onChange={(event) => setSignerSearchInput(event.target.value)}
+                        placeholder="addr1... or 56-char key hash"
+                      />
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button variant="secondary" onClick={() => void searchSignerWallets()}>
+                        <Search className="size-4" /> Search saved wallets
+                      </Button>
+                      <Button variant="secondary" onClick={() => void refreshConnectedSigner()} disabled={!connected}>
+                        <RefreshCw className="size-4" /> Refresh from wallet
+                      </Button>
+                      {activeSignerKeyHash ? (
+                        <Button variant="ghost" onClick={clearSignerSearch}>Clear</Button>
+                      ) : null}
+                    </div>
+                    {activeSignerKeyHash ? (
+                      <div className="mt-3 break-all rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-xs text-emerald-100">
+                        Filtering saved wallets by signer key hash: <span className="font-mono">{activeSignerKeyHash}</span>
+                      </div>
+                    ) : null}
+                    {signerSearchError ? (
+                      <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{signerSearchError}</div>
+                    ) : null}
                   </div>
 
-                  {connected?.keyHash && signerWalletMatches.length ? (
-                    <div className="space-y-3">
-                      {signerWalletMatches.map((wallet) => (
-                        <a key={wallet.id} href={walletHref(wallet)} className="block rounded-lg border border-white/7 bg-white/[0.02] p-4 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.04]">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <div className="font-semibold text-zinc-50">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</div>
-                              <div className="mt-1 text-xs text-zinc-500">{wallet.threshold}-of-{wallet.signers.length} · payment {summarizeScript(wallet.paymentScript)}</div>
-                            </div>
-                            <div className="inline-flex items-center gap-1 text-sm font-medium text-emerald-300">Open <ArrowRight className="size-4" /></div>
-                          </div>
-                        </a>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {connected?.keyHash && !signerWalletMatches.length ? (
+                  {activeSignerKeyHash && !signerWalletMatches.length ? (
                     <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                      No saved multisigs in this browser match the connected signer key hash yet. Registration and address discovery cannot reconstruct the full script automatically, so import the wallet export or native script to save it here first.
+                      No saved multisigs in this browser match this signer yet. Import by address/ADA Handle or wallet export first, then rerun the signer search.
                     </div>
                   ) : null}
                 </div>
@@ -1166,18 +1246,26 @@ export default function Home() {
         <AppWindow title="Saved wallets">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-semibold text-zinc-50">Saved wallets</h2>
-              <p className="mt-1 text-sm text-zinc-400">Open a wallet to create transactions, copy signer invites, and track who is still missing.</p>
+              <h2 className="text-xl font-semibold text-zinc-50">{importMode === "signer" && activeSignerKeyHash ? "Matching saved wallets" : "Saved wallets"}</h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                {importMode === "signer" && activeSignerKeyHash
+                  ? "These saved wallets include the active signer key hash."
+                  : "Open a wallet to create transactions, copy signer invites, and track who is still missing."}
+              </p>
             </div>
-            <Badge variant="secondary">{wallets.length} saved</Badge>
+            <Badge variant="secondary">
+              {importMode === "signer" && activeSignerKeyHash ? `${visibleWallets.length} / ${wallets.length}` : wallets.length} saved
+            </Badge>
           </div>
-          {wallets.length === 0 ? (
+          {visibleWallets.length === 0 ? (
             <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
-              No wallets saved yet. Import a wallet export, native script, or create a new policy to start.
+              {wallets.length === 0
+                ? "No wallets saved yet. Import a wallet export, native script, or create a new policy to start."
+                : "No saved wallet matches this signer. Clear the signer filter to see all saved wallets."}
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
-              {wallets.map((wallet) => {
+              {visibleWallets.map((wallet) => {
                 const isWatchOnly = !wallet.paymentScript && Boolean(wallet.discovery?.address);
                 const title = wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name;
                 const assetCount = wallet.discovery?.assets?.length || 0;

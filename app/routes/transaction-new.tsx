@@ -1,13 +1,12 @@
 import { Link, useNavigate, useParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Database, RefreshCw } from "lucide-react";
-import { AppHeader, type AppHeaderProviderStatus } from "../components/app-header";
+import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type AssetLine,
   type MultisigWallet as Wallet,
@@ -23,18 +22,6 @@ import {
   networkLabel,
   nowIso,
 } from "../lib/multisig";
-
-type CardanoWalletApi = BrowserWalletApi;
-
-type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
-
-type ConnectedWallet = {
-  id: string;
-  name: string;
-  api: CardanoWalletApi;
-  networkId: number;
-  keyHash: string | null;
-};
 
 type AssetOption = {
   unit: string;
@@ -85,18 +72,7 @@ function readArray<T>(key: string): T[] {
 
 function writeArray<T>(key: string, value: T[]) {
   window.localStorage.setItem(key, JSON.stringify(value, null, 2));
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  notifyAppStorageChanged();
 }
 
 function trimDecimal(value: string) {
@@ -205,42 +181,12 @@ async function fetchMultisigAssets(wallet: Wallet): Promise<AssetFetch> {
   };
 }
 
-function hexToBytes(hex: string) {
-  const out = new Uint8Array(hex.length / 2);
-  for (let index = 0; index < out.length; index += 1) {
-    out[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
-  }
-  return out;
-}
-
-async function keyHashFromAddress(addressHex: string): Promise<string | null> {
-  try {
-    const CSL = await import("@emurgo/cardano-serialization-lib-browser");
-    const address = CSL.Address.from_bytes(hexToBytes(addressHex));
-    const base = CSL.BaseAddress.from_address(address);
-    const enterprise = CSL.EnterpriseAddress.from_address(address);
-    const reward = CSL.RewardAddress.from_address(address);
-    const credential = base?.payment_cred() ?? enterprise?.payment_cred() ?? reward?.payment_cred();
-    const keyHash = credential?.to_keyhash();
-    return keyHash ? keyHash.to_hex() : null;
-  } catch {
-    return null;
-  }
-}
-
-function signerMatchesWallet(wallet: Wallet, keyHash: string | null) {
-  if (!keyHash) return false;
-  return wallet.signers.some((signer) => signer.keyHash.toLowerCase() === keyHash.toLowerCase());
-}
-
 export default function NewTransaction() {
   const { walletId } = useParams();
   const navigate = useNavigate();
+  const { connected } = useAppShell();
 
   const [wallets, setWallets] = useState<Wallet[]>([]);
-  const [providers, setProviders] = useState<WalletProvider[]>([]);
-  const [connected, setConnected] = useState<ConnectedWallet | null>(null);
-  const [connecting, setConnecting] = useState<string | null>(null);
   const [multisigAssets, setMultisigAssets] = useState<AssetOption[]>([]);
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
@@ -253,16 +199,9 @@ export default function NewTransaction() {
   const [buildInfo, setBuildInfo] = useState("");
   const [note, setNote] = useState("");
   const [status, setStatus] = useState("");
-  const [providerStatus, setProviderStatus] = useState<AppHeaderProviderStatus>(null);
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
-    const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
-    fetch("/api/cardano/provider")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => setProviderStatus(payload))
-      .catch(() => setProviderStatus(null));
-    return stopWatchingWallets;
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);
@@ -343,62 +282,6 @@ export default function NewTransaction() {
         decimals: next.decimals ?? (next.unit === "lovelace" ? 6 : 0),
       },
     ]);
-  }
-
-  async function connect(provider: WalletProvider) {
-    if (connecting) return;
-    setConnecting(provider.id);
-    setStatus(`Open ${provider.name} and approve the connection...`);
-
-    try {
-      const api = await withTimeout(
-        provider.enable(),
-        12000,
-        `${provider.name} did not answer. Unlock Eternl/reopen the wallet popup, then try again.`,
-      );
-
-      let networkId = -1;
-      let keyHash: string | null = null;
-      try {
-        networkId = await withTimeout(api.getNetworkId(), 5000, "Network lookup timed out.");
-      } catch {
-        networkId = -1;
-      }
-
-      try {
-        const used = await withTimeout(api.getUsedAddresses(), 5000, "Address lookup timed out.");
-        const unused = used.length
-          ? []
-          : await withTimeout(api.getUnusedAddresses(), 5000, "Unused address lookup timed out.");
-        const addressHex =
-          used[0] || unused[0] || (await withTimeout(api.getChangeAddress(), 5000, "Change address lookup timed out."));
-        keyHash = addressHex ? await keyHashFromAddress(addressHex) : null;
-      } catch {
-        keyHash = null;
-      }
-
-      setConnected({ id: provider.id, name: provider.name, api, networkId, keyHash });
-
-      if (wallet && networkId >= 0 && networkId !== expectedNetworkId(wallet.network)) {
-        setStatus(
-          `Connected ${provider.name}, but it is on ${networkLabel(networkId)}. Switch it to ${formatTargetNetwork(wallet.network)} before signing.`,
-        );
-      } else if (wallet && keyHash && !signerMatchesWallet(wallet, keyHash)) {
-        setStatus(
-          `Connected ${provider.name}, but this key hash is not listed for the multisig policy. Use one of the required signer wallets.`,
-        );
-      } else if (keyHash) {
-        setStatus(`Connected ${provider.name}. Signer key hash detected, so the signature can be matched automatically.`);
-      } else {
-        setStatus(
-          `Connected ${provider.name}. Signing still works, but the signer key hash could not be verified automatically.`,
-        );
-      }
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : `Could not connect ${provider.name}.`);
-    } finally {
-      setConnecting(null);
-    }
   }
 
   async function buildUnsignedTx(txAssets: AssetLine[]) {
@@ -515,44 +398,20 @@ export default function NewTransaction() {
 
   if (!wallet) {
     return (
-      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
-        <AppHeader
-          providers={providers}
-          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-          connectingId={connecting}
-          providerStatus={providerStatus}
-          walletCount={wallets.length}
-          onConnect={(provider) => void connect(provider)}
-          onDisconnect={() => {
-            setConnected(null);
-            setStatus("Signer wallet disconnected from this browser session.");
-          }}
-        />
+      <div className="flex flex-col gap-6">
         <Link className="text-sm text-sky-300" to="/">
           ← Back
         </Link>
         <Card className="glass-panel">
           <CardContent className="p-8 text-slate-300">Wallet not found. Import or create it first.</CardContent>
         </Card>
-      </main>
+      </div>
     );
   }
 
   if (isWatchOnly) {
     return (
-      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
-        <AppHeader
-          providers={providers}
-          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-          connectingId={connecting}
-          providerStatus={providerStatus}
-          walletCount={wallets.length}
-          onConnect={(provider) => void connect(provider)}
-          onDisconnect={() => {
-            setConnected(null);
-            setStatus("Signer wallet disconnected from this browser session.");
-          }}
-        />
+      <div className="flex flex-col gap-6">
         <Link className="inline-flex items-center gap-2 text-sm text-sky-300" to={`/wallets/${encodeURIComponent(wallet.id)}`}>
           <ArrowLeft className="size-4" /> Back to wallet
         </Link>
@@ -572,25 +431,12 @@ export default function NewTransaction() {
             </Link>
           </CardContent>
         </Card>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
-      <AppHeader
-        providers={providers}
-        connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-        connectingId={connecting}
-        providerStatus={providerStatus}
-        walletCount={wallets.length}
-        onConnect={(provider) => void connect(provider)}
-        onDisconnect={() => {
-          setConnected(null);
-          setStatus("Signer wallet disconnected from this browser session.");
-        }}
-      />
-
+    <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link to={`/wallets/${encodeURIComponent(wallet.id)}`} className="inline-flex items-center gap-2 text-sm text-sky-300">
@@ -728,6 +574,6 @@ export default function NewTransaction() {
       </section>
 
       {status ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{status}</div> : null}
-    </main>
+    </div>
   );
 }

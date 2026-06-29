@@ -18,7 +18,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
-import { AppHeader } from "../components/app-header";
+import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -30,7 +30,6 @@ import { Label } from "../components/ui/label";
 import { Progress } from "../components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { Textarea } from "../components/ui/textarea";
-import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type MultisigWallet,
   type NativeScript,
@@ -70,10 +69,7 @@ import {
 type Mode = "import" | "create";
 type ImportMode = "export" | "address" | "signer";
 type ParsedScript = { script: NativeScript | null; error: string | null; format: "json" | "cbor" | "empty" };
-type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
-type ConnectedWallet = { id: string; name: string; api: BrowserWalletApi; networkId: number; addressHex: string; keyHash: string | null };
 type AssetLine = { id: string; unit: string; label: string; quantity: string; decimals?: number };
-type ServerProviderStatus = { mode: "server"; network: string; ready: boolean; services: { blockfrost: boolean; kupo: boolean; ogmios: boolean; submit: boolean } };
 type RecoveredScript = { source: string; txHash: string; scriptHash: string; paymentScript: NativeScript };
 type AddressDiscovery = { source?: string; address?: string; handle?: { name: string; address: string }; assets: AssetLine[]; outputs?: number; recoveredScript?: RecoveredScript | null };
 
@@ -424,12 +420,10 @@ function signerCountLabel(draft: TxDraft) {
 }
 
 export default function Home() {
+  const { connected, refreshConnectedWallet } = useAppShell();
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
-  const [providers, setProviders] = useState<WalletProvider[]>([]);
-  const [connected, setConnected] = useState<ConnectedWallet | null>(null);
-  const [connectingWalletId, setConnectingWalletId] = useState<string | null>(null);
-  const [serverProvider, setServerProvider] = useState<ServerProviderStatus | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   const [mode, setMode] = useState<Mode>("import");
   const [importMode, setImportMode] = useState<ImportMode>("export");
@@ -453,31 +447,39 @@ export default function Home() {
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    setWallets(loadWallets());
-    setDrafts(loadDrafts());
-    const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
-    fetch("/api/cardano/provider")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => setServerProvider(payload))
-      .catch(() => setServerProvider(null));
+    const loadedWallets = loadWallets();
+    const loadedDrafts = loadDrafts();
+    setWallets(loadedWallets);
 
     const invite = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("invite");
     if (invite) {
       const draft = decodeInvite(invite, migrateDraft);
       if (!draft) {
         setStatus("Invite link is malformed. Ask the coordinator to copy the signer invite again.");
-        return stopWatchingWallets;
+        setDrafts(loadedDrafts);
+        setHydrated(true);
+        return;
       }
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-      setDrafts((current) => (current.some((item) => item.id === draft.id) ? current : [draft, ...current]));
+      setDrafts(loadedDrafts.some((item) => item.id === draft.id) ? loadedDrafts : [draft, ...loadedDrafts]);
       setActiveDraftId(draft.id);
       setStatus("Invite loaded. Review the transaction below, connect a signer wallet, then click Sign.");
+    } else {
+      setDrafts(loadedDrafts);
     }
-    return stopWatchingWallets;
+    setHydrated(true);
   }, []);
 
-  useEffect(() => saveWallets(wallets), [wallets]);
-  useEffect(() => saveDrafts(drafts), [drafts]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveWallets(wallets);
+    notifyAppStorageChanged();
+  }, [wallets, hydrated]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveDrafts(drafts);
+    notifyAppStorageChanged();
+  }, [drafts, hydrated]);
 
   const cleanedSigners = useMemo(() => signers.map(cleanSigner), [signers]);
   const validSigners = cleanedSigners.filter((signer) => isKeyHash(signer.keyHash));
@@ -523,85 +525,19 @@ export default function Home() {
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this transaction targets ${formatTargetNetwork(activeDraft.network)}.`
       : "";
 
-  async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error(message)), milliseconds);
-    });
-    try {
-      return await Promise.race([promise, timeout]);
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  }
-
-  async function connectWallet(provider: WalletProvider) {
-    if (connectingWalletId) return;
-    setConnectingWalletId(provider.id);
-    setStatus(`Open ${provider.name} and approve the connection...`);
-
-    try {
-      const api = await withTimeout(
-        provider.enable(),
-        12000,
-        `${provider.name} did not answer. Unlock Eternl/reopen the wallet popup, then try again.`,
-      );
-      let networkId = -1;
-      let addressHex = "";
-      let keyHash: string | null = null;
-      try {
-        networkId = await withTimeout(api.getNetworkId(), 5000, "Network lookup timed out.");
-      } catch {
-        networkId = -1;
-      }
-      try {
-        const used = await withTimeout(api.getUsedAddresses(), 5000, "Address lookup timed out.");
-        const unused = used.length ? [] : await withTimeout(api.getUnusedAddresses(), 5000, "Unused address lookup timed out.");
-        addressHex = used[0] || unused[0] || (await withTimeout(api.getChangeAddress(), 5000, "Change address lookup timed out."));
-        keyHash = addressHex ? await keyHashFromAddress(addressHex) : null;
-      } catch {
-        addressHex = "";
-        keyHash = null;
-      }
-      setConnected({ id: provider.id, name: provider.name, api, networkId, addressHex, keyHash });
-      if (keyHash) {
-        setSignerSearchKeyHash(keyHash);
-        setSignerSearchInput(keyHash);
-        setSignerSearchError("");
-      }
-
-      if (activeDraft && networkId >= 0 && networkId !== expectedNetworkId(activeDraft.network)) {
-        setStatus(`Connected ${provider.name}, but it is on ${networkLabel(networkId)}. Switch to ${formatTargetNetwork(activeDraft.network)} before signing.`);
-      } else if (activeDraft && keyHash && !signerMatchesDraft(activeDraft, keyHash)) {
-        setStatus(`Connected ${provider.name}, but this key hash is not one of the required signer hashes for the loaded invite.`);
-      } else if (keyHash) {
-        setStatus(`Connected ${provider.name}. Signer key hash detected, so the witness can be matched automatically.`);
-      } else {
-        setStatus(`Connected ${provider.name}. Signing still works, but the signer key hash could not be verified automatically.`);
-      }
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : `Could not connect ${provider.name}.`);
-    } finally {
-      setConnectingWalletId(null);
-    }
-  }
-
   async function refreshConnectedSigner() {
     if (!connected) {
       setSignerSearchError("Connect Lace, Eternl, or VESPR first, or paste a signer address/key hash below.");
       return;
     }
     try {
-      const used = await withTimeout(connected.api.getUsedAddresses(), 5000, "Address lookup timed out.");
-      const unused = used.length ? [] : await withTimeout(connected.api.getUnusedAddresses(), 5000, "Unused address lookup timed out.");
-      const addressHex = used[0] || unused[0] || (await withTimeout(connected.api.getChangeAddress(), 5000, "Change address lookup timed out."));
-      const keyHash = addressHex ? await keyHashFromAddress(addressHex) : null;
-      setConnected({ ...connected, addressHex, keyHash });
+      const refreshed = await refreshConnectedWallet();
+      const keyHash = refreshed.keyHash;
       if (!keyHash) throw new Error("Could not derive a payment key hash from the connected signer wallet.");
       setSignerSearchInput(keyHash);
       setSignerSearchKeyHash(keyHash);
       setSignerSearchError("");
-      setStatus(`Signer search refreshed from ${connected.name}.`);
+      setStatus(`Signer search refreshed from ${refreshed.name}.`);
     } catch (error) {
       setSignerSearchError(error instanceof Error ? error.message : "Could not refresh signer search.");
     }
@@ -872,21 +808,7 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
-      <AppHeader
-        providers={providers}
-        connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-        connectingId={connectingWalletId}
-        providerStatus={serverProvider}
-        walletCount={wallets.length}
-        roomCount={drafts.length}
-        onConnect={(provider) => void connectWallet(provider)}
-        onDisconnect={() => {
-          setConnected(null);
-          setStatus("Signer wallet disconnected from this browser session.");
-        }}
-      />
-
+    <div className="flex flex-col gap-6">
       {activeDraft ? (
         <AppWindow title="Pending signature request" className="border-emerald-400/25">
           <div className="px-5 pt-5">
@@ -1412,6 +1334,6 @@ export default function Home() {
       ) : null}
 
       {status ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{status}</div> : null}
-    </main>
+    </div>
   );
 }

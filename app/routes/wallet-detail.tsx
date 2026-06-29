@@ -15,7 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "../lib/utils";
-import { AppHeader } from "../components/app-header";
+import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -24,7 +24,6 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
-import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type MultisigWallet as Wallet,
   type NativeScript,
@@ -50,29 +49,11 @@ import {
   unmatchedSignatureCount,
 } from "../lib/multisig";
 
-type CardanoWalletApi = BrowserWalletApi;
-
-type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
-
-type ConnectedWallet = {
-  id: string;
-  name: string;
-  api: CardanoWalletApi;
-  networkId: number;
-  keyHash: string | null;
-};
-
 type AssetLine = { id: string; unit: string; label: string; quantity: string; decimals?: number };
 type AssetOption = { unit: string; label: string; quantity: string; outputCount?: number; decimals?: number };
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 type AssetFetch = { assets: AssetOption[]; handle?: HandleInfo | null; source?: string; address?: string; outputs?: number };
 type TxPhase = "pending" | "ready" | "submitted";
-type ServerProviderStatus = {
-  mode: "server";
-  network: string;
-  ready: boolean;
-  services: { blockfrost: boolean; kupo: boolean; ogmios: boolean; submit: boolean };
-};
 
 export function meta() {
   return [{ title: "Wallet · Cardano Multisig" }];
@@ -90,18 +71,7 @@ function readArray<T>(key: string): T[] {
 
 function writeArray<T>(key: string, value: T[]) {
   window.localStorage.setItem(key, JSON.stringify(value, null, 2));
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  notifyAppStorageChanged();
 }
 
 function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {
@@ -135,29 +105,6 @@ function phaseIcon(status: TxPhase) {
 function phaseLabel(status: TxPhase) {
   if (status === "ready") return "ready to submit";
   return status;
-}
-
-function hexToBytes(hex: string) {
-  const out = new Uint8Array(hex.length / 2);
-  for (let index = 0; index < out.length; index += 1) {
-    out[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
-  }
-  return out;
-}
-
-async function keyHashFromAddress(addressHex: string): Promise<string | null> {
-  try {
-    const CSL = await import("@emurgo/cardano-serialization-lib-browser");
-    const address = CSL.Address.from_bytes(hexToBytes(addressHex));
-    const base = CSL.BaseAddress.from_address(address);
-    const enterprise = CSL.EnterpriseAddress.from_address(address);
-    const reward = CSL.RewardAddress.from_address(address);
-    const credential = base?.payment_cred() ?? enterprise?.payment_cred() ?? reward?.payment_cred();
-    const keyHash = credential?.to_keyhash();
-    return keyHash ? keyHash.to_hex() : null;
-  } catch {
-    return null;
-  }
 }
 
 function handleCandidate(wallet: { name?: string; handle?: string }) {
@@ -335,12 +282,10 @@ function inviteLink(tx: TxDraft) {
 export default function WalletDetail() {
   const { walletId } = useParams();
   const [searchParams] = useSearchParams();
+  const { providers, connected, providerStatus } = useAppShell();
 
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [txs, setTxs] = useState<TxDraft[]>([]);
-  const [providers, setProviders] = useState<WalletProvider[]>([]);
-  const [connected, setConnected] = useState<ConnectedWallet | null>(null);
-  const [connecting, setConnecting] = useState<string | null>(null);
   const [signStatus, setSignStatus] = useState("");
   const [walletAssets, setWalletAssets] = useState<AssetOption[]>([]);
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
@@ -348,17 +293,10 @@ export default function WalletDetail() {
   const [nameInput, setNameInput] = useState("");
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
   const [signaturePackageInput, setSignaturePackageInput] = useState("");
-  const [providerStatus, setProviderStatus] = useState<ServerProviderStatus | null>(null);
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
     setTxs(readArray<TxDraft>(TX_KEY));
-    const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
-    fetch("/api/cardano/provider")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => setProviderStatus(payload))
-      .catch(() => setProviderStatus(null));
-    return stopWatchingWallets;
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);
@@ -386,48 +324,6 @@ export default function WalletDetail() {
     connected && wallet && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(wallet.network)
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this multisig wallet is on ${formatTargetNetwork(wallet.network)}.`
       : "";
-
-  async function connectSigner(provider: WalletProvider) {
-    if (connecting) return;
-    setConnecting(provider.id);
-    setSignStatus(`Open ${provider.name} and approve the connection...`);
-
-    try {
-      const api = await withTimeout(provider.enable(), 12000, `${provider.name} did not answer. Unlock the wallet popup, then try again.`);
-
-      let networkId = -1;
-      let keyHash: string | null = null;
-      try {
-        networkId = await withTimeout(api.getNetworkId(), 5000, "Network lookup timed out.");
-      } catch {
-        networkId = -1;
-      }
-      try {
-        const used = await withTimeout(api.getUsedAddresses(), 5000, "Address lookup timed out.");
-        const unused = used.length ? [] : await withTimeout(api.getUnusedAddresses(), 5000, "Unused address lookup timed out.");
-        const address = used[0] || unused[0] || (await withTimeout(api.getChangeAddress(), 5000, "Change address lookup timed out."));
-        keyHash = address ? await keyHashFromAddress(address) : null;
-      } catch {
-        keyHash = null;
-      }
-
-      setConnected({ id: provider.id, name: provider.name, api, networkId, keyHash });
-
-      if (wallet && networkId >= 0 && networkId !== expectedNetworkId(wallet.network)) {
-        setSignStatus(`Connected ${provider.name}, but it is on ${networkLabel(networkId)}. Switch to ${formatTargetNetwork(wallet.network)} before signing.`);
-      } else if (wallet && keyHash && !wallet.signers.some((signer) => signer.keyHash.toLowerCase() === keyHash.toLowerCase())) {
-        setSignStatus(`Connected ${provider.name}, but this signer is not part of the multisig policy.`);
-      } else if (keyHash) {
-        setSignStatus(`Connected ${provider.name} · ${keyHash.slice(0, 12)}…. You can sign any pending transaction below.`);
-      } else {
-        setSignStatus(`Connected ${provider.name}. You can sign, but the signer key hash could not be verified automatically.`);
-      }
-    } catch (error) {
-      setSignStatus(error instanceof Error ? error.message : `Could not connect ${provider.name}.`);
-    } finally {
-      setConnecting(null);
-    }
-  }
 
   async function signTransaction(tx: TxDraft) {
     if (!connected) {
@@ -618,27 +514,14 @@ export default function WalletDetail() {
 
   if (!wallet) {
     return (
-      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
-        <AppHeader
-          providers={providers}
-          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-          connectingId={connecting}
-          providerStatus={providerStatus}
-          walletCount={wallets.length}
-          roomCount={txs.length}
-          onConnect={(provider) => void connectSigner(provider)}
-          onDisconnect={() => {
-            setConnected(null);
-            setSignStatus("Signer wallet disconnected from this browser session.");
-          }}
-        />
+      <div className="flex flex-col gap-6">
         <Link className="text-sm text-sky-300" to="/">
           ← Back
         </Link>
         <Card className="glass-panel">
           <CardContent className="p-8 text-slate-300">Wallet not found in this browser. Import or create it first.</CardContent>
         </Card>
-      </main>
+      </div>
     );
   }
 
@@ -647,21 +530,7 @@ export default function WalletDetail() {
   const submitted = walletTxs.filter((tx) => txPhase(tx) === "submitted").length;
 
   return (
-    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
-      <AppHeader
-        providers={providers}
-        connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-        connectingId={connecting}
-        providerStatus={providerStatus}
-        walletCount={wallets.length}
-        roomCount={txs.length}
-        onConnect={(provider) => void connectSigner(provider)}
-        onDisconnect={() => {
-          setConnected(null);
-          setSignStatus("Signer wallet disconnected from this browser session.");
-        }}
-      />
-
+    <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300">
@@ -994,6 +863,6 @@ export default function WalletDetail() {
           </Card>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

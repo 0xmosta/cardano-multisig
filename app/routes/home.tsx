@@ -16,6 +16,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
 import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
@@ -1218,7 +1219,7 @@ export default function Home() {
                 return (
                   <TableRow key={wallet.id}>
                     <TableCell className="min-w-72">
-                      <a href={walletHref(wallet)} className="flex min-w-0 items-center gap-3">
+                      <Link to={walletHref(wallet)} className="flex min-w-0 items-center gap-3">
                         <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/5 text-zinc-300 ring-1 ring-white/10">
                           <WalletCards className="size-5" />
                         </div>
@@ -1228,7 +1229,7 @@ export default function Home() {
                             {isWatchOnly ? wallet.discovery?.address : wallet.handle ? wallet.name : wallet.id}
                           </div>
                         </div>
-                      </a>
+                      </Link>
                     </TableCell>
                     <TableCell className="min-w-48 text-zinc-300">
                       {isWatchOnly ? (
@@ -1256,9 +1257,9 @@ export default function Home() {
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
-                      <a href={walletHref(wallet)} className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground shadow-xs transition hover:bg-secondary/80">
+                      <Link to={walletHref(wallet)} className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground shadow-xs transition hover:bg-secondary/80">
                         {isWatchOnly ? "Open watch" : "Open wallet"} <ArrowRight className="size-4" />
-                      </a>
+                      </Link>
                       <Button size="sm" variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
                         <Download className="size-4" /> Export
                       </Button>

@@ -557,12 +557,12 @@ export default function WalletDetail() {
             {isWatchOnly ? (
               <Badge variant="outline">native script not imported</Badge>
             ) : (
-              <a
-                href={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
+              <Link
+                to={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
               >
                 <Plus className="size-4" /> Create transaction
-              </a>
+              </Link>
             )}
           </div>
         </div>

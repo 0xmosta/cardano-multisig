@@ -752,21 +752,6 @@ export default function NewTransaction() {
               <CardDescription>Build once, then collect {wallet.threshold} verified signature{wallet.threshold === 1 ? "" : "s"}.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 p-5">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-md border border-white/8 bg-black/20 p-3">
-                  <div className="text-lg font-semibold text-slate-50">{assets.length}</div>
-                  <div className="text-xs text-slate-500">asset lines</div>
-                </div>
-                <div className="rounded-md border border-white/8 bg-black/20 p-3">
-                  <div className="text-lg font-semibold text-emerald-300">{wallet.threshold}</div>
-                  <div className="text-xs text-slate-500">needed</div>
-                </div>
-                <div className="rounded-md border border-white/8 bg-black/20 p-3">
-                  <div className="text-lg font-semibold text-sky-300">{connected ? "1" : "0"}</div>
-                  <div className="text-xs text-slate-500">ready now</div>
-                </div>
-              </div>
-
               <div className="space-y-3">
                 {requestedAssetSummary.map((asset) => (
                   <div key={asset.id} className="flex items-center gap-3 rounded-md border border-white/8 bg-black/20 p-3">

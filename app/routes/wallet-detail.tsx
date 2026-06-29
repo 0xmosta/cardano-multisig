@@ -531,31 +531,55 @@ export default function WalletDetail() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300">
-            <ArrowLeft className="size-4" /> Back to wallets
-          </Link>
-          <h1 className="mt-3 text-4xl font-semibold text-slate-50">
-            {resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}
-          </h1>
-          <p className="mt-2 text-slate-400">
+      <section className="rounded-xl border border-white/8 bg-[#121214] p-5 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.95)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300 transition hover:text-sky-200">
+              <ArrowLeft className="size-4" /> Back to wallets
+            </Link>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <h1 className="min-w-0 truncate text-3xl font-semibold tracking-tight text-slate-50">
+                {resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}
+              </h1>
+              <Badge variant="outline" className="border-white/10 text-zinc-400">{wallet.network}</Badge>
+              <Badge variant={isWatchOnly ? "outline" : "secondary"} className={isWatchOnly ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : ""}>
+                {isWatchOnly ? "watch-only" : `${wallet.threshold}-of-${wallet.signers.length}`}
+              </Badge>
+            </div>
+            <p className="mt-2 max-w-5xl text-sm leading-6 text-slate-400">
+              {isWatchOnly ? (
+                <span className="break-all">{wallet.discovery?.address}</span>
+              ) : (
+                <>
+                  {resolvedHandle ? `${wallet.name} · ` : ""}
+                  payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript)}
+                </>
+              )}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-zinc-300">
+                {walletTxs.length} transaction{walletTxs.length === 1 ? "" : "s"}
+              </span>
+              {pending ? (
+                <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-200">
+                  {pending} need signature{pending === 1 ? "" : "s"}
+                </span>
+              ) : null}
+              {ready ? (
+                <span className="rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-emerald-200">
+                  {ready} ready
+                </span>
+              ) : null}
+              {submitted ? (
+                <span className="rounded-md border border-sky-400/20 bg-sky-400/10 px-2 py-1 text-sky-200">
+                  {submitted} submitted
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 justify-end">
             {isWatchOnly ? (
-              <>
-                {wallet.network} · watch-only · <span className="break-all">{wallet.discovery?.address}</span>
-              </>
-            ) : (
-              <>
-                {resolvedHandle ? `${wallet.name} · ` : ""}
-                {wallet.network} · {wallet.signers.length} signers · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript)}
-              </>
-            )}
-          </p>
-        </div>
-        <div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[560px]">
-          <div className="flex justify-end">
-            {isWatchOnly ? (
-              <Badge variant="outline">native script not imported</Badge>
+              <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">native script not imported</Badge>
             ) : (
               <Link
                 to={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
@@ -566,27 +590,6 @@ export default function WalletDetail() {
             )}
           </div>
         </div>
-      </div>
-
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card className="glass-panel">
-          <CardContent className="p-4">
-            <div className="text-2xl font-semibold text-sky-200">{walletTxs.length}</div>
-            <div className="text-xs text-slate-400">transactions</div>
-          </CardContent>
-        </Card>
-        <Card className="glass-panel">
-          <CardContent className="p-4">
-            <div className="text-2xl font-semibold text-amber-300">{pending}</div>
-            <div className="text-xs text-slate-400">need signatures</div>
-          </CardContent>
-        </Card>
-        <Card className="glass-panel">
-          <CardContent className="p-4">
-            <div className="text-2xl font-semibold text-emerald-300">{ready + submitted}</div>
-            <div className="text-xs text-slate-400">ready/submitted</div>
-          </CardContent>
-        </Card>
       </section>
 
       {connectWarning ? (

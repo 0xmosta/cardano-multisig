@@ -541,13 +541,6 @@ export default function Home() {
     });
   }, [scopedWallets, walletSearch]);
 
-  const walletOverview = useMemo(() => {
-    const watchOnly = wallets.filter((wallet) => !wallet.paymentScript && Boolean(wallet.discovery?.address)).length;
-    const readyRooms = drafts.filter((draft) => pendingSignatureCount(draft) <= 0).length;
-    const missingSignatures = drafts.reduce((total, draft) => total + pendingSignatureCount(draft), 0);
-    return { watchOnly, readyRooms, missingSignatures };
-  }, [wallets, drafts]);
-
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
   const activeNetworkWarning =
     connected && activeDraft && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(activeDraft.network)
@@ -1198,27 +1191,22 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      <section className="grid gap-3 md:grid-cols-4">
-        {[
-          { label: "Wallets", value: wallets.length, hint: `${walletOverview.watchOnly} watch-only` },
-          { label: "Rooms", value: drafts.length, hint: `${walletOverview.readyRooms} ready` },
-          { label: "Missing signatures", value: walletOverview.missingSignatures, hint: "across local rooms" },
-          { label: "Signer filter", value: activeSignerKeyHash ? "on" : "off", hint: connected ? `${connected.name} connected` : "no signer wallet" },
-        ].map((item) => (
-          <div key={item.label} className="rounded-lg border border-white/8 bg-[#121214] px-4 py-3 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.95)]">
-            <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{item.label}</div>
-            <div className="mt-2 text-2xl font-semibold leading-none text-zinc-50">{item.value}</div>
-            <div className="mt-2 truncate text-xs text-zinc-500">{item.hint}</div>
-          </div>
-        ))}
-      </section>
-
       <section>
         <AppWindow title="Wallets" contentClassName="p-0">
           <div className="border-b border-white/8 p-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold text-zinc-50">{importMode === "signer" && activeSignerKeyHash ? "Matching wallets" : "Wallets"}</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-xl font-semibold text-zinc-50">{importMode === "signer" && activeSignerKeyHash ? "Matching wallets" : "Wallets"}</h2>
+                  <Badge variant="secondary">
+                    {wallets.length} wallet{wallets.length === 1 ? "" : "s"}
+                  </Badge>
+                  {drafts.length ? (
+                    <Badge variant="outline" className="border-white/10 text-zinc-400">
+                      {drafts.length} room{drafts.length === 1 ? "" : "s"}
+                    </Badge>
+                  ) : null}
+                </div>
                 <p className="mt-1 max-w-2xl text-sm text-zinc-400">
                   {importMode === "signer" && activeSignerKeyHash
                     ? "These saved multisig policies include the active signer key hash."

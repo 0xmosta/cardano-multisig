@@ -4,9 +4,11 @@ import {
   Clock,
   Copy,
   Download,
+  FileJson,
   Import,
   Link2,
   Plus,
+  Search,
   ShieldCheck,
   Trash2,
   Users,
@@ -25,6 +27,7 @@ import { Label } from "../components/ui/label";
 import { Progress } from "../components/ui/progress";
 import { Textarea } from "../components/ui/textarea";
 import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
+import { installedBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type MultisigWallet,
   type NativeScript,
@@ -62,25 +65,13 @@ import {
 } from "../lib/multisig";
 
 type Mode = "import" | "create";
+type ImportMode = "export" | "address" | "signer";
 type ParsedScript = { script: NativeScript | null; error: string | null; format: "json" | "cbor" | "empty" };
-type CardanoWalletApi = {
-  getUsedAddresses(): Promise<string[]>;
-  getUnusedAddresses(): Promise<string[]>;
-  getChangeAddress(): Promise<string>;
-  getNetworkId(): Promise<number>;
-  signTx(txCbor: string, partialSign?: boolean): Promise<string>;
-  submitTx?(txCbor: string): Promise<string>;
-};
-type WalletProvider = { id: string; name: string; icon?: string; enable(): Promise<CardanoWalletApi> };
-type ConnectedWallet = { id: string; name: string; api: CardanoWalletApi; networkId: number; addressHex: string; keyHash: string | null };
+type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
+type ConnectedWallet = { id: string; name: string; api: BrowserWalletApi; networkId: number; addressHex: string; keyHash: string | null };
 type AssetLine = { id: string; unit: string; label: string; quantity: string };
 type ServerProviderStatus = { mode: "server"; network: string; ready: boolean; services: { blockfrost: boolean; kupo: boolean; ogmios: boolean; submit: boolean } };
-
-declare global {
-  interface Window {
-    cardano?: Record<string, { name?: string; icon?: string; enable?: () => Promise<CardanoWalletApi> }>;
-  }
-}
+type AddressDiscovery = { source?: string; address?: string; handle?: { name: string; address: string }; assets: AssetLine[]; outputs?: number };
 
 const SAMPLE_PAYMENT_SCRIPT = [
   "83030283",
@@ -332,11 +323,30 @@ async function keyHashFromAddress(addressHex: string): Promise<string | null> {
   }
 }
 
-function installedWallets(): WalletProvider[] {
-  if (typeof window === "undefined" || !window.cardano) return [];
-  return Object.entries(window.cardano)
-    .filter(([, wallet]) => typeof wallet.enable === "function")
-    .map(([id, wallet]) => ({ id, name: wallet.name || id, icon: wallet.icon, enable: wallet.enable!.bind(wallet) }));
+function looksLikeAddress(value: string) {
+  return /^addr(_test)?1[0-9a-z]+$/i.test(value.trim());
+}
+
+function normalizeHandleInput(value: string) {
+  return value.trim().replace(/^\$/, "");
+}
+
+function parseImportSource(value: string):
+  | { kind: "empty" }
+  | { kind: "wallet"; wallet: MultisigWallet }
+  | { kind: "script"; parsed: ParsedScript } {
+  const trimmed = value.trim();
+  if (!trimmed) return { kind: "empty" };
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      const wallet = migrateWallet(parsed);
+      if (wallet) return { kind: "wallet", wallet };
+    } catch {
+      // Fall through to script parsing so the user still gets a specific JSON error.
+    }
+  }
+  return { kind: "script", parsed: parseScript(value, true) };
 }
 
 function signerMatchesDraft(draft: TxDraft, keyHash: string | null) {
@@ -374,11 +384,16 @@ export default function Home() {
   const [serverProvider, setServerProvider] = useState<ServerProviderStatus | null>(null);
 
   const [mode, setMode] = useState<Mode>("import");
+  const [importMode, setImportMode] = useState<ImportMode>("export");
   const [threshold, setThreshold] = useState(2);
   const [signers, setSigners] = useState<Signer[]>([emptySigner("Signer 1"), emptySigner("Signer 2"), emptySigner("Signer 3")]);
   const [importHandle, setImportHandle] = useState("");
-  const [paymentScriptText, setPaymentScriptText] = useState("");
+  const [walletImportText, setWalletImportText] = useState("");
   const [stakeScriptText, setStakeScriptText] = useState("");
+  const [addressOrHandle, setAddressOrHandle] = useState("");
+  const [discoveringAddress, setDiscoveringAddress] = useState(false);
+  const [addressDiscovery, setAddressDiscovery] = useState<AddressDiscovery | null>(null);
+  const [addressDiscoveryError, setAddressDiscoveryError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
@@ -388,7 +403,7 @@ export default function Home() {
   useEffect(() => {
     setWallets(loadWallets());
     setDrafts(loadDrafts());
-    setProviders(installedWallets());
+    setProviders(installedBrowserWallets());
     fetch("/api/cardano/provider")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => setServerProvider(payload))
@@ -417,14 +432,31 @@ export default function Home() {
   const canSave = validSigners.length >= 2 && clampedThreshold <= validSigners.length;
   const scriptJson = JSON.stringify(draftScript, null, 2);
 
-  const parsedPayment = useMemo(() => parseScript(paymentScriptText, true), [paymentScriptText]);
-  const parsedStake = useMemo(() => parseScript(stakeScriptText, false), [stakeScriptText]);
-  const importedSigners = useMemo(
-    () => uniqueSigners([...collectSigners(parsedPayment.script, "payment"), ...collectSigners(parsedStake.script, "stake")]),
-    [parsedPayment.script, parsedStake.script],
+  const parsedImportSource = useMemo(() => parseImportSource(walletImportText), [walletImportText]);
+  const parsedPayment = useMemo(
+    () => (parsedImportSource.kind === "script" ? parsedImportSource.parsed : parseScript("", true)),
+    [parsedImportSource],
   );
-  const importThreshold = requiredSignatures(parsedPayment.script);
-  const canImport = Boolean(parsedPayment.script) && !parsedPayment.error && !parsedStake.error;
+  const parsedStake = useMemo(
+    () => (parsedImportSource.kind === "wallet" ? { script: parsedImportSource.wallet.stakeScript ?? null, error: null, format: "json" as const } : parseScript(stakeScriptText, false)),
+    [parsedImportSource, stakeScriptText],
+  );
+  const importedSigners = useMemo(
+    () =>
+      parsedImportSource.kind === "wallet"
+        ? uniqueSigners(parsedImportSource.wallet.signers)
+        : uniqueSigners([...collectSigners(parsedPayment.script, "payment"), ...collectSigners(parsedStake.script, "stake")]),
+    [parsedImportSource, parsedPayment.script, parsedStake.script],
+  );
+  const importThreshold = parsedImportSource.kind === "wallet" ? parsedImportSource.wallet.threshold : requiredSignatures(parsedPayment.script);
+  const canImport =
+    parsedImportSource.kind === "wallet"
+      ? Boolean(parsedImportSource.wallet.paymentScript)
+      : Boolean(parsedPayment.script) && !parsedPayment.error && !parsedStake.error;
+  const signerWalletMatches = useMemo(
+    () => (connected?.keyHash ? wallets.filter((wallet) => wallet.signers.some((signer) => signer.keyHash.toLowerCase() === connected.keyHash!.toLowerCase())) : []),
+    [connected?.keyHash, wallets],
+  );
 
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
   const activeNetworkWarning =
@@ -491,23 +523,87 @@ export default function Home() {
   }
 
   function importWallet() {
-    if (!canImport || !parsedPayment.script) return;
-    const handle = importHandle.trim().replace(/^\$/, "");
-    const wallet: MultisigWallet = {
-      id: createId("wallet"),
-      name: handle ? `$${handle}` : "Imported wallet",
-      handle: handle || undefined,
-      network: DEFAULT_NETWORK,
-      threshold: importThreshold,
-      signers: importedSigners,
-      paymentScript: parsedPayment.script,
-      stakeScript: parsedStake.script,
-      script: parsedPayment.script,
-      createdAt: nowIso(),
-      imported: true,
-    };
+    if (!canImport) return;
+    const handle = normalizeHandleInput(importHandle);
+    const wallet: MultisigWallet =
+      parsedImportSource.kind === "wallet"
+        ? {
+            ...parsedImportSource.wallet,
+            id: createId("wallet"),
+            name: handle ? `$${handle}` : parsedImportSource.wallet.name,
+            handle: handle || parsedImportSource.wallet.handle,
+            network: DEFAULT_NETWORK,
+            createdAt: nowIso(),
+            imported: true,
+          }
+        : {
+            id: createId("wallet"),
+            name: handle ? `$${handle}` : "Imported wallet",
+            handle: handle || undefined,
+            network: DEFAULT_NETWORK,
+            threshold: importThreshold,
+            signers: importedSigners,
+            paymentScript: parsedPayment.script!,
+            stakeScript: parsedStake.script,
+            script: parsedPayment.script!,
+            createdAt: nowIso(),
+            imported: true,
+          };
     setWallets((current) => [wallet, ...current]);
     setStatus("Wallet imported. Open it to create transactions and track signer progress.");
+  }
+
+  async function lookupAddressImport() {
+    const input = addressOrHandle.trim();
+    if (!input) {
+      setAddressDiscovery(null);
+      setAddressDiscoveryError("Paste an addr... / addr_test... multisig address or an ADA Handle.");
+      return;
+    }
+
+    const handle = normalizeHandleInput(input);
+    if (!looksLikeAddress(input) && !handle) {
+      setAddressDiscovery(null);
+      setAddressDiscoveryError("Paste a valid multisig address or ADA Handle.");
+      return;
+    }
+
+    if (!looksLikeAddress(input) && DEFAULT_NETWORK !== "mainnet") {
+      setAddressDiscovery(null);
+      setAddressDiscoveryError("ADA Handle lookup is only available on mainnet. On preprod, import from a wallet export or native script instead.");
+      return;
+    }
+
+    setDiscoveringAddress(true);
+    setAddressDiscovery(null);
+    setAddressDiscoveryError("");
+    try {
+      const params = new URLSearchParams({ network: DEFAULT_NETWORK });
+      if (looksLikeAddress(input)) params.set("address", input.trim());
+      else params.set("handle", handle);
+
+      const response = await fetch(`/api/cardano/assets?${params.toString()}`);
+      const body = (await response.json().catch(() => null)) as
+        | ({ error?: string; source?: string; address?: string; handle?: { name: string; address: string }; outputs?: number; assets?: AssetLine[] })
+        | null;
+      if (!response.ok) {
+        throw new Error(body?.error || "Could not inspect that address yet.");
+      }
+
+      setAddressDiscovery({
+        source: body?.source,
+        address: body?.address,
+        handle: body?.handle,
+        outputs: body?.outputs,
+        assets: Array.isArray(body?.assets) ? body!.assets : [],
+      });
+      setStatus("Address discovery loaded. This preview can confirm assets and the resolved address, but it cannot reconstruct the full native script by itself.");
+    } catch (error) {
+      setAddressDiscovery(null);
+      setAddressDiscoveryError(error instanceof Error ? error.message : "Could not inspect that address yet.");
+    } finally {
+      setDiscoveringAddress(false);
+    }
   }
 
   function saveCreatedWallet() {
@@ -624,9 +720,9 @@ export default function Home() {
               <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">preprod</Badge>
               <Badge variant="secondary">{providerReadyLabel(serverProvider)}</Badge>
             </div>
-            <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-50 sm:text-4xl">Cardano multisig workspace</h1>
+            <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-50 sm:text-4xl">Cardano multisig</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-              Import policies, manage wallets, create transactions, invite signers, and collect witnesses from one signer-friendly control room.
+              Import a wallet, create a policy, or connect a signer. Advanced witness handling stays available below when you need it.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -773,22 +869,218 @@ export default function Home() {
         </AppWindow>
       ) : null}
 
-      <AppWindow title="Your wallets">
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <div className="flex items-center justify-between gap-4">
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+        <AppWindow title={mode === "import" ? "Import or create" : "Create policy"} contentClassName="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-zinc-50">Wallet workspace</h2>
+              <p className="mt-1 text-sm text-zinc-400">Keep the first step simple: import something real, or create a fresh M-of-N policy.</p>
+            </div>
+            <div className="grid grid-cols-2 rounded-lg border border-border bg-slate-950/70 p-1">
+              {(["import", "create"] as Mode[]).map((item) => (
+                <Button key={item} variant={mode === item ? "default" : "ghost"} size="sm" onClick={() => setMode(item)}>
+                  {item === "import" ? <Import className="size-4" /> : <Plus className="size-4" />}
+                  {item}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {mode === "import" ? (
+            <>
+              <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-slate-950/70 p-1">
+                {([
+                  { id: "export", label: "Script", icon: FileJson },
+                  { id: "address", label: "Address", icon: Search },
+                  { id: "signer", label: "Signer", icon: WalletCards },
+                ] as { id: ImportMode; label: string; icon: typeof FileJson }[]).map((item) => (
+                  <Button key={item.id} type="button" variant={importMode === item.id ? "default" : "ghost"} size="sm" className="min-w-0 px-2" onClick={() => setImportMode(item.id)}>
+                    <item.icon className="size-3.5 shrink-0" />
+                    {item.label}
+                  </Button>
+                ))}
+              </div>
+
+              {importMode === "export" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>Wallet export JSON or payment script</Label>
+                    <div className="flex items-center justify-between text-xs text-zinc-500">
+                      <span>Paste a previously exported wallet JSON, or paste payment native-script CBOR / JSON directly.</span>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setWalletImportText(SAMPLE_PAYMENT_SCRIPT)}>
+                        Load sample
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={walletImportText}
+                      onChange={(event) => setWalletImportText(event.target.value)}
+                      placeholder='Paste wallet export JSON or payment native-script CBOR / JSON'
+                      className="min-h-48 font-mono text-xs"
+                      aria-invalid={parsedImportSource.kind === "script" && Boolean(parsedPayment.error)}
+                    />
+                    {parsedImportSource.kind === "script" && parsedPayment.error ? <p className="text-sm text-red-300">{parsedPayment.error}</p> : null}
+                  </div>
+
+                  {parsedImportSource.kind !== "wallet" ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label>Stake script (optional)</Label>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setStakeScriptText(SAMPLE_STAKE_SCRIPT)}>
+                          Load sample
+                        </Button>
+                      </div>
+                      <Textarea value={stakeScriptText} onChange={(event) => setStakeScriptText(event.target.value)} placeholder="Paste stake native-script CBOR / JSON if it has one" className="min-h-32 font-mono text-xs" aria-invalid={Boolean(parsedStake.error)} />
+                      {parsedStake.error ? <p className="text-sm text-red-300">{parsedStake.error}</p> : null}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2">
+                    <Label>Display name / ADA Handle (optional)</Label>
+                    <Input value={importHandle} onChange={(event) => setImportHandle(event.target.value)} placeholder="$discatalyst" />
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <span>
+                        {parsedImportSource.kind === "wallet" ? (
+                          <span className="inline-flex items-center gap-2"><FileJson className="size-4" /> Wallet export detected · {parsedImportSource.wallet.threshold}-of-{parsedImportSource.wallet.signers.length}</span>
+                        ) : (
+                          <span>Detected {importedSigners.length} signer{importedSigners.length === 1 ? "" : "s"} · payment {summarizeScript(parsedPayment.script)} · stake {summarizeScript(parsedStake.script)}</span>
+                        )}
+                      </span>
+                      <div className="-space-x-2">
+                        {importedSigners.slice(0, 5).map((signer) => (
+                          <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-slate-950" />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <Button onClick={importWallet} disabled={!canImport}>Save imported wallet</Button>
+                </>
+              ) : null}
+
+              {importMode === "address" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>Multisig address or ADA Handle</Label>
+                    <Input value={addressOrHandle} onChange={(event) => setAddressOrHandle(event.target.value)} placeholder={DEFAULT_NETWORK === "mainnet" ? "addr1... or $treasury" : "addr_test1..."} />
+                    <p className="text-sm text-zinc-500">Use this when you know the receiving address or mainnet ADA Handle, but not the full script export.</p>
+                  </div>
+                  <Button variant="secondary" onClick={() => void lookupAddressImport()} disabled={discoveringAddress}>
+                    <Search className="size-4" /> {discoveringAddress ? "Checking address..." : "Inspect address"}
+                  </Button>
+                  {addressDiscoveryError ? <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{addressDiscoveryError}</div> : null}
+                  {addressDiscovery ? (
+                    <div className="space-y-3 rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
+                      <div>
+                        <div className="font-semibold text-zinc-100">{addressDiscovery.handle ? `$${addressDiscovery.handle.name}` : "Address discovery"}</div>
+                        <div className="mt-1 break-all text-xs text-zinc-500">{addressDiscovery.address || "Address not resolved"}</div>
+                        <div className="mt-2 text-xs text-zinc-500">Source: {addressDiscovery.source || "unknown"}{typeof addressDiscovery.outputs === "number" ? ` · ${addressDiscovery.outputs} output${addressDiscovery.outputs === 1 ? "" : "s"}` : ""}</div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {addressDiscovery.assets.slice(0, 8).map((asset) => (
+                          <div key={asset.id || asset.unit} className="rounded-full border border-border px-3 py-1 text-xs text-slate-200">
+                            {asset.quantity} {asset.label}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                        Discovery can confirm the resolved address and visible assets, but it cannot recover the native script from chain state alone. To save this wallet, re-import from a wallet export or native script.
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {importMode === "signer" ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
+                    {connected?.keyHash ? (
+                      <>
+                        <div className="font-semibold text-zinc-100">Connected signer key hash</div>
+                        <div className="mt-1 break-all font-mono text-xs text-zinc-400">{connected.keyHash}</div>
+                        <p className="mt-3 text-sm text-zinc-400">Known multisigs are the ones already saved in this browser. If nothing appears below, connect a different signer wallet or import a wallet export/script directly.</p>
+                      </>
+                    ) : (
+                      <p>Connect a signer wallet above to search saved multisigs that already include its key hash.</p>
+                    )}
+                  </div>
+
+                  {connected?.keyHash && signerWalletMatches.length ? (
+                    <div className="space-y-3">
+                      {signerWalletMatches.map((wallet) => (
+                        <a key={wallet.id} href={walletHref(wallet)} className="block rounded-lg border border-white/7 bg-white/[0.02] p-4 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.04]">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="font-semibold text-zinc-50">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</div>
+                              <div className="mt-1 text-xs text-zinc-500">{wallet.threshold}-of-{wallet.signers.length} · payment {summarizeScript(wallet.paymentScript)}</div>
+                            </div>
+                            <div className="inline-flex items-center gap-1 text-sm font-medium text-emerald-300">Open <ArrowRight className="size-4" /></div>
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {connected?.keyHash && !signerWalletMatches.length ? (
+                    <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                      No saved multisigs in this browser match the connected signer key hash yet. Registration and address discovery cannot reconstruct the full script automatically, so import the wallet export or native script to save it here first.
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                <div className="space-y-2">
+                  <Label>Signer threshold</Label>
+                  <Input type="number" min={1} max={Math.max(validSigners.length, 1)} value={threshold} onChange={(event) => setThreshold(Number(event.target.value || 1))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Detected rule</Label>
+                  <div className="rounded-md border border-border bg-slate-950/60 px-3 py-2 text-sm text-slate-300">{summarizeScript(draftScript)}</div>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {signers.map((signer, index) => (
+                  <div key={signer.id} className="grid gap-2 md:grid-cols-[160px_minmax(0,1fr)_40px]">
+                    <div className="flex items-center gap-2">
+                      <Avatar label={signer.label || `Signer ${index + 1}`} />
+                      <Input value={signer.label} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, label: event.target.value } : item))} placeholder={`Signer ${index + 1}`} />
+                    </div>
+                    <Input value={signer.keyHash} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, keyHash: event.target.value } : item))} placeholder="56-char key hash" />
+                    <Button variant="ghost" onClick={() => setSigners((current) => current.filter((item) => item.id !== signer.id))}>×</Button>
+                  </div>
+                ))}
+                <Button variant="secondary" onClick={() => setSigners((current) => [...current, emptySigner(`Signer ${current.length + 1}`)])}>Add signer</Button>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Generated script JSON</Label>
+                  <Button variant="ghost" size="sm" onClick={copyScript}>{copied ? <Check className="size-4" /> : <Copy className="size-4" />}{copied ? "Copied" : "Copy"}</Button>
+                </div>
+                <Textarea readOnly value={scriptJson} className="min-h-48 font-mono text-xs" />
+              </div>
+              <Button onClick={saveCreatedWallet} disabled={!canSave}>Save created wallet</Button>
+            </>
+          )}
+        </AppWindow>
+
+        <AppWindow title="Saved wallets">
+          <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold text-zinc-50">Saved wallets</h2>
               <p className="mt-1 text-sm text-zinc-400">Open a wallet to create transactions, copy signer invites, and track who is still missing.</p>
             </div>
             <Badge variant="secondary">{wallets.length} saved</Badge>
           </div>
-        </div>
           {wallets.length === 0 ? (
             <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
-              No wallets saved yet. Import scripts or create a new policy to start.
+              No wallets saved yet. Import a wallet export, native script, or create a new policy to start.
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2">
               {wallets.map((wallet) => (
                 <article className="rounded-lg border border-white/7 bg-white/[0.02] p-4 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.04]" key={wallet.id}>
                   <a href={walletHref(wallet)} className="block space-y-3">
@@ -831,106 +1123,7 @@ export default function Home() {
               ))}
             </div>
           )}
-      </AppWindow>
-
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <AppWindow title={mode === "import" ? "Import wallet" : "Create policy"} contentClassName="space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold text-zinc-50">Wallet workspace</h2>
-                <p className="mt-1 text-sm text-zinc-400">Import an existing native script or create a new M-of-N policy.</p>
-              </div>
-              <div className="grid grid-cols-2 rounded-lg border border-border bg-slate-950/70 p-1">
-                {(["import", "create"] as Mode[]).map((item) => (
-                  <Button key={item} variant={mode === item ? "default" : "ghost"} size="sm" onClick={() => setMode(item)}>
-                    {item === "import" ? <Import className="size-4" /> : <Plus className="size-4" />}
-                    {item}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-          {mode === "import" ? (
-            <>
-              <div className="space-y-2">
-                <Label>ADA Handle (optional)</Label>
-                <Input value={importHandle} onChange={(event) => setImportHandle(event.target.value)} placeholder="$discatalyst" />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Payment script CBOR / JSON</Label>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setPaymentScriptText(SAMPLE_PAYMENT_SCRIPT)}>Load sample</Button>
-                </div>
-                <Textarea value={paymentScriptText} onChange={(event) => setPaymentScriptText(event.target.value)} placeholder="Paste payment native-script CBOR hex or JSON" className="min-h-48 font-mono text-xs" aria-invalid={Boolean(parsedPayment.error)} />
-                {parsedPayment.error ? <p className="text-sm text-red-300">{parsedPayment.error}</p> : null}
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Stake script CBOR / JSON</Label>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setStakeScriptText(SAMPLE_STAKE_SCRIPT)}>Load sample</Button>
-                </div>
-                <Textarea value={stakeScriptText} onChange={(event) => setStakeScriptText(event.target.value)} placeholder="Paste stake native-script CBOR hex or JSON if it has one" className="min-h-32 font-mono text-xs" aria-invalid={Boolean(parsedStake.error)} />
-                {parsedStake.error ? <p className="text-sm text-red-300">{parsedStake.error}</p> : null}
-              </div>
-              <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span>Detected {importedSigners.length} signer{importedSigners.length === 1 ? "" : "s"} · payment {summarizeScript(parsedPayment.script)} · stake {summarizeScript(parsedStake.script)}</span>
-                  <div className="-space-x-2">
-                    {importedSigners.slice(0, 5).map((signer) => (
-                      <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-slate-950" />
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <Button onClick={importWallet} disabled={!canImport}>Save imported wallet</Button>
-            </>
-          ) : (
-            <>
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
-                <div className="space-y-2">
-                  <Label>Signer threshold</Label>
-                  <Input type="number" min={1} max={Math.max(validSigners.length, 1)} value={threshold} onChange={(event) => setThreshold(Number(event.target.value || 1))} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Detected rule</Label>
-                  <div className="rounded-md border border-border bg-slate-950/60 px-3 py-2 text-sm text-slate-300">{summarizeScript(draftScript)}</div>
-                </div>
-              </div>
-              <div className="space-y-3">
-                {signers.map((signer, index) => (
-                  <div key={signer.id} className="grid gap-2 md:grid-cols-[160px_minmax(0,1fr)_40px]">
-                    <div className="flex items-center gap-2">
-                      <Avatar label={signer.label || `Signer ${index + 1}`} />
-                      <Input value={signer.label} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, label: event.target.value } : item))} placeholder={`Signer ${index + 1}`} />
-                    </div>
-                    <Input value={signer.keyHash} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, keyHash: event.target.value } : item))} placeholder="56-char key hash" />
-                    <Button variant="ghost" onClick={() => setSigners((current) => current.filter((item) => item.id !== signer.id))}>×</Button>
-                  </div>
-                ))}
-                <Button variant="secondary" onClick={() => setSigners((current) => [...current, emptySigner(`Signer ${current.length + 1}`)])}>Add signer</Button>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Generated script JSON</Label>
-                  <Button variant="ghost" size="sm" onClick={copyScript}>{copied ? <Check className="size-4" /> : <Copy className="size-4" />}{copied ? "Copied" : "Copy"}</Button>
-                </div>
-                <Textarea readOnly value={scriptJson} className="min-h-48 font-mono text-xs" />
-              </div>
-              <Button onClick={saveCreatedWallet} disabled={!canSave}>Save created wallet</Button>
-            </>
-          )}
         </AppWindow>
-
-        <div className="space-y-6">
-          <AppWindow title="Witness package" contentClassName="space-y-3">
-              <div>
-                <h2 className="text-xl font-semibold text-zinc-50">Import witness package</h2>
-                <p className="mt-1 text-sm text-zinc-400">Paste a returned witness package from any signer. Both legacy and new formats work.</p>
-              </div>
-              <Textarea value={signaturePackage} onChange={(event) => setSignaturePackage(event.target.value)} placeholder="Paste witness package JSON here" className="min-h-40 font-mono text-xs" />
-              <Button variant="secondary" onClick={importSignature}>Import witness package</Button>
-          </AppWindow>
-        </div>
       </section>
 
       {drafts.length ? (
@@ -989,6 +1182,18 @@ export default function Home() {
           </CardContent>
         </Card>
       ) : null}
+
+      <details className="rounded-xl border border-white/8 bg-black/20 px-5 py-4 text-zinc-200">
+        <summary className="cursor-pointer list-none text-sm font-semibold text-zinc-100">Advanced witness import</summary>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-zinc-400">Paste a returned witness package from any signer. Both legacy and new formats still work here, but this tool stays out of first visual priority until you actually need it.</p>
+          <Textarea value={signaturePackage} onChange={(event) => setSignaturePackage(event.target.value)} placeholder="Paste witness package JSON here" className="min-h-40 font-mono text-xs" />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={importSignature}>Import witness package</Button>
+            {activeDraft ? <Button variant="ghost" onClick={() => setActiveDraftId(activeDraft.id)}>Back to active room</Button> : null}
+          </div>
+        </div>
+      </details>
 
       {status ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{status}</div> : null}
     </main>

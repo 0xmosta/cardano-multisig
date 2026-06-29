@@ -61,6 +61,9 @@
 - Run `npm run build` after route, Vite, or deployment changes.
 - For UX changes, verify desktop and mobile layout. Signing flows need a manual wallet smoke test on preprod before production use.
 - For multisig threshold UX, include at least one test state where threshold is met but optional policy signers remain unsigned, plus one unmatched-witness state with cleanup.
+- Kanban workers must not leave `npm run dev`, Playwright, browser, shim, or other long-running QA processes in the foreground as their final action. Start them only when needed for verification, record the URL/screenshot evidence, then stop them before completing or blocking the task.
+- Verifiers must validate the current worktree before blocking on a stale error. If another agent/Codex has patched the files after an earlier failure, rerun `npm run typecheck` and inspect the latest diff before reporting the blocker.
+- Do not rely on `codex exec` or other external second-opinion CLIs inside Kanban verification unless authentication is already known to work. If auth fails, continue with direct code review, repo commands, and screenshot/browser evidence instead of stalling.
 
 ## Kanban Handoff
 

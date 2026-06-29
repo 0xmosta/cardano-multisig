@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
+import { installedBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type AssetLine,
   type MultisigWallet as Wallet,
@@ -23,20 +24,9 @@ import {
   nowIso,
 } from "../lib/multisig";
 
-type CardanoWalletApi = {
-  getUsedAddresses(): Promise<string[]>;
-  getUnusedAddresses(): Promise<string[]>;
-  getChangeAddress(): Promise<string>;
-  getNetworkId(): Promise<number>;
-  signTx(txCbor: string, partialSign?: boolean): Promise<string>;
-};
+type CardanoWalletApi = BrowserWalletApi;
 
-type WalletProvider = {
-  id: string;
-  name: string;
-  icon?: string;
-  enable(): Promise<CardanoWalletApi>;
-};
+type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
 
 type ConnectedWallet = {
   id: string;
@@ -95,24 +85,6 @@ function readArray<T>(key: string): T[] {
 
 function writeArray<T>(key: string, value: T[]) {
   window.localStorage.setItem(key, JSON.stringify(value, null, 2));
-}
-
-function installedWallets(): WalletProvider[] {
-  const cardano =
-    typeof window === "undefined"
-      ? null
-      : (window as unknown as {
-          cardano?: Record<string, { name?: string; icon?: string; enable?: () => Promise<CardanoWalletApi> }>;
-        }).cardano;
-  if (!cardano) return [];
-  return Object.entries(cardano)
-    .filter(([, wallet]) => typeof wallet.enable === "function")
-    .map(([id, wallet]) => ({
-      id,
-      name: wallet.name || id,
-      icon: wallet.icon,
-      enable: wallet.enable!.bind(wallet),
-    }));
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -284,7 +256,7 @@ export default function NewTransaction() {
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
-    setProviders(installedWallets());
+    setProviders(installedBrowserWallets());
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);

@@ -68,7 +68,7 @@ export function WalletConnectorBar<TProvider extends WalletConnectorProvider>({
           <CircleUserRound className="size-5 text-zinc-300" />
           <span className="hidden max-w-24 truncate sm:inline">{connected ? connected.name : "Manage"}</span>
         </summary>
-        <div className="absolute right-0 top-11 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
+        <div className="wallet-popover rounded-lg border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
           <div className="flex items-start gap-3 border-b border-border pb-3">
             <Avatar label={connected?.name || "Signer"} tone={connected ? "success" : "muted"} />
             <div className="min-w-0">

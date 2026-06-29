@@ -96,12 +96,32 @@ button {
 .glass-panel {
   border: 1px solid var(--border);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0)) ,
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0)) ,
     var(--card);
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.03) inset,
     0 24px 60px -36px rgba(0, 0, 0, 0.85);
+}
+
+.wallet-popover {
+  position: absolute;
+  right: 0;
+  top: 3rem;
+  z-index: 30;
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 7rem);
+  overflow: auto;
+}
+
+@media (max-width: 639px) {
+  .wallet-popover {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    top: 8.5rem;
+    width: auto;
+  }
 }
 
 .code-scroll {

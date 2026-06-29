@@ -556,7 +556,7 @@ export default function NewTransaction() {
             <ArrowLeft className="size-4" /> Back to wallet
           </Link>
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-50 sm:text-4xl">Create transaction</h1>
+            <h1 className="text-3xl font-semibold text-slate-50 sm:text-4xl">Create transaction</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
               Select treasury assets, set the recipient, then build a signer-ready transaction room.
             </p>
@@ -574,7 +574,22 @@ export default function NewTransaction() {
       </div>
 
       <section className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <AppWindow title="Composer" contentClassName="space-y-5 p-5">
+        <AppWindow title="Transaction composer" contentClassName="space-y-5 p-5">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border border-white/8 bg-black/20 p-3">
+              <div className="text-xs font-medium uppercase text-slate-500">1. Assets</div>
+              <div className="mt-1 text-sm font-semibold text-slate-100">{assets.length} selected</div>
+            </div>
+            <div className="rounded-lg border border-white/8 bg-black/20 p-3">
+              <div className="text-xs font-medium uppercase text-slate-500">2. Recipient</div>
+              <div className="mt-1 truncate text-sm font-semibold text-slate-100">{recipient.trim() ? "Ready" : "Not set"}</div>
+            </div>
+            <div className="rounded-lg border border-white/8 bg-black/20 p-3">
+              <div className="text-xs font-medium uppercase text-slate-500">3. Signatures</div>
+              <div className="mt-1 text-sm font-semibold text-slate-100">{wallet.threshold}-of-{wallet.signers.length}</div>
+            </div>
+          </div>
+
           <div className="grid gap-3 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
             <div className="space-y-2">
               <Label>Title</Label>
@@ -619,7 +634,7 @@ export default function NewTransaction() {
                 const pickerOpen = openAssetPickerId === asset.id;
                 const choices = filteredAssetOptions(asset.unit);
                 return (
-                  <div key={asset.id} className="rounded-lg border border-white/8 bg-[#111113] p-3 transition focus-within:border-white/15">
+                  <div key={asset.id} className="rounded-lg border border-white/8 bg-[#111113] p-3 transition focus-within:border-white/15 hover:border-white/12">
                     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_36px]">
                       <div className="relative min-w-0">
                       <button
@@ -748,8 +763,8 @@ export default function NewTransaction() {
         <div className="space-y-4 xl:sticky xl:top-6">
           <Card className="glass-panel overflow-hidden rounded-lg">
             <CardHeader className="border-b border-white/8 px-5 py-4">
-              <CardTitle className="text-lg">Review</CardTitle>
-              <CardDescription>Build once, then collect {wallet.threshold} verified signature{wallet.threshold === 1 ? "" : "s"}.</CardDescription>
+              <CardTitle className="text-lg">Ready check</CardTitle>
+              <CardDescription>Confirm the spend before creating the signer room.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 p-5">
               <div className="space-y-3">
@@ -776,6 +791,10 @@ export default function NewTransaction() {
                     {connected ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-300" /> : null}
                     <span className="truncate">{connected ? connected.name : "Optional"}</span>
                   </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
+                  <span className="text-slate-500">Required</span>
+                  <span className="text-slate-200">{wallet.threshold} signature{wallet.threshold === 1 ? "" : "s"}</span>
                 </div>
               </div>
 

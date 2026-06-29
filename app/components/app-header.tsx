@@ -47,14 +47,14 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
   onDisconnect?: () => void;
 }) {
   return (
-    <header className="glass-panel flex flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-5">
-      <div className="min-w-0">
+    <header className="glass-panel flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="mr-2 text-xl font-semibold leading-tight text-zinc-50 sm:text-2xl">Cardano multisig</h1>
           <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
             {DEFAULT_NETWORK}
           </Badge>
-          <Badge variant="secondary">{providerReadyLabel(providerStatus)}</Badge>
+          <Badge variant="secondary" className="max-w-full truncate">{providerReadyLabel(providerStatus)}</Badge>
         </div>
         {typeof walletCount === "number" || typeof roomCount === "number" ? (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
@@ -65,13 +65,13 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
         ) : null}
       </div>
 
-      <details className="group relative shrink-0">
+      <details className="group relative shrink-0 self-start sm:self-auto">
         <summary className="flex h-10 cursor-pointer list-none items-center gap-2 rounded-md border border-border bg-secondary px-2.5 text-sm text-zinc-100 transition hover:bg-secondary/80 [&::-webkit-details-marker]:hidden">
           <CircleUserRound className="size-5 text-zinc-300" />
           <span className="hidden max-w-28 truncate sm:inline">{connected ? connected.name : "Signer"}</span>
           <Badge variant={connected ? "default" : "secondary"}>{connected ? connected.networkLabel : "off"}</Badge>
         </summary>
-        <div className="absolute right-0 top-12 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
+        <div className="wallet-popover rounded-lg border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
           <div className="flex items-start gap-3 border-b border-border pb-3">
             <Avatar label={connected?.name || "Signer"} tone={connected ? "success" : "muted"} />
             <div className="min-w-0">

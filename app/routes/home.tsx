@@ -1366,18 +1366,25 @@ export default function Home() {
       </section>
 
       {drafts.length ? (
-        <Card className="glass-panel">
-          <CardHeader>
-            <CardTitle>Local transaction rooms</CardTitle>
-            <CardDescription>Useful for testing invite import and witness handoff without leaving the home screen.</CardDescription>
+        <Card className="glass-panel overflow-hidden rounded-lg">
+          <CardHeader className="border-b border-white/8 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-xl">Transaction rooms</CardTitle>
+                <CardDescription>Continue signature collection and witness handoff for saved transactions.</CardDescription>
+              </div>
+              <Badge variant="secondary">
+                {drafts.length} room{drafts.length === 1 ? "" : "s"}
+              </Badge>
+            </div>
           </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <CardContent className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
             {drafts.map((draft) => (
               <article
                 key={draft.id}
                 className={cn(
-                  "rounded-lg border p-4",
-                  activeDraftId === draft.id ? "border-sky-400/50 bg-sky-400/10" : "border-border bg-slate-950/60",
+                  "rounded-lg border p-4 transition hover:border-white/18",
+                  activeDraftId === draft.id ? "border-sky-400/50 bg-sky-400/10" : "border-border bg-black/20",
                 )}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1388,11 +1395,11 @@ export default function Home() {
                       <div className="text-xs text-slate-500">{draft.walletName}</div>
                     </div>
                   </div>
-                  <Badge variant="secondary">
+                  <Badge variant="secondary" className="shrink-0">
                     <Users className="size-3" /> {signatureCount(draft)} / {draft.requiredSignatures}
                   </Badge>
                 </div>
-                <div className="mt-2 break-all text-sm text-slate-400">{draft.recipient || "No recipient saved"}</div>
+                <div className="mt-3 line-clamp-2 break-all text-sm text-slate-400">{draft.recipient || "No recipient saved"}</div>
                 <div className="mt-3 space-y-2">
                   <Progress value={signatureCount(draft)} max={draft.requiredSignatures} />
                   <div className="flex items-center justify-between text-xs text-slate-500">
@@ -1407,7 +1414,7 @@ export default function Home() {
                 ) : null}
                 {unmatchedSignatureCount(draft) ? <div className="mt-2 text-xs text-amber-300">{unmatchedSignatureCount(draft)} unmatched signature{unmatchedSignatureCount(draft) === 1 ? "" : "s"}</div> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => setActiveDraftId(draft.id)}>Open</Button>
+                  <Button variant="default" size="sm" onClick={() => setActiveDraftId(draft.id)}>Open</Button>
                   <Button variant="secondary" size="sm" onClick={() => void copyInvite(draft)}><Link2 className="size-4" /> Invite</Button>
                   {unmatchedSignatureCount(draft) ? (
                     <Button variant="secondary" size="sm" onClick={() => discardUnmatchedSignatures(draft.id)}>

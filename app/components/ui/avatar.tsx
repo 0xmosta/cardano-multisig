@@ -3,6 +3,8 @@ import { cn } from "../../lib/utils";
 export function initials(value: string) {
   const cleaned = (value || "").replace(/^\$/, "").trim();
   const parts = cleaned.split(/[\s._-]+/).filter(Boolean);
+  const numberedLabel = parts.length >= 2 ? parts[parts.length - 1].match(/^\d+$/) : null;
+  if (numberedLabel) return `${parts[0][0]}${numberedLabel[0]}`.toUpperCase();
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return cleaned.slice(0, 2).toUpperCase() || "?";
 }
@@ -29,6 +31,7 @@ export function Avatar({
         tones[tone],
         className,
       )}
+      title={label}
     >
       {initials(label)}
     </span>

@@ -446,6 +446,7 @@ export default function Home() {
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [signaturePackage, setSignaturePackage] = useState("");
   const [status, setStatus] = useState("");
+  const [walletSearch, setWalletSearch] = useState("");
 
   useEffect(() => {
     const loadedWallets = loadWallets();
@@ -518,7 +519,34 @@ export default function Home() {
         : [],
     [activeSignerKeyHash, wallets],
   );
-  const visibleWallets = importMode === "signer" && activeSignerKeyHash ? signerWalletMatches : wallets;
+  const scopedWallets = importMode === "signer" && activeSignerKeyHash ? signerWalletMatches : wallets;
+  const visibleWallets = useMemo(() => {
+    const query = walletSearch.trim().replace(/^\$/, "").toLowerCase();
+    if (!query) return scopedWallets;
+    return scopedWallets.filter((wallet) => {
+      const isWatchOnly = !wallet.paymentScript && Boolean(wallet.discovery?.address);
+      const searchable = [
+        wallet.name,
+        wallet.handle,
+        wallet.id,
+        wallet.network,
+        wallet.discovery?.address,
+        isWatchOnly ? "watch only" : wallet.imported ? "imported" : "created",
+        ...wallet.signers.map((signer) => `${signer.label} ${signer.keyHash}`),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [scopedWallets, walletSearch]);
+
+  const walletOverview = useMemo(() => {
+    const watchOnly = wallets.filter((wallet) => !wallet.paymentScript && Boolean(wallet.discovery?.address)).length;
+    const readyRooms = drafts.filter((draft) => pendingSignatureCount(draft) <= 0).length;
+    const missingSignatures = drafts.reduce((total, draft) => total + pendingSignatureCount(draft), 0);
+    return { watchOnly, readyRooms, missingSignatures };
+  }, [wallets, drafts]);
 
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
   const activeNetworkWarning =
@@ -1170,107 +1198,179 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
+      <section className="grid gap-3 md:grid-cols-4">
+        {[
+          { label: "Wallets", value: wallets.length, hint: `${walletOverview.watchOnly} watch-only` },
+          { label: "Rooms", value: drafts.length, hint: `${walletOverview.readyRooms} ready` },
+          { label: "Missing signatures", value: walletOverview.missingSignatures, hint: "across local rooms" },
+          { label: "Signer filter", value: activeSignerKeyHash ? "on" : "off", hint: connected ? `${connected.name} connected` : "no signer wallet" },
+        ].map((item) => (
+          <div key={item.label} className="rounded-lg border border-white/8 bg-[#121214] px-4 py-3 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.95)]">
+            <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{item.label}</div>
+            <div className="mt-2 text-2xl font-semibold leading-none text-zinc-50">{item.value}</div>
+            <div className="mt-2 truncate text-xs text-zinc-500">{item.hint}</div>
+          </div>
+        ))}
+      </section>
+
       <section>
-        <AppWindow title="Wallets">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-semibold text-zinc-50">{importMode === "signer" && activeSignerKeyHash ? "Matching wallets" : "Wallets"}</h2>
-              <p className="mt-1 text-sm text-zinc-400">
-                {importMode === "signer" && activeSignerKeyHash
-                  ? "These saved wallets include the active signer key hash."
-                  : "Open a wallet to create transactions, copy signer invites, and track who is still missing."}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Badge variant="secondary">
-                {importMode === "signer" && activeSignerKeyHash ? `${visibleWallets.length} / ${wallets.length}` : wallets.length} wallet{wallets.length === 1 ? "" : "s"}
-              </Badge>
+        <AppWindow title="Wallets" contentClassName="p-0">
+          <div className="border-b border-white/8 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-zinc-50">{importMode === "signer" && activeSignerKeyHash ? "Matching wallets" : "Wallets"}</h2>
+                <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+                  {importMode === "signer" && activeSignerKeyHash
+                    ? "These saved multisig policies include the active signer key hash."
+                    : "Open a wallet, create transactions, copy signer invites, and track who is still missing."}
+                </p>
+              </div>
               <Button type="button" onClick={() => setWalletDialogOpen(true)}>
                 <Import className="size-4" /> Import or create
               </Button>
-              {importMode === "signer" && activeSignerKeyHash ? (
-                <Button type="button" variant="ghost" size="sm" onClick={clearSignerSearch}>Clear signer</Button>
-              ) : null}
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-black/20 px-3">
+                <Search className="size-4 shrink-0 text-zinc-500" />
+                <input
+                  value={walletSearch}
+                  onChange={(event) => setWalletSearch(event.target.value)}
+                  placeholder="Search wallet, handle, signer, status..."
+                  className="h-10 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
+                />
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Badge variant="secondary">
+                  {importMode === "signer" && activeSignerKeyHash ? `${visibleWallets.length} / ${wallets.length}` : visibleWallets.length} shown
+                </Badge>
+                {walletSearch ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setWalletSearch("")}>Clear search</Button>
+                ) : null}
+                {importMode === "signer" && activeSignerKeyHash ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={clearSignerSearch}>Clear signer</Button>
+                ) : null}
+              </div>
             </div>
           </div>
+
           {visibleWallets.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
+            <div className="m-5 rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
               {wallets.length === 0
                 ? "No wallets saved yet. Import a wallet export, native script, or create a new policy to start."
-                : "No saved wallet matches this signer. Clear the signer filter to see all saved wallets."}
+                : "No wallet matches the current filter. Clear search or signer filtering to see all saved wallets."}
             </div>
           ) : (
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="bg-white/[0.015]">
                   <TableHead>Wallet</TableHead>
                   <TableHead>Policy</TableHead>
-                  <TableHead>Network</TableHead>
+                  <TableHead>Activity</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Signers</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-              {visibleWallets.map((wallet) => {
-                const isWatchOnly = !wallet.paymentScript && Boolean(wallet.discovery?.address);
-                const title = wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name;
-                const assetCount = wallet.discovery?.assets?.length || 0;
-                return (
-                  <TableRow key={wallet.id}>
-                    <TableCell className="min-w-72">
-                      <Link to={walletHref(wallet)} className="flex min-w-0 items-center gap-3">
-                        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/5 text-zinc-300 ring-1 ring-white/10">
-                          <WalletCards className="size-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-zinc-50">{title}</div>
-                          <div className="mt-0.5 max-w-md truncate text-xs text-zinc-500">
-                            {isWatchOnly ? wallet.discovery?.address : wallet.handle ? wallet.name : wallet.id}
+                {visibleWallets.map((wallet) => {
+                  const isWatchOnly = !wallet.paymentScript && Boolean(wallet.discovery?.address);
+                  const title = wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name;
+                  const assetCount = wallet.discovery?.assets?.length || 0;
+                  const walletRooms = drafts.filter((draft) => draft.walletId === wallet.id);
+                  const readyRooms = walletRooms.filter((draft) => pendingSignatureCount(draft) <= 0).length;
+                  const missingForWallet = walletRooms.reduce((total, draft) => total + pendingSignatureCount(draft), 0);
+                  return (
+                    <TableRow key={wallet.id} className="group">
+                      <TableCell className="min-w-80 py-5">
+                        <Link to={walletHref(wallet)} className="flex min-w-0 items-center gap-3">
+                          <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-white/5 text-zinc-300 ring-1 ring-white/10 transition group-hover:bg-white/8">
+                            <WalletCards className="size-5" />
                           </div>
-                        </div>
-                      </Link>
-                    </TableCell>
-                    <TableCell className="min-w-48 text-zinc-300">
-                      {isWatchOnly ? (
-                        <span>{assetCount} visible asset{assetCount === 1 ? "" : "s"}</span>
-                      ) : (
-                        <span>payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">{wallet.network}</TableCell>
-                    <TableCell>
-                      <Badge variant={isWatchOnly ? "outline" : wallet.imported ? "default" : "secondary"}>
-                        {isWatchOnly ? "watch-only" : wallet.imported ? "imported" : "created"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="-space-x-2 whitespace-nowrap">
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <div className="truncate font-semibold text-zinc-50">{title}</div>
+                              <Badge variant="outline" className="border-white/10 text-zinc-400">{wallet.network}</Badge>
+                            </div>
+                            <div className="mt-1 max-w-md truncate text-xs text-zinc-500">
+                              {isWatchOnly ? wallet.discovery?.address : wallet.handle ? wallet.name : wallet.id}
+                            </div>
+                          </div>
+                        </Link>
+                      </TableCell>
+                      <TableCell className="min-w-60 text-zinc-300">
                         {isWatchOnly ? (
-                          <Avatar label={title} className="size-8 border border-[#121214]" />
+                          <div>
+                            <div>{assetCount} visible asset{assetCount === 1 ? "" : "s"}</div>
+                            <div className="mt-1 text-xs text-zinc-500">native script still needed to spend</div>
+                          </div>
                         ) : (
-                          wallet.signers.slice(0, 5).map((signer) => (
-                            <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-[#121214]" />
-                          ))
+                          <div>
+                            <div>payment {summarizeScript(wallet.paymentScript)}</div>
+                            <div className="mt-1 text-xs text-zinc-500">stake {summarizeScript(wallet.stakeScript ?? null)}</div>
+                          </div>
                         )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-2">
-                      <Link to={walletHref(wallet)} className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground shadow-xs transition hover:bg-secondary/80">
-                        {isWatchOnly ? "Open watch" : "Open wallet"} <ArrowRight className="size-4" />
-                      </Link>
-                      <Button size="sm" variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
-                        <Download className="size-4" /> Export
-                      </Button>
-                      <Button size="sm" variant="destructive" onClick={() => setWallets((current) => current.filter((item) => item.id !== wallet.id))}>
-                        <Trash2 className="size-4" /> Delete
-                      </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+                      </TableCell>
+                      <TableCell className="min-w-44">
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-zinc-300">
+                            {walletRooms.length} room{walletRooms.length === 1 ? "" : "s"}
+                          </span>
+                          {readyRooms ? (
+                            <span className="rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-emerald-200">{readyRooms} ready</span>
+                          ) : null}
+                          {missingForWallet ? (
+                            <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-200">{missingForWallet} missing</span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={isWatchOnly ? "outline" : wallet.imported ? "default" : "secondary"}
+                          className={cn(
+                            isWatchOnly ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "",
+                            wallet.imported && !isWatchOnly ? "bg-zinc-100 text-zinc-950" : "",
+                          )}
+                        >
+                          {isWatchOnly ? "watch-only" : wallet.imported ? "imported" : "created"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="min-w-48">
+                        {isWatchOnly ? (
+                          <div className="flex items-center gap-2 text-sm text-zinc-400">
+                            <Avatar label={title} className="size-8 border border-[#121214]" />
+                            <span>watch address</span>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <div className="-space-x-2 whitespace-nowrap">
+                                {wallet.signers.slice(0, 6).map((signer, index) => (
+                                  <Avatar key={signer.id} label={signer.label || `Signer ${index + 1}`} className="size-8 border border-[#121214]" />
+                                ))}
+                              </div>
+                              {wallet.signers.length > 6 ? <span className="text-xs text-zinc-500">+{wallet.signers.length - 6}</span> : null}
+                            </div>
+                            <div className="text-xs text-zinc-500">{wallet.threshold}-of-{wallet.signers.length} required</div>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-2">
+                          <Link to={walletHref(wallet)} className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90">
+                            {isWatchOnly ? "Open watch" : "Open"} <ArrowRight className="size-4" />
+                          </Link>
+                          <Button size="sm" variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
+                            <Download className="size-4" /> Export
+                          </Button>
+                          <Button size="sm" variant="destructive" onClick={() => setWallets((current) => current.filter((item) => item.id !== wallet.id))}>
+                            <Trash2 className="size-4" /> Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

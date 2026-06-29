@@ -30,6 +30,8 @@
 ## UI Rules
 
 - Treat screenshots and design references as component and interaction specifications for real app flows. Do not paste them into the home page as static showcase/demo cards.
+- When an Open Design file or screenshot exists, implementation must match the referenced component treatment, not only the rough layout. Verify button content, icon usage, sizing, spacing, table density, empty states, and header placement against the design before marking UI work done.
+- UI work is not deploy-complete until a separate verifier/QA pass compares the live app or local screenshot against the current Open Design/screenshot reference and records any intentional differences. If the verifier was blocked, reclaimed, or manually closed, create a follow-up QA card instead of treating that as approval.
 - Avoid hardcoded fake treasury names, balances, signer handles, addresses, or transaction history in product UI. If a screen needs examples, they must be isolated to tests, story fixtures, or screenshots generated outside the shipped app.
 - Reuse the shadcn dark visual vocabulary on real surfaces: saved wallets, transaction creation, signer invites, approval status, witness import/export, and coordinator transaction tracking.
 - For signer-friendly flows, make the current action obvious: connect wallet, verify network, sign, copy witness, import witness, or submit. Keep signer rows tied to actual policy key hashes and matched signatures.
@@ -62,6 +64,7 @@
 - Run `npm run typecheck` after TypeScript changes.
 - Run `npm run build` after route, Vite, or deployment changes.
 - For UX changes, verify desktop and mobile layout. Signing flows need a manual wallet smoke test on preprod before production use.
+- For UI/design changes, capture or inspect both the changed page and adjacent pages that share the app shell. Check the production/preprod URL after deploy, not only the local dev build, because stale assets and route-level chunks can hide mismatches.
 - For multisig threshold UX, include at least one test state where threshold is met but optional policy signers remain unsigned, plus one unmatched-witness state with cleanup.
 - Kanban workers must not leave `npm run dev`, Playwright, browser, shim, or other long-running QA processes in the foreground as their final action. Start them only when needed for verification, record the URL/screenshot evidence, then stop them before completing or blocking the task.
 - Verifiers must validate the current worktree before blocking on a stale error. If another agent/Codex has patched the files after an earlier failure, rerun `npm run typecheck` and inspect the latest diff before reporting the blocker.

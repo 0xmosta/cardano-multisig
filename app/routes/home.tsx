@@ -1213,8 +1213,8 @@ export default function Home() {
                     : "Open a wallet, create transactions, copy signer invites, and track who is still missing."}
                 </p>
               </div>
-              <Button type="button" onClick={() => setWalletDialogOpen(true)}>
-                <Import className="size-4" /> Import or create
+              <Button type="button" className="h-10 px-5 text-sm font-semibold" onClick={() => setWalletDialogOpen(true)}>
+                Import or create
               </Button>
             </div>
 

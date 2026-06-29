@@ -69,7 +69,7 @@ type ImportMode = "export" | "address" | "signer";
 type ParsedScript = { script: NativeScript | null; error: string | null; format: "json" | "cbor" | "empty" };
 type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
 type ConnectedWallet = { id: string; name: string; api: BrowserWalletApi; networkId: number; addressHex: string; keyHash: string | null };
-type AssetLine = { id: string; unit: string; label: string; quantity: string };
+type AssetLine = { id: string; unit: string; label: string; quantity: string; decimals?: number };
 type ServerProviderStatus = { mode: "server"; network: string; ready: boolean; services: { blockfrost: boolean; kupo: boolean; ogmios: boolean; submit: boolean } };
 type AddressDiscovery = { source?: string; address?: string; handle?: { name: string; address: string }; assets: AssetLine[]; outputs?: number };
 
@@ -93,6 +93,21 @@ export function meta({}: Route.MetaArgs) {
 
 function emptySigner(label = "Signer"): Signer {
   return { id: createId("signer"), label, keyHash: "", source: "manual" };
+}
+
+function trimDecimal(value: string) {
+  return value.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {
+  const label = unit === "lovelace" ? "ADA" : "";
+  const raw = BigInt(quantity || "0");
+  if (!decimals) return `${raw.toLocaleString()}${label ? ` ${label}` : ""}`;
+  const scale = 10n ** BigInt(decimals);
+  const whole = raw / scale;
+  const frac = raw % scale;
+  const fracText = frac === 0n ? "" : `.${frac.toString().padStart(decimals, "0")}`;
+  return `${trimDecimal(`${whole.toLocaleString()}${fracText}`)}${label ? ` ${label}` : ""}`;
 }
 
 type CborValue = number | string | CborValue[];
@@ -817,13 +832,13 @@ export default function Home() {
                   Threshold reached. {optionalSignerKeyHashes(activeDraft).length} policy signer{optionalSignerKeyHashes(activeDraft).length === 1 ? "" : "s"} can still sign, but they are no longer required for submit.
                 </div>
               ) : null}
-              {(activeDraft.assets?.length ? activeDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: activeDraft.lovelace || "0" }]).length ? (
+              {(activeDraft.assets?.length ? activeDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: activeDraft.lovelace || "0", decimals: 6 }]).length ? (
                 <div className="rounded-xl border border-border bg-slate-950/60 p-4">
                   <div className="text-sm text-slate-400">Assets</div>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {(activeDraft.assets?.length ? activeDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: activeDraft.lovelace || "0" }]).map((asset) => (
+                    {(activeDraft.assets?.length ? activeDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: activeDraft.lovelace || "0", decimals: 6 }]).map((asset) => (
                       <div key={asset.id} className="rounded-full border border-border px-3 py-1 text-sm text-slate-200">
-                        {asset.quantity} {asset.label}
+                        {formatRawQuantity(asset.quantity, asset.unit, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0))}
                       </div>
                     ))}
                   </div>
@@ -980,7 +995,7 @@ export default function Home() {
                       <div className="flex flex-wrap gap-2">
                         {addressDiscovery.assets.slice(0, 8).map((asset) => (
                           <div key={asset.id || asset.unit} className="rounded-full border border-border px-3 py-1 text-xs text-slate-200">
-                            {asset.quantity} {asset.label}
+                            {formatRawQuantity(asset.quantity, asset.unit, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0))}
                           </div>
                         ))}
                       </div>

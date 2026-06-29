@@ -21,19 +21,14 @@ type CardanoWindowWallet<TApi extends BrowserWalletApi = BrowserWalletApi> = {
   apiVersion?: string;
 };
 
-const KNOWN_PROVIDER_NAMES: Record<string, string> = {
+const SUPPORTED_PROVIDER_NAMES: Record<string, string> = {
   eternl: "Eternl",
   lace: "Lace",
-  nami: "Nami",
-  flint: "Flint",
-  gerowallet: "GeroWallet",
-  typhoncip30: "Typhon",
-  typhon: "Typhon",
-  yoroi: "Yoroi",
   vespr: "VESPR",
-  begin: "Begin",
   lacewallet: "Lace",
 };
+
+const SUPPORTED_PROVIDER_IDS = new Set(Object.keys(SUPPORTED_PROVIDER_NAMES));
 
 function prettyProviderName<TApi extends BrowserWalletApi>(id: string, wallet: CardanoWindowWallet<TApi>) {
   const explicit = wallet.name?.trim();
@@ -42,7 +37,7 @@ function prettyProviderName<TApi extends BrowserWalletApi>(id: string, wallet: C
     if (id.toLowerCase() === "vespr") return "VESPR";
     return explicit;
   }
-  return KNOWN_PROVIDER_NAMES[id.toLowerCase()] || id.charAt(0).toUpperCase() + id.slice(1);
+  return SUPPORTED_PROVIDER_NAMES[id.toLowerCase()] || id.charAt(0).toUpperCase() + id.slice(1);
 }
 
 export function installedBrowserWallets<TApi extends BrowserWalletApi = BrowserWalletApi>(): BrowserWalletProvider<TApi>[] {
@@ -52,7 +47,9 @@ export function installedBrowserWallets<TApi extends BrowserWalletApi = BrowserW
   }).cardano;
   if (!cardano) return [];
 
-  const ids = Reflect.ownKeys(cardano).filter((key): key is string => typeof key === "string");
+  const ids = Reflect.ownKeys(cardano).filter(
+    (key): key is string => typeof key === "string" && SUPPORTED_PROVIDER_IDS.has(key.toLowerCase()),
+  );
 
   const seenWallets = new WeakSet<object>();
   const providers = ids

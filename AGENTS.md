@@ -32,9 +32,23 @@
 - Treat screenshots and design references as component and interaction specifications for real app flows. Do not paste them into the home page as static showcase/demo cards.
 - When an Open Design file or screenshot exists, implementation must match the referenced component treatment, not only the rough layout. Verify button content, icon usage, sizing, spacing, table density, empty states, and header placement against the design before marking UI work done.
 - UI work is not deploy-complete until a separate verifier/QA pass compares the live app or local screenshot against the current Open Design/screenshot reference and records any intentional differences. If the verifier was blocked, reclaimed, or manually closed, create a follow-up QA card instead of treating that as approval.
+- UI workers must inspect the relevant Open Design project/file before coding when one exists. If Open Design is unavailable, record that explicitly and use the latest user screenshots plus local/live screenshots as the reference.
+- For any shared app-shell/header/layout change, inspect at least home, wallet detail, new transaction, invite/signing, and mobile width before completion. Do not judge a shell change from the home page alone.
+- For signer/wallet controls, verify delayed and non-enumerable CIP-30 provider discovery. The supported wallet list in product UI is Lace, Eternl, and VESPR unless a task explicitly expands support.
+- Prefer functional, data-backed surfaces over decorative dashboard cards. If a metric/card does not drive a user action or clarify a signing/funding decision, remove or demote it.
 - Avoid hardcoded fake treasury names, balances, signer handles, addresses, or transaction history in product UI. If a screen needs examples, they must be isolated to tests, story fixtures, or screenshots generated outside the shipped app.
 - Reuse the shadcn dark visual vocabulary on real surfaces: saved wallets, transaction creation, signer invites, approval status, witness import/export, and coordinator transaction tracking.
 - For signer-friendly flows, make the current action obvious: connect wallet, verify network, sign, copy witness, import witness, or submit. Keep signer rows tied to actual policy key hashes and matched signatures.
+
+## Kanban Profile Routing
+
+- Use `ui` for visual/product polish, responsive layout, shadcn treatment, Open Design matching, and screenshot-driven UX work. UI cards must include the exact reference file/screenshot and the pages/viewports to inspect.
+- Use `fullstackjs` for React Router implementation, shared components, loaders/actions, local storage models, API wiring, and browser wallet integration that is not Cardano-protocol-specific.
+- Use `cardanodev` for Cardano transaction semantics, native scripts, key hashes, UTxO selection, witnesses, CIP behavior, Kupo/Ogmios/Blockfrost/Koios behavior, and preprod wallet test flows.
+- Use `serverops` for Docker, DNS, production/preprod deploys, service env, Kupo/Ogmios/Blockfrost runtime checks, and host-level processes.
+- Use `securityauditor` for invite-link sensitivity, witness/CBOR handling, localStorage risks, signing/submission guardrails, dependency/security review, and mainnet risk review.
+- Use `codexverifier` only as an independent verifier. Do not assign implementation work to it. Verifier cards must name the implementation commit or live URL state to inspect and must include concrete pass/fail evidence.
+- Every UI implementation card that changes shipped visuals should have a dependent or follow-up `codexverifier` visual gate before deploy is considered complete.
 
 ## QA Wallets And Test Funds
 

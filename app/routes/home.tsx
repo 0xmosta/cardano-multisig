@@ -851,11 +851,11 @@ export default function Home() {
               </Badge>
             </div>
           </div>
-          <div className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border bg-[#111114] p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
+          <div className="grid min-w-0 gap-6 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="min-w-0 space-y-4">
+              <div className="min-w-0 rounded-xl border border-border bg-[#111114] p-4 sm:p-5">
+                <div className="flex min-w-0 items-start justify-between gap-4">
+                  <div className="min-w-0">
                     <div className="text-sm text-zinc-400">Required signatures</div>
                     <div className="mt-1 text-3xl font-semibold text-zinc-50">
                       {signatureCount(activeDraft)} / {activeDraft.requiredSignatures}
@@ -879,7 +879,7 @@ export default function Home() {
                       <div
                         key={hash}
                         className={cn(
-                          "flex items-center justify-between gap-4 rounded-xl border p-3",
+                          "flex min-w-0 items-center justify-between gap-4 overflow-hidden rounded-xl border p-3",
                           signed ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/7 bg-black/20",
                         )}
                       >
@@ -902,7 +902,7 @@ export default function Home() {
                     );
                   })}
                 </div>
-                {activeDraft.note ? <div className="mt-4 text-sm text-zinc-300">Coordinator note: {activeDraft.note}</div> : null}
+                {activeDraft.note ? <div className="mt-4 break-words text-sm text-zinc-300">Coordinator note: {activeDraft.note}</div> : null}
               </div>
               {optionalSignerKeyHashes(activeDraft).length && pendingSignatureCount(activeDraft) === 0 ? (
                 <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
@@ -936,7 +936,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               <Card className="border-border bg-slate-950/60">
                 <CardHeader>
                   <CardTitle className="text-base">Next signer step</CardTitle>
@@ -950,10 +950,10 @@ export default function Home() {
               {activeNetworkWarning ? (
                 <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{activeNetworkWarning}</div>
               ) : null}
-              <Button className="w-full" onClick={() => void signActiveDraft()} disabled={!connected || !activeDraft.unsignedTxCbor.trim()}>
+              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" onClick={() => void signActiveDraft()} disabled={!connected || !activeDraft.unsignedTxCbor.trim()}>
                 <ShieldCheck className="size-4" /> Sign loaded invite
               </Button>
-              <Button className="w-full" variant="secondary" onClick={copySignaturePackage} disabled={!signaturePackage.trim()}>
+              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={copySignaturePackage} disabled={!signaturePackage.trim()}>
                 <Copy className="size-4" /> Copy witness package
               </Button>
             </div>
@@ -1228,7 +1228,7 @@ export default function Home() {
                   className="h-10 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                 />
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 max-sm:w-full">
                 <Badge variant="secondary">
                   {importMode === "signer" && activeSignerKeyHash ? `${visibleWallets.length} / ${wallets.length}` : visibleWallets.length} shown
                 </Badge>
@@ -1249,7 +1249,119 @@ export default function Home() {
                 : "No wallet matches the current filter. Clear search or signer filtering to see all saved wallets."}
             </div>
           ) : (
-            <Table>
+            <>
+              <div className="grid gap-3 p-5">
+                {visibleWallets.map((wallet) => {
+                  const isWatchOnly = !wallet.paymentScript && Boolean(wallet.discovery?.address);
+                  const title = wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name;
+                  const assetCount = wallet.discovery?.assets?.length || 0;
+                  const walletRooms = drafts.filter((draft) => draft.walletId === wallet.id);
+                  const readyRooms = walletRooms.filter((draft) => pendingSignatureCount(draft) <= 0).length;
+                  const missingForWallet = walletRooms.reduce((total, draft) => total + pendingSignatureCount(draft), 0);
+                  return (
+                    <article key={wallet.id} className="min-w-0 overflow-hidden rounded-xl border border-border bg-black/20 p-4 shadow-sm">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-white/5 text-zinc-300 ring-1 ring-white/10">
+                          <WalletCards className="size-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <Link to={walletHref(wallet)} className="block w-full max-w-[calc(100vw-8rem)] truncate font-semibold text-zinc-50 underline-offset-4 hover:underline">
+                            {title}
+                          </Link>
+                          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="sr-only">
+                              {title}
+                            </span>
+                            <Badge variant="outline" className="shrink-0 border-white/10 text-zinc-400">{wallet.network}</Badge>
+                            <Badge
+                              variant={isWatchOnly ? "outline" : wallet.imported ? "default" : "secondary"}
+                              className={cn(
+                                "shrink-0",
+                                isWatchOnly ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "",
+                                wallet.imported && !isWatchOnly ? "bg-zinc-100 text-zinc-950" : "",
+                              )}
+                            >
+                              {isWatchOnly ? "watch-only" : wallet.imported ? "imported" : "created"}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 break-all text-xs text-zinc-500">
+                            {isWatchOnly ? wallet.discovery?.address : wallet.handle ? wallet.name : wallet.id}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 text-sm text-zinc-300">
+                        <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
+                          <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Policy</div>
+                          {isWatchOnly ? (
+                            <div className="mt-1">
+                              <div>{assetCount} visible asset{assetCount === 1 ? "" : "s"}</div>
+                              <div className="mt-1 text-xs text-zinc-500">native script still needed to spend</div>
+                            </div>
+                          ) : (
+                            <div className="mt-1 space-y-1">
+                              <div>payment {summarizeScript(wallet.paymentScript)}</div>
+                              <div className="text-xs text-zinc-500">stake {summarizeScript(wallet.stakeScript ?? null)}</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
+                          <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Activity</div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                            <span className="rounded-md border border-white/8 bg-black/20 px-2 py-1 text-zinc-300">
+                              {walletRooms.length} room{walletRooms.length === 1 ? "" : "s"}
+                            </span>
+                            {readyRooms ? (
+                              <span className="rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-emerald-200">{readyRooms} ready</span>
+                            ) : null}
+                            {missingForWallet ? (
+                              <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-200">{missingForWallet} missing</span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
+                          <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Signers</div>
+                          {isWatchOnly ? (
+                            <div className="mt-2 flex items-center gap-2 text-sm text-zinc-400">
+                              <Avatar label={title} className="size-8 border border-[#121214]" />
+                              <span>watch address</span>
+                            </div>
+                          ) : (
+                            <div className="mt-2 flex min-w-0 items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <div className="-space-x-2 whitespace-nowrap">
+                                  {wallet.signers.slice(0, 5).map((signer, index) => (
+                                    <Avatar key={signer.id} label={signer.label || `Signer ${index + 1}`} className="size-8 border border-[#121214]" />
+                                  ))}
+                                </div>
+                                {wallet.signers.length > 5 ? <span className="text-xs text-zinc-500">+{wallet.signers.length - 5}</span> : null}
+                              </div>
+                              <div className="shrink-0 text-xs text-zinc-500">{wallet.threshold}-of-{wallet.signers.length} required</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        <Link to={walletHref(wallet)} className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90">
+                          {isWatchOnly ? "Open watch" : "Open"} <ArrowRight className="size-4" />
+                        </Link>
+                        <Button size="sm" variant="secondary" className="h-10 min-w-0" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
+                          <Download className="size-4" /> Export
+                        </Button>
+                        <Button size="sm" variant="destructive" className="col-span-2 h-10 min-w-0 sm:col-span-1" onClick={() => setWallets((current) => current.filter((item) => item.id !== wallet.id))}>
+                          <Trash2 className="size-4" /> Delete
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="hidden">
+                <Table>
               <TableHeader>
                 <TableRow className="bg-white/[0.015]">
                   <TableHead>Wallet</TableHead>
@@ -1359,8 +1471,10 @@ export default function Home() {
                     </TableRow>
                   );
                 })}
-              </TableBody>
-            </Table>
+                </TableBody>
+              </Table>
+              </div>
+            </>
           )}
         </AppWindow>
       </section>
@@ -1383,15 +1497,15 @@ export default function Home() {
               <article
                 key={draft.id}
                 className={cn(
-                  "rounded-lg border p-4 transition hover:border-white/18",
+                  "min-w-0 overflow-hidden rounded-lg border p-4 transition hover:border-white/18",
                   activeDraftId === draft.id ? "border-sky-400/50 bg-sky-400/10" : "border-border bg-black/20",
                 )}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <Avatar label={draft.walletName} tone={pendingSignatureCount(draft) ? "primary" : "success"} />
-                    <div>
-                      <h3 className="font-semibold text-slate-100">{draft.title}</h3>
+                    <div className="min-w-0">
+                      <h3 className="break-words font-semibold text-slate-100">{draft.title}</h3>
                       <div className="text-xs text-slate-500">{draft.walletName}</div>
                     </div>
                   </div>
@@ -1402,7 +1516,7 @@ export default function Home() {
                 <div className="mt-3 line-clamp-2 break-all text-sm text-slate-400">{draft.recipient || "No recipient saved"}</div>
                 <div className="mt-3 space-y-2">
                   <Progress value={signatureCount(draft)} max={draft.requiredSignatures} />
-                  <div className="flex items-center justify-between text-xs text-slate-500">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-slate-500">
                     <span>{signerCountLabel(draft)}</span>
                     <span>{draft.status}</span>
                   </div>
@@ -1414,14 +1528,14 @@ export default function Home() {
                 ) : null}
                 {unmatchedSignatureCount(draft) ? <div className="mt-2 text-xs text-amber-300">{unmatchedSignatureCount(draft)} unmatched signature{unmatchedSignatureCount(draft) === 1 ? "" : "s"}</div> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button variant="default" size="sm" onClick={() => setActiveDraftId(draft.id)}>Open</Button>
-                  <Button variant="secondary" size="sm" onClick={() => void copyInvite(draft)}><Link2 className="size-4" /> Invite</Button>
+                  <Button className="min-w-20 flex-1" variant="default" size="sm" onClick={() => setActiveDraftId(draft.id)}>Open</Button>
+                  <Button className="min-w-20 flex-1" variant="secondary" size="sm" onClick={() => void copyInvite(draft)}><Link2 className="size-4" /> Invite</Button>
                   {unmatchedSignatureCount(draft) ? (
-                    <Button variant="secondary" size="sm" onClick={() => discardUnmatchedSignatures(draft.id)}>
+                    <Button className="min-w-28 flex-1" variant="secondary" size="sm" onClick={() => discardUnmatchedSignatures(draft.id)}>
                       <Trash2 className="size-4" /> Unmatched
                     </Button>
                   ) : null}
-                  <Button variant="destructive" size="sm" onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}><Trash2 className="size-4" /> Delete</Button>
+                  <Button className="min-w-24 flex-1" variant="destructive" size="sm" onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}><Trash2 className="size-4" /> Delete</Button>
                 </div>
               </article>
             ))}

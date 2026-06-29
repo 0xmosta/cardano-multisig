@@ -549,8 +549,8 @@ export default function NewTransaction() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="flex min-w-0 flex-col gap-5 overflow-x-hidden">
+      <div className="flex min-w-0 flex-wrap items-end justify-between gap-4">
         <div className="min-w-0 space-y-3">
           <Link to={`/wallets/${encodeURIComponent(wallet.id)}`} className="inline-flex items-center gap-2 text-sm text-sky-300 transition hover:text-sky-200">
             <ArrowLeft className="size-4" /> Back to wallet
@@ -562,8 +562,8 @@ export default function NewTransaction() {
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
-          <span className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
+          <span className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
             <WalletCards className="size-4 text-slate-300" />
             <span className="max-w-56 truncate">{resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}</span>
           </span>
@@ -573,8 +573,8 @@ export default function NewTransaction() {
         </div>
       </div>
 
-      <section className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <AppWindow title="Transaction composer" contentClassName="space-y-5 p-5">
+      <section className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <AppWindow title="Transaction composer" className="max-w-full" contentClassName="space-y-5 p-3 sm:p-5">
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-lg border border-white/8 bg-black/20 p-3">
               <div className="text-xs font-medium uppercase text-slate-500">1. Assets</div>
@@ -590,19 +590,19 @@ export default function NewTransaction() {
             </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
-            <div className="space-y-2">
+          <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
+            <div className="min-w-0 space-y-2">
               <Label>Title</Label>
               <Input value={title} onChange={(event) => setTitle(event.target.value)} className="h-11" />
             </div>
-            <div className="space-y-2">
+            <div className="min-w-0 space-y-2">
               <Label>Recipient address</Label>
               <Input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="addr1... or addr_test1..." className="h-11 font-mono text-sm" />
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-400/18 bg-sky-400/[0.08] px-3 py-2.5 text-sm text-sky-100">
-            <span className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-400/18 bg-sky-400/[0.08] px-3 py-2.5 text-sm text-sky-100">
+            <span className="flex min-w-0 flex-1 basis-56 items-center gap-2">
               {assetStatus.toLowerCase().startsWith("loading") ? (
                 <Loader2 className="size-4 shrink-0 animate-spin text-sky-200" />
               ) : (
@@ -615,9 +615,9 @@ export default function NewTransaction() {
             </Button>
           </div>
 
-          <div className="space-y-3 rounded-lg border border-white/8 bg-black/15 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
+          <div className="min-w-0 space-y-3 rounded-lg border border-white/8 bg-black/15 p-3">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
                 <Label>Assets</Label>
                 <div className="mt-1 text-xs text-slate-500">
                   {assetOptions.length} spendable option{assetOptions.length === 1 ? "" : "s"}
@@ -634,18 +634,18 @@ export default function NewTransaction() {
                 const pickerOpen = openAssetPickerId === asset.id;
                 const choices = filteredAssetOptions(asset.unit);
                 return (
-                  <div key={asset.id} className="rounded-lg border border-white/8 bg-[#111113] p-3 transition focus-within:border-white/15 hover:border-white/12">
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_36px]">
+                  <div key={asset.id} className="min-w-0 rounded-lg border border-white/8 bg-[#111113] p-3 transition focus-within:border-white/15 hover:border-white/12">
+                    <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_180px_36px]">
                       <div className="relative min-w-0">
                       <button
                         type="button"
-                        className="flex min-h-16 w-full items-center justify-between gap-3 rounded-md border border-input bg-[#18181b] px-3 py-2 text-left shadow-xs outline-none transition hover:border-white/18 hover:bg-white/[0.04] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        className="flex min-h-16 w-full min-w-0 items-center justify-between gap-3 rounded-md border border-input bg-[#18181b] px-3 py-2 text-left shadow-xs outline-none transition hover:border-white/18 hover:bg-white/[0.04] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                         onClick={() => {
                           setOpenAssetPickerId(pickerOpen ? null : asset.id);
                           setAssetSearch("");
                         }}
                       >
-                        <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex min-w-0 flex-1 items-center gap-3">
                           <AssetThumb asset={selected} />
                           <span className="min-w-0">
                             <span className="block truncate text-sm font-semibold text-slate-100">
@@ -660,7 +660,7 @@ export default function NewTransaction() {
                       </button>
 
                       {pickerOpen ? (
-                        <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 overflow-hidden rounded-lg border border-border bg-[#18181b] shadow-2xl shadow-black/50">
+                        <div className="relative z-40 mt-2 max-w-full overflow-hidden rounded-lg border border-border bg-[#18181b] shadow-2xl shadow-black/50 sm:absolute sm:left-0 sm:right-0 sm:top-[calc(100%+0.5rem)] sm:mt-0">
                           <div className="border-b border-border p-2.5">
                             <div className="flex items-center gap-2 rounded-md border border-input bg-black/20 px-3">
                               <Search className="size-4 shrink-0 text-slate-500" />
@@ -680,14 +680,14 @@ export default function NewTransaction() {
                                 <button
                                   key={choice.unit}
                                   type="button"
-                                  className="flex w-full items-center gap-3 rounded-md p-2 text-left transition hover:bg-white/[0.05]"
+                                  className="flex w-full min-w-0 items-center gap-3 rounded-md p-2 text-left transition hover:bg-white/[0.05]"
                                   onClick={() => applyAsset(asset.id, choice.unit)}
                                 >
                                   <AssetThumb asset={choice} className="size-12" />
                                   <span className="min-w-0 flex-1">
-                                    <span className="flex items-center justify-between gap-3">
-                                      <span className="truncate text-sm font-semibold text-slate-100">{choice.label}</span>
-                                      <span className="shrink-0 rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-xs text-slate-400">
+                                    <span className="flex min-w-0 items-center justify-between gap-3">
+                                      <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{choice.label}</span>
+                                      <span className="max-w-28 shrink-0 truncate rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-xs text-slate-400 sm:max-w-none">
                                         {formatRawQuantity(choice.quantity, choice.unit, choice.decimals)}
                                       </span>
                                     </span>
@@ -702,10 +702,10 @@ export default function NewTransaction() {
                         </div>
                       ) : null}
                       </div>
-                      <div className="rounded-md border border-input bg-[#18181b] px-3 py-2">
-                        <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                      <div className="min-w-0 rounded-md border border-input bg-[#18181b] px-3 py-2">
+                        <div className="mb-1 flex min-w-0 items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">
                           <span>Amount</span>
-                          <span>{asset.unit === "lovelace" ? "ADA" : selected.label}</span>
+                          <span className="min-w-0 truncate text-right">{asset.unit === "lovelace" ? "ADA" : selected.label}</span>
                         </div>
                         <input
                           value={asset.quantity}
@@ -714,12 +714,12 @@ export default function NewTransaction() {
                           className="h-9 w-full bg-transparent text-right text-lg font-semibold text-slate-50 outline-none placeholder:text-slate-600"
                         />
                       </div>
-                      <Button variant="ghost" className="h-16 rounded-md" onClick={() => removeAsset(asset.id)} disabled={assets.length === 1} aria-label="Remove asset">
+                      <Button variant="ghost" className="h-10 w-full rounded-md lg:h-16" onClick={() => removeAsset(asset.id)} disabled={assets.length === 1} aria-label="Remove asset">
                         <X className="size-4" />
                       </Button>
                     </div>
                     {option?.quantity ? (
-                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-slate-500">
                         <span className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1">
                           Available {formatRawQuantity(option.quantity, option.unit, option.decimals)}
                         </span>
@@ -728,7 +728,7 @@ export default function NewTransaction() {
                             {option.outputCount} UTxO{option.outputCount === 1 ? "" : "s"}
                           </span>
                         ) : null}
-                        {option.policyId ? <span className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 font-mono">policy {compactMiddle(option.policyId, 12, 8)}</span> : null}
+                        {option.policyId ? <span className="max-w-full truncate rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 font-mono">policy {compactMiddle(option.policyId, 12, 8)}</span> : null}
                       </div>
                     ) : null}
                   </div>
@@ -736,14 +736,14 @@ export default function NewTransaction() {
               })}
           </div>
 
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             <Label>Coordinator note</Label>
             <Input value={note} onChange={(event) => setNote(event.target.value)} placeholder="What signers should check before approving" className="h-11" />
           </div>
 
-          <details className="group rounded-lg border border-white/8 bg-black/20">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-slate-300 [&::-webkit-details-marker]:hidden">
-              <span className="inline-flex items-center gap-2">
+          <details className="group min-w-0 rounded-lg border border-white/8 bg-black/20">
+            <summary className="flex min-w-0 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-slate-300 [&::-webkit-details-marker]:hidden">
+              <span className="inline-flex min-w-0 items-center gap-2 truncate">
                 <FileCode2 className="size-4 text-slate-500" /> Advanced unsigned transaction CBOR
               </span>
               <ChevronDown className="size-4 text-slate-500 transition group-open:rotate-180" />
@@ -760,8 +760,8 @@ export default function NewTransaction() {
           </details>
         </AppWindow>
 
-        <div className="space-y-4 xl:sticky xl:top-6">
-          <Card className="glass-panel overflow-hidden rounded-lg">
+        <div className="min-w-0 space-y-4 xl:sticky xl:top-6">
+          <Card className="glass-panel min-w-0 overflow-hidden rounded-lg">
             <CardHeader className="border-b border-white/8 px-5 py-4">
               <CardTitle className="text-lg">Ready check</CardTitle>
               <CardDescription>Confirm the spend before creating the signer room.</CardDescription>
@@ -769,30 +769,30 @@ export default function NewTransaction() {
             <CardContent className="space-y-4 p-5">
               <div className="space-y-3">
                 {requestedAssetSummary.map((asset) => (
-                  <div key={asset.id} className="flex items-center gap-3 rounded-md border border-white/8 bg-black/20 p-3">
+                  <div key={asset.id} className="flex min-w-0 items-center gap-3 rounded-md border border-white/8 bg-black/20 p-3">
                     <AssetThumb asset={asset} className="size-10" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-slate-100">{asset.label}</div>
                       <div className="truncate text-xs text-slate-500">{assetSubtitle(asset)}</div>
                     </div>
-                    <div className="text-right text-sm font-semibold text-slate-100">{asset.quantity || "0"}</div>
+                    <div className="max-w-20 shrink-0 truncate text-right text-sm font-semibold text-slate-100">{asset.quantity || "0"}</div>
                   </div>
                 ))}
               </div>
 
               <div className="grid gap-2 text-sm">
-                <div className="flex items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
+                <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
                   <span className="text-slate-500">Recipient</span>
                   <span className="max-w-44 truncate text-slate-200">{recipient.trim() || "Not set"}</span>
                 </div>
-                <div className="flex items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
+                <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
                   <span className="text-slate-500">Signer wallet</span>
                   <span className="inline-flex max-w-44 items-center gap-1.5 truncate text-slate-200">
                     {connected ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-300" /> : null}
                     <span className="truncate">{connected ? connected.name : "Optional"}</span>
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
+                <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
                   <span className="text-slate-500">Required</span>
                   <span className="text-slate-200">{wallet.threshold} signature{wallet.threshold === 1 ? "" : "s"}</span>
                 </div>

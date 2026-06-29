@@ -22,7 +22,7 @@ export function AppWindow({
       <div className="flex items-center justify-between gap-3 border-b border-white/7 bg-white/[0.015] px-4 py-3">
         <div className="truncate text-xs font-semibold uppercase text-zinc-500">{title}</div>
       </div>
-      <div className={cn("p-4", contentClassName)}>{children}</div>
+      <div className={cn("min-w-0 p-4", contentClassName)}>{children}</div>
     </section>
   );
 }

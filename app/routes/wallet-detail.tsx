@@ -531,14 +531,14 @@ export default function WalletDetail() {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-xl border border-white/8 bg-[#121214] p-5 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.95)]">
+      <section className="min-w-0 rounded-xl border border-white/8 bg-[#121214] p-5 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.95)]">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300 transition hover:text-sky-200">
               <ArrowLeft className="size-4" /> Back to wallets
             </Link>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <h1 className="min-w-0 truncate text-3xl font-semibold tracking-tight text-slate-50">
+              <h1 className="min-w-0 break-words text-3xl font-semibold tracking-tight text-slate-50">
                 {resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}
               </h1>
               <Badge variant="outline" className="border-white/10 text-zinc-400">{wallet.network}</Badge>
@@ -577,13 +577,13 @@ export default function WalletDetail() {
               ) : null}
             </div>
           </div>
-          <div className="flex shrink-0 justify-end">
+          <div className="flex shrink-0 justify-end max-sm:w-full max-sm:justify-start">
             {isWatchOnly ? (
               <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">native script not imported</Badge>
             ) : (
               <Link
                 to={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 max-sm:w-full"
               >
                 <Plus className="size-4" /> Create transaction
               </Link>
@@ -605,8 +605,8 @@ export default function WalletDetail() {
       ) : null}
       {signStatus ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{signStatus}</div> : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-6">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="min-w-0 space-y-6">
           <AppWindow title="Transactions" contentClassName="space-y-4">
             <div>
               <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>
@@ -633,16 +633,16 @@ export default function WalletDetail() {
                     <article
                       key={tx.id}
                       className={cn(
-                        "rounded-xl border p-4",
+                        "min-w-0 overflow-hidden rounded-xl border p-4",
                         highlighted ? "border-sky-400/50 bg-sky-400/10" : "border-white/7 bg-white/[0.02]",
                       )}
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="flex min-w-0 gap-3">
+                      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                        <div className="flex min-w-0 flex-1 gap-3">
                           <Avatar label={tx.title} tone={phase === "submitted" || phase === "ready" ? "success" : "primary"} />
                           <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-lg font-semibold text-zinc-50">{tx.title}</h3>
+                            <h3 className="break-words text-lg font-semibold text-zinc-50">{tx.title}</h3>
                             <Badge variant={phaseBadge(phase)}>{phaseLabel(phase)}</Badge>
                             {highlighted ? <Badge variant="outline">new</Badge> : null}
                           </div>
@@ -658,26 +658,26 @@ export default function WalletDetail() {
                           </div>
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2 text-sm text-zinc-300">
+                        <div className="flex w-full min-w-0 items-center gap-2 text-sm text-zinc-300 sm:w-auto">
                           {phaseIcon(phase)} {new Date(tx.createdAt).toLocaleString()}
                         </div>
                       </div>
 
                       <div className="mt-4 space-y-2">
-                        <div className="flex items-center justify-between text-xs text-zinc-400">
+                        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-zinc-400">
                           <span>Required signatures</span>
                           <span>{signed} / {tx.requiredSignatures}</span>
                         </div>
                         <Progress value={signed} max={tx.requiredSignatures} />
                       </div>
 
-                      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-                        <div className="space-y-3">
+                      <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+                        <div className="min-w-0 space-y-3">
                           <div>
                               <div className="text-xs uppercase text-zinc-500">Assets</div>
                               <div className="mt-2 flex flex-wrap gap-2">
                                 {(tx.assets?.length ? tx.assets : [{ label: "ADA", quantity: tx.lovelace || "0", unit: "lovelace", id: "ada", decimals: 6 } as AssetLine]).map((asset) => (
-                                <div key={asset.id} className="rounded-full border border-white/8 px-3 py-1 text-sm text-zinc-200">
+                                <div key={asset.id} className="max-w-full break-words rounded-full border border-white/8 px-3 py-1 text-sm text-zinc-200">
                                   {formatRawQuantity(asset.quantity, asset.unit, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0))}
                                 </div>
                               ))}
@@ -692,7 +692,7 @@ export default function WalletDetail() {
                                 <div
                                   key={keyHash}
                                   className={cn(
-                                    "flex items-center justify-between gap-3 rounded-lg border p-3",
+                                    "flex min-w-0 items-center justify-between gap-3 overflow-hidden rounded-lg border p-3",
                                     hasSigned ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/7 bg-black/20",
                                   )}
                                 >
@@ -730,7 +730,7 @@ export default function WalletDetail() {
                           </div>
 
                           {unmatched ? (
-                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
                               <span>
                                 {unmatched} signature{unmatched === 1 ? " was" : "s were"} captured but did not match a policy signer key hash and will not count toward submit.
                               </span>
@@ -753,18 +753,18 @@ export default function WalletDetail() {
                           ) : null}
                         </div>
 
-                        <div className="space-y-2">
-                          <Button className="w-full" variant="secondary" onClick={() => void copyInvite(tx)}>
+                        <div className="min-w-0 space-y-2">
+                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copyInvite(tx)}>
                             <Copy className="size-4" /> Copy signer invite
                           </Button>
-                          <Button className="w-full" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign}>
+                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign}>
                             <ShieldCheck className="size-4" /> Sign with connected wallet
                           </Button>
-                          <Button className="w-full" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
+                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
                             <Copy className="size-4" /> Copy witness package
                           </Button>
                           <Button
-                            className="w-full"
+                            className="h-auto min-h-10 w-full whitespace-normal px-3 py-2"
                             onClick={() => void submitTransaction(tx)}
                             disabled={phase !== "ready" || !providerStatus?.services.submit}
                           >
@@ -779,7 +779,7 @@ export default function WalletDetail() {
           </AppWindow>
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {!isWatchOnly ? (
             <Card className="glass-panel">
               <CardHeader>
@@ -790,7 +790,7 @@ export default function WalletDetail() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <textarea
-                  className="min-h-48 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm text-slate-100 shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="min-h-48 min-w-0 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm text-slate-100 shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   value={signaturePackageInput}
                   onChange={(event) => setSignaturePackageInput(event.target.value)}
                   placeholder="Paste the witness package JSON here"
@@ -818,7 +818,7 @@ export default function WalletDetail() {
               </div>
               <Button variant="secondary" onClick={saveHandle}>Save identity</Button>
               {resolvedHandle ? (
-                <div className="truncate rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                <div className="break-all rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
                   Resolved {handleLabel(resolvedHandle)} → {resolvedHandle.address}
                 </div>
               ) : null}
@@ -851,12 +851,12 @@ export default function WalletDetail() {
               ) : (
                 <div className="grid gap-3 md:grid-cols-2">
                   {walletAssets.map((asset) => (
-                    <div className="rounded-lg border border-border bg-slate-950/60 p-4" key={asset.unit}>
-                      <div className="text-sm text-slate-400">{asset.label}</div>
+                    <div className="min-w-0 rounded-lg border border-border bg-slate-950/60 p-4" key={asset.unit}>
+                      <div className="break-words text-sm text-slate-400">{asset.label}</div>
                       <div className="mt-1 font-mono text-lg font-semibold text-slate-100">
                         {formatRawQuantity(asset.quantity, asset.unit, asset.decimals)}
                       </div>
-                      <div className="mt-1 truncate text-xs text-slate-500">{asset.unit}</div>
+                      <div className="mt-1 break-all text-xs text-slate-500">{asset.unit}</div>
                     </div>
                   ))}
                 </div>

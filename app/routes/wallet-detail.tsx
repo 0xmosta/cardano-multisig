@@ -618,7 +618,7 @@ export default function WalletDetail() {
 
   if (!wallet) {
     return (
-      <main className="mx-auto max-w-5xl px-4 py-8 text-slate-100">
+      <main className="mx-auto w-full max-w-[1800px] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
         <Link className="text-sm text-sky-300" to="/">
           ← Back
         </Link>
@@ -634,7 +634,7 @@ export default function WalletDetail() {
   const submitted = walletTxs.filter((tx) => txPhase(tx) === "submitted").length;
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300">

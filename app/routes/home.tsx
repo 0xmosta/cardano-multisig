@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   Check,
+  CircleUserRound,
   Clock,
   Copy,
   Download,
@@ -23,11 +24,12 @@ import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Progress } from "../components/ui/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { Textarea } from "../components/ui/textarea";
-import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type MultisigWallet,
@@ -429,6 +431,66 @@ function signerCountLabel(draft: TxDraft) {
   return `${pending} signer${pending === 1 ? "" : "s"} still needed`;
 }
 
+function WalletProfileMenu({
+  providers,
+  connected,
+  connectingWalletId,
+  onConnect,
+  onDisconnect,
+}: {
+  providers: WalletProvider[];
+  connected: ConnectedWallet | null;
+  connectingWalletId: string | null;
+  onConnect: (provider: WalletProvider) => void;
+  onDisconnect: () => void;
+}) {
+  return (
+    <details className="group relative">
+      <summary className="flex h-10 cursor-pointer list-none items-center gap-2 rounded-md border border-border bg-secondary px-2.5 text-sm text-zinc-100 transition hover:bg-secondary/80 [&::-webkit-details-marker]:hidden">
+        <CircleUserRound className="size-5 text-zinc-300" />
+        <span className="hidden max-w-28 truncate sm:inline">{connected ? connected.name : "Signer"}</span>
+        <Badge variant={connected ? "default" : "secondary"}>{connected ? networkLabel(connected.networkId) : "off"}</Badge>
+      </summary>
+      <div className="absolute right-0 top-12 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
+        <div className="flex items-start gap-3 border-b border-border pb-3">
+          <Avatar label={connected?.name || "Signer"} tone={connected ? "success" : "muted"} />
+          <div className="min-w-0">
+            <div className="font-semibold text-zinc-50">Signer wallet</div>
+            <div className="mt-1 text-xs text-zinc-400">
+              {connected ? `${connected.name} · ${networkLabel(connected.networkId)}` : "Connect Lace, Eternl, or VESPR"}
+            </div>
+            {connected?.keyHash ? <div className="mt-2 break-all font-mono text-[11px] text-zinc-500">{connected.keyHash}</div> : null}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2">
+          {providers.length ? (
+            providers.map((provider) => (
+              <Button
+                key={provider.id}
+                type="button"
+                variant={connected?.id === provider.id ? "default" : "secondary"}
+                disabled={Boolean(connectingWalletId)}
+                onClick={() => onConnect(provider)}
+                className="justify-start"
+              >
+                {provider.icon ? <img alt="" className="size-4" src={provider.icon} /> : <WalletCards className="size-4" />}
+                {connectingWalletId === provider.id ? "Waiting..." : provider.name}
+              </Button>
+            ))
+          ) : (
+            <div className="rounded-lg border border-border bg-black/20 p-3 text-sm text-zinc-400">No browser wallet detected.</div>
+          )}
+          {connected ? (
+            <Button type="button" variant="ghost" onClick={onDisconnect}>
+              Disconnect local session
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export default function Home() {
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
@@ -439,6 +501,7 @@ export default function Home() {
 
   const [mode, setMode] = useState<Mode>("import");
   const [importMode, setImportMode] = useState<ImportMode>("export");
+  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
   const [threshold, setThreshold] = useState(2);
   const [signers, setSigners] = useState<Signer[]>([emptySigner("Signer 1"), emptySigner("Signer 2"), emptySigner("Signer 3")]);
   const [importHandle, setImportHandle] = useState("");
@@ -664,6 +727,7 @@ export default function Home() {
             imported: true,
           };
     setWallets((current) => [wallet, ...current]);
+    setWalletDialogOpen(false);
     setStatus("Wallet imported. Open it to create transactions and track signer progress.");
   }
 
@@ -761,6 +825,7 @@ export default function Home() {
       const withoutDuplicate = current.filter((item) => item.discovery?.address !== addressDiscovery.address);
       return [wallet, ...withoutDuplicate];
     });
+    setWalletDialogOpen(false);
     setStatus(
       recoveredPayment
         ? "Multisig wallet imported from ADA Handle/address. The native script was recovered automatically from historical chain data."
@@ -783,6 +848,7 @@ export default function Home() {
       imported: false,
     };
     setWallets((current) => [wallet, ...current]);
+    setWalletDialogOpen(false);
     setStatus("Wallet created. Open it to build transactions and share signer invites.");
   }
 
@@ -875,31 +941,35 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">{DEFAULT_NETWORK}</Badge>
-              <Badge variant="secondary">{providerReadyLabel(serverProvider)}</Badge>
-            </div>
-            <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-50 sm:text-4xl">Cardano multisig</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-              Import a wallet, create a policy, or connect a signer. Advanced witness handling stays available below when you need it.
-            </p>
-          </div>
+      <header className="glass-panel flex flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-5">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">{wallets.length} wallet{wallets.length === 1 ? "" : "s"}</Badge>
-            <Badge variant="secondary">{drafts.length} room{drafts.length === 1 ? "" : "s"}</Badge>
+            <h1 className="mr-2 text-xl font-semibold leading-tight text-zinc-50 sm:text-2xl">Cardano multisig</h1>
+            <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">{DEFAULT_NETWORK}</Badge>
+            <Badge variant="secondary">{providerReadyLabel(serverProvider)}</Badge>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <span>{wallets.length} wallet{wallets.length === 1 ? "" : "s"}</span>
+            <span>·</span>
+            <span>{drafts.length} room{drafts.length === 1 ? "" : "s"}</span>
           </div>
         </div>
-        <WalletConnectorBar
-          providers={providers}
-          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-          connectingId={connectingWalletId}
-          onConnect={(provider) => void connectWallet(provider)}
-          emptyLabel={providers.length ? "Connect a signer wallet" : "No browser wallet detected"}
-        />
-      </section>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" onClick={() => setWalletDialogOpen(true)}>
+            <Import className="size-4" /> Import or create
+          </Button>
+          <WalletProfileMenu
+            providers={providers}
+            connected={connected}
+            connectingWalletId={connectingWalletId}
+            onConnect={(provider) => void connectWallet(provider)}
+            onDisconnect={() => {
+              setConnected(null);
+              setStatus("Signer wallet disconnected from this browser session.");
+            }}
+          />
+        </div>
+      </header>
 
       {activeDraft ? (
         <AppWindow title="Pending signature request" className="border-emerald-400/25">
@@ -1031,8 +1101,13 @@ export default function Home() {
         </AppWindow>
       ) : null}
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-        <AppWindow title={mode === "import" ? "Import or create" : "Create policy"} contentClassName="space-y-5">
+      <Dialog open={walletDialogOpen} onOpenChange={setWalletDialogOpen}>
+        <DialogContent onClose={() => setWalletDialogOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>{mode === "import" ? "Import wallet" : "Create policy"}</DialogTitle>
+            <DialogDescription>Import from a wallet export, ADA Handle/address, signer key, or create a fresh M-of-N policy.</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold text-zinc-50">Wallet workspace</h2>
@@ -1241,21 +1316,40 @@ export default function Home() {
               <Button onClick={saveCreatedWallet} disabled={!canSave}>Save created wallet</Button>
             </>
           )}
-        </AppWindow>
+          <details className="rounded-xl border border-white/8 bg-black/20 px-5 py-4 text-zinc-200">
+            <summary className="cursor-pointer list-none text-sm font-semibold text-zinc-100">Advanced witness import</summary>
+            <div className="mt-4 space-y-3">
+              <p className="text-sm text-zinc-400">Paste a returned witness package from any signer. Both legacy and new formats still work here.</p>
+              <Textarea value={signaturePackage} onChange={(event) => setSignaturePackage(event.target.value)} placeholder="Paste witness package JSON here" className="min-h-40 font-mono text-xs" />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={importSignature}>Import witness package</Button>
+                {activeDraft ? <Button variant="ghost" onClick={() => setActiveDraftId(activeDraft.id)}>Back to active room</Button> : null}
+              </div>
+            </div>
+          </details>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
 
-        <AppWindow title="Saved wallets">
+      <section>
+        <AppWindow title="Wallets">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-semibold text-zinc-50">{importMode === "signer" && activeSignerKeyHash ? "Matching saved wallets" : "Saved wallets"}</h2>
+              <h2 className="text-xl font-semibold text-zinc-50">{importMode === "signer" && activeSignerKeyHash ? "Matching wallets" : "Wallets"}</h2>
               <p className="mt-1 text-sm text-zinc-400">
                 {importMode === "signer" && activeSignerKeyHash
                   ? "These saved wallets include the active signer key hash."
                   : "Open a wallet to create transactions, copy signer invites, and track who is still missing."}
               </p>
             </div>
-            <Badge variant="secondary">
-              {importMode === "signer" && activeSignerKeyHash ? `${visibleWallets.length} / ${wallets.length}` : wallets.length} saved
-            </Badge>
+            <div className="flex shrink-0 items-center gap-2">
+              <Badge variant="secondary">
+                {importMode === "signer" && activeSignerKeyHash ? `${visibleWallets.length} / ${wallets.length}` : wallets.length} wallet{wallets.length === 1 ? "" : "s"}
+              </Badge>
+              {importMode === "signer" && activeSignerKeyHash ? (
+                <Button type="button" variant="ghost" size="sm" onClick={clearSignerSearch}>Clear signer</Button>
+              ) : null}
+            </div>
           </div>
           {visibleWallets.length === 0 ? (
             <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
@@ -1264,70 +1358,79 @@ export default function Home() {
                 : "No saved wallet matches this signer. Clear the signer filter to see all saved wallets."}
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Wallet</TableHead>
+                  <TableHead>Policy</TableHead>
+                  <TableHead>Network</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Signers</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
               {visibleWallets.map((wallet) => {
                 const isWatchOnly = !wallet.paymentScript && Boolean(wallet.discovery?.address);
                 const title = wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name;
                 const assetCount = wallet.discovery?.assets?.length || 0;
                 return (
-                  <article className="rounded-lg border border-white/7 bg-white/[0.02] p-4 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.04]" key={wallet.id}>
-                    <a href={walletHref(wallet)} className="block space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-3">
-                          <div className="flex size-11 items-center justify-center rounded-lg bg-white/5 text-zinc-300 ring-1 ring-white/10">
-                            <WalletCards className="size-5" />
-                          </div>
-                          <div>
-                            <h3 className="text-lg font-semibold text-zinc-50">{title}</h3>
-                            <div className="text-xs text-zinc-500">
-                              {isWatchOnly ? "watch-only address" : `${wallet.threshold} of ${wallet.signers.length} signers`}
-                            </div>
+                  <TableRow key={wallet.id}>
+                    <TableCell className="min-w-72">
+                      <a href={walletHref(wallet)} className="flex min-w-0 items-center gap-3">
+                        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/5 text-zinc-300 ring-1 ring-white/10">
+                          <WalletCards className="size-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-zinc-50">{title}</div>
+                          <div className="mt-0.5 max-w-md truncate text-xs text-zinc-500">
+                            {isWatchOnly ? wallet.discovery?.address : wallet.handle ? wallet.name : wallet.id}
                           </div>
                         </div>
-                        <Badge variant={isWatchOnly ? "outline" : wallet.imported ? "default" : "secondary"}>
-                          {isWatchOnly ? "watch-only" : wallet.imported ? "imported" : "created"}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-zinc-400">
+                      </a>
+                    </TableCell>
+                    <TableCell className="min-w-48 text-zinc-300">
+                      {isWatchOnly ? (
+                        <span>{assetCount} visible asset{assetCount === 1 ? "" : "s"}</span>
+                      ) : (
+                        <span>payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)}</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-400">{wallet.network}</TableCell>
+                    <TableCell>
+                      <Badge variant={isWatchOnly ? "outline" : wallet.imported ? "default" : "secondary"}>
+                        {isWatchOnly ? "watch-only" : wallet.imported ? "imported" : "created"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="-space-x-2 whitespace-nowrap">
                         {isWatchOnly ? (
-                          <>
-                            {wallet.network} · {assetCount} visible asset{assetCount === 1 ? "" : "s"} ·{" "}
-                            <span className="break-all">{wallet.discovery?.address}</span>
-                          </>
+                          <Avatar label={title} className="size-8 border border-[#121214]" />
                         ) : (
-                          <>
-                            {wallet.handle ? `${wallet.name} · ` : ""}
-                            {wallet.network} · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)}
-                          </>
+                          wallet.signers.slice(0, 5).map((signer) => (
+                            <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-[#121214]" />
+                          ))
                         )}
-                      </p>
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="-space-x-2">
-                          {isWatchOnly ? (
-                            <Avatar label={title} className="size-8 border border-[#121214]" />
-                          ) : (
-                            wallet.signers.slice(0, 5).map((signer) => (
-                              <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-[#121214]" />
-                            ))
-                          )}
-                        </div>
-                        <div className="inline-flex items-center gap-1 text-sm font-medium text-emerald-300">
-                          {isWatchOnly ? "Open watch" : "Open wallet"} <ArrowRight className="size-4" />
-                        </div>
                       </div>
-                    </a>
-                    <div className="mt-3 flex flex-wrap gap-2 border-t border-white/7 pt-3">
-                      <Button variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                      <a href={walletHref(wallet)} className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground shadow-xs transition hover:bg-secondary/80">
+                        {isWatchOnly ? "Open watch" : "Open wallet"} <ArrowRight className="size-4" />
+                      </a>
+                      <Button size="sm" variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
                         <Download className="size-4" /> Export
                       </Button>
-                      <Button variant="destructive" onClick={() => setWallets((current) => current.filter((item) => item.id !== wallet.id))}>
+                      <Button size="sm" variant="destructive" onClick={() => setWallets((current) => current.filter((item) => item.id !== wallet.id))}>
                         <Trash2 className="size-4" /> Delete
                       </Button>
-                    </div>
-                  </article>
+                      </div>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </div>
+              </TableBody>
+            </Table>
           )}
         </AppWindow>
       </section>
@@ -1388,18 +1491,6 @@ export default function Home() {
           </CardContent>
         </Card>
       ) : null}
-
-      <details className="rounded-xl border border-white/8 bg-black/20 px-5 py-4 text-zinc-200">
-        <summary className="cursor-pointer list-none text-sm font-semibold text-zinc-100">Advanced witness import</summary>
-        <div className="mt-4 space-y-3">
-          <p className="text-sm text-zinc-400">Paste a returned witness package from any signer. Both legacy and new formats still work here, but this tool stays out of first visual priority until you actually need it.</p>
-          <Textarea value={signaturePackage} onChange={(event) => setSignaturePackage(event.target.value)} placeholder="Paste witness package JSON here" className="min-h-40 font-mono text-xs" />
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={importSignature}>Import witness package</Button>
-            {activeDraft ? <Button variant="ghost" onClick={() => setActiveDraftId(activeDraft.id)}>Back to active room</Button> : null}
-          </div>
-        </div>
-      </details>
 
       {status ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{status}</div> : null}
     </main>

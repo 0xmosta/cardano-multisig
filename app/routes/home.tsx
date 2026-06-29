@@ -71,7 +71,8 @@ type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
 type ConnectedWallet = { id: string; name: string; api: BrowserWalletApi; networkId: number; addressHex: string; keyHash: string | null };
 type AssetLine = { id: string; unit: string; label: string; quantity: string; decimals?: number };
 type ServerProviderStatus = { mode: "server"; network: string; ready: boolean; services: { blockfrost: boolean; kupo: boolean; ogmios: boolean; submit: boolean } };
-type AddressDiscovery = { source?: string; address?: string; handle?: { name: string; address: string }; assets: AssetLine[]; outputs?: number };
+type RecoveredScript = { source: string; txHash: string; scriptHash: string; paymentScript: NativeScript };
+type AddressDiscovery = { source?: string; address?: string; handle?: { name: string; address: string }; assets: AssetLine[]; outputs?: number; recoveredScript?: RecoveredScript | null };
 
 const SAMPLE_PAYMENT_SCRIPT = [
   "83030283",
@@ -619,7 +620,7 @@ export default function Home() {
 
       const response = await fetch(`/api/cardano/assets?${params.toString()}`);
       const body = (await response.json().catch(() => null)) as
-        | ({ error?: string; source?: string; address?: string; handle?: { name: string; address: string }; outputs?: number; assets?: AssetLine[] })
+        | ({ error?: string; source?: string; address?: string; handle?: { name: string; address: string }; outputs?: number; assets?: AssetLine[]; recoveredScript?: RecoveredScript | null })
         | null;
       if (!response.ok) {
         throw new Error(body?.error || "Could not inspect that address yet.");
@@ -631,8 +632,13 @@ export default function Home() {
         handle: body?.handle,
         outputs: body?.outputs,
         assets: Array.isArray(body?.assets) ? body!.assets : [],
+        recoveredScript: body?.recoveredScript || null,
       });
-      setStatus("Address discovery loaded. This preview can confirm assets and the resolved address, but it cannot reconstruct the full native script by itself.");
+      setStatus(
+        body?.recoveredScript
+          ? "Native script recovered from historical chain data. You can import this multisig without pasting JSON."
+          : "Address discovery loaded. Assets are visible, but no historical native-script witness was found yet.",
+      );
     } catch (error) {
       setAddressDiscovery(null);
       setAddressDiscoveryError(error instanceof Error ? error.message : "Could not inspect that address yet.");
@@ -649,18 +655,22 @@ export default function Home() {
 
     const handle = addressDiscovery.handle?.name || (!looksLikeAddress(addressOrHandle) ? normalizeHandleInput(addressOrHandle) : "");
     const name = handle ? `$${handle.replace(/^\$/, "")}` : "Watch-only address";
+    const recoveredPayment = addressDiscovery.recoveredScript?.paymentScript;
+    const recoveredSigners = recoveredPayment ? uniqueSigners(collectSigners(recoveredPayment, "payment")) : [];
     const wallet: MultisigWallet = {
       id: createId("wallet"),
       name,
       handle: handle ? handle.replace(/^\$/, "") : undefined,
       network: DEFAULT_NETWORK,
-      threshold: 0,
-      signers: [],
+      threshold: recoveredPayment ? requiredSignatures(recoveredPayment) : 0,
+      signers: recoveredSigners,
+      paymentScript: recoveredPayment || undefined,
+      script: recoveredPayment || undefined,
       stakeScript: null,
       createdAt: nowIso(),
       imported: true,
       discovery: {
-        kind: "address",
+        kind: recoveredPayment ? "script" : "address",
         address: addressDiscovery.address,
         source: addressDiscovery.source,
         outputs: addressDiscovery.outputs,
@@ -673,7 +683,11 @@ export default function Home() {
       const withoutDuplicate = current.filter((item) => item.discovery?.address !== addressDiscovery.address);
       return [wallet, ...withoutDuplicate];
     });
-    setStatus("Address saved as watch-only. Import the native script or wallet export later to create transactions from it.");
+    setStatus(
+      recoveredPayment
+        ? "Multisig wallet imported from ADA Handle/address. The native script was recovered automatically from historical chain data."
+        : "Address saved as watch-only. Import the native script or wallet export later to create transactions from it.",
+    );
   }
 
   function saveCreatedWallet() {
@@ -1054,11 +1068,18 @@ export default function Home() {
                           </div>
                         ))}
                       </div>
-                      <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                        Discovery can confirm the resolved address and visible assets, but it cannot recover the native script from chain state alone. Save it as watch-only now; import the native script later when you need to create transactions.
-                      </div>
+                      {addressDiscovery.recoveredScript ? (
+                        <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                          Native script recovered from a historical transaction witness. This can be imported as a full multisig wallet without pasting script JSON.
+                          <div className="mt-1 break-all font-mono text-xs text-emerald-200/80">tx {addressDiscovery.recoveredScript.txHash}</div>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                          No historical native-script witness was found for this address yet. Save it as watch-only now, or import a wallet export/native script later to create transactions.
+                        </div>
+                      )}
                       <Button onClick={saveAddressDiscovery} disabled={!addressDiscovery.address}>
-                        <Plus className="size-4" /> Save watch-only wallet
+                        <Plus className="size-4" /> {addressDiscovery.recoveredScript ? "Import recovered multisig" : "Save watch-only wallet"}
                       </Button>
                     </div>
                   ) : null}

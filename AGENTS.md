@@ -21,7 +21,7 @@
 - For non-mainnet transaction building, Blockfrost/Kupo/Ogmios config must be explicit. Do not silently fall back to mainnet providers.
 - Validate network assumptions in code and UI. Preprod addresses use `addr_test...`; mainnet uses `addr...`.
 - Do not invent policy IDs, script hashes, addresses, transaction CBOR, protocol parameters, or CIP behavior.
-- Do not claim ADA Handle/address discovery can reconstruct a multisig native script. Chain discovery can resolve an address and visible assets only; save it as watch-only until a wallet export or native script is imported.
+- ADA Handle/address import should first try to recover the payment native script from historical transaction witnesses whose script hash matches the address payment credential. If no witness is found, save the address as watch-only until a wallet export or native script is imported.
 - Before changing UX around signing/submission, inspect the full flow: import wallet, create transaction, invite signer, connect signer wallet, sign, export/import witnesses, submit/confirm.
 - In M-of-N coordinator UI, distinguish signatures still required for threshold from optional unsigned policy members. Once threshold is met, never present remaining optional signers as blockers.
 - If an imported witness does not match the policy signer hashes, surface it as non-counting and provide a clear remove/discard action before submit.

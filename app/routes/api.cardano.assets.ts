@@ -3,9 +3,14 @@ type KupoOutput = { transaction_id?: string; output_index?: number; value?: Kupo
 type AssetSummary = { unit: string; label: string; quantity: string; outputCount: number; decimals: number; subject?: string; fingerprint?: string };
 type RegistryMetadata = { name?: { value?: string }; ticker?: { value?: string }; decimals?: { value?: number | string } };
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
+type NativeScriptJson = { type?: string; scripts?: NativeScriptJson[]; keyHash?: string; required?: number; slot?: number; [key: string]: unknown };
+type RecoveredScript = { source: "koios"; txHash: string; scriptHash: string; paymentScript: NativeScriptJson };
 type KoiosAsset = { decimals?: number | null; quantity?: string; policy_id?: string; asset_name?: string; fingerprint?: string };
 type KoiosUtxo = { value?: string; asset_list?: KoiosAsset[] };
 type KoiosAddressInfo = { address?: string; balance?: string; utxo_set?: KoiosUtxo[] };
+type KoiosAddressTx = { tx_hash?: string };
+type KoiosNativeScript = { script_hash?: string; script_json?: NativeScriptJson };
+type KoiosTxInfo = { tx_hash?: string; native_scripts?: KoiosNativeScript[] };
 type BlockfrostAmount = { unit: string; quantity: string };
 type BlockfrostUtxo = { tx_hash?: string; output_index?: number; amount?: BlockfrostAmount[] };
 type BlockfrostAsset = { decimals?: number | null; fingerprint?: string };
@@ -76,6 +81,19 @@ function parsePatterns(url: URL) {
 function normalizeHandle(input: string) { return input.trim().replace(/^\$/, "").toLowerCase(); }
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }
 
+async function scriptHashFromAddress(address: string): Promise<string | null> {
+  try {
+    const CSL = await import("@emurgo/cardano-serialization-lib-browser");
+    const parsed = CSL.Address.from_bech32(address);
+    const base = CSL.BaseAddress.from_address(parsed);
+    const enterprise = CSL.EnterpriseAddress.from_address(parsed);
+    const credential = base?.payment_cred() ?? enterprise?.payment_cred();
+    return credential?.to_scripthash()?.to_hex() || null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveHandle(name: string, network: CardanoNetwork): Promise<HandleInfo | null> {
   if (!isMainnetNetwork(network)) return null;
   const handle = normalizeHandle(name);
@@ -130,6 +148,46 @@ async function koiosAddressAssets(address: string): Promise<{ assets: AssetSumma
     assets.sort((a, b) => a.unit === "lovelace" ? -1 : b.unit === "lovelace" ? 1 : a.label.localeCompare(b.label));
     return { assets, outputs: utxos.length };
   } catch { return null; }
+}
+
+async function koiosRecoverNativeScript(address: string): Promise<RecoveredScript | null> {
+  if (!validAddress(address)) return null;
+  const paymentScriptHash = await scriptHashFromAddress(address);
+  if (!paymentScriptHash) return null;
+
+  try {
+    const txResponse = await fetch("https://api.koios.rest/api/v1/address_txs", {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ _addresses: [address] }),
+    });
+    if (!txResponse.ok) return null;
+    const addressTxs = await txResponse.json() as KoiosAddressTx[];
+    const hashes = Array.from(new Set(addressTxs.map((tx) => tx.tx_hash).filter((hash): hash is string => Boolean(hash)))).slice(0, 100);
+
+    for (let index = 0; index < hashes.length; index += 10) {
+      const chunk = hashes.slice(index, index + 10);
+      const infoResponse = await fetch("https://api.koios.rest/api/v1/tx_info", {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ _tx_hashes: chunk, _scripts: true, _bytecode: true }),
+      });
+      if (!infoResponse.ok) continue;
+      const txInfos = await infoResponse.json() as KoiosTxInfo[];
+      for (const tx of txInfos) {
+        const match = (tx.native_scripts || []).find(
+          (script) => script.script_hash === paymentScriptHash && script.script_json?.type,
+        );
+        if (match?.script_json && tx.tx_hash) {
+          return { source: "koios", txHash: tx.tx_hash, scriptHash: paymentScriptHash, paymentScript: match.script_json };
+        }
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 async function blockfrostGet<T>(path: string): Promise<T> {
@@ -222,10 +280,11 @@ export async function loader({ request }: { request: Request }) {
     if (handle) address = handle.address;
   }
   if (address) {
+    const recoveredScript = configuredNetwork() === "mainnet" ? await koiosRecoverNativeScript(address) : null;
     const blockfrost = await blockfrostAddressAssets(address);
-    if (blockfrost) return Response.json({ ready: true, source: "blockfrost", handle, address, patterns, outputs: blockfrost.outputs, assets: blockfrost.assets });
+    if (blockfrost) return Response.json({ ready: true, source: "blockfrost", handle, address, patterns, outputs: blockfrost.outputs, assets: blockfrost.assets, recoveredScript });
     const exact = configuredNetwork() === "mainnet" ? await koiosAddressAssets(address) : null;
-    if (exact) return Response.json({ ready: true, source: "koios", handle, address, patterns, outputs: exact.outputs, assets: exact.assets });
+    if (exact) return Response.json({ ready: true, source: "koios", handle, address, patterns, outputs: exact.outputs, assets: exact.assets, recoveredScript });
   }
 
   if (!patterns.length || patterns.some((pattern) => !/^([0-9a-f]{58}|[0-9a-f]{114})(\.\*)?$/.test(pattern))) {

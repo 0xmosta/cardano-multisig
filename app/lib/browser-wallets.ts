@@ -31,9 +31,10 @@ const KNOWN_PROVIDER_NAMES: Record<string, string> = {
   yoroi: "Yoroi",
   vespr: "VESPR",
   begin: "Begin",
+  lacewallet: "Lace",
 };
 
-function prettyProviderName(id: string, wallet: CardanoWindowWallet) {
+function prettyProviderName<TApi extends BrowserWalletApi>(id: string, wallet: CardanoWindowWallet<TApi>) {
   const explicit = wallet.name?.trim();
   if (explicit) {
     if (id.toLowerCase() === "lace" && explicit.toLowerCase() === "lace") return "Lace";
@@ -50,8 +51,22 @@ export function installedBrowserWallets<TApi extends BrowserWalletApi = BrowserW
   }).cardano;
   if (!cardano) return [];
 
-  return Object.entries(cardano)
-    .filter(([, wallet]) => typeof wallet?.enable === "function")
+  const ids = Array.from(
+    new Set([
+      ...Reflect.ownKeys(cardano).filter((key): key is string => typeof key === "string"),
+      ...Object.keys(KNOWN_PROVIDER_NAMES),
+    ]),
+  );
+
+  return ids
+    .map((id) => {
+      try {
+        return [id, cardano[id]] as const;
+      } catch {
+        return [id, undefined] as const;
+      }
+    })
+    .filter((entry): entry is readonly [string, CardanoWindowWallet<TApi>] => typeof entry[1]?.enable === "function")
     .map(([id, wallet]) => ({
       id,
       name: prettyProviderName(id, wallet),
@@ -59,4 +74,30 @@ export function installedBrowserWallets<TApi extends BrowserWalletApi = BrowserW
       enable: wallet.enable!.bind(wallet),
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function watchInstalledBrowserWallets<TApi extends BrowserWalletApi = BrowserWalletApi>(
+  callback: (providers: BrowserWalletProvider<TApi>[]) => void,
+) {
+  if (typeof window === "undefined") return () => {};
+
+  const refresh = () => callback(installedBrowserWallets<TApi>());
+  const timers = [0, 100, 300, 700, 1500, 3000, 6000].map((delay) => window.setTimeout(refresh, delay));
+  const interval = window.setInterval(refresh, 2500);
+  const stopInterval = window.setTimeout(() => window.clearInterval(interval), 15000);
+
+  window.addEventListener("focus", refresh);
+  window.addEventListener("visibilitychange", refresh);
+  window.addEventListener("cardano#initialized", refresh);
+  window.addEventListener("wallet#initialized", refresh);
+
+  return () => {
+    timers.forEach((timer) => window.clearTimeout(timer));
+    window.clearTimeout(stopInterval);
+    window.clearInterval(interval);
+    window.removeEventListener("focus", refresh);
+    window.removeEventListener("visibilitychange", refresh);
+    window.removeEventListener("cardano#initialized", refresh);
+    window.removeEventListener("wallet#initialized", refresh);
+  };
 }

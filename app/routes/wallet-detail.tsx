@@ -24,7 +24,7 @@ import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
 import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
-import { installedBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
+import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type MultisigWallet as Wallet,
   type NativeScript,
@@ -353,11 +353,12 @@ export default function WalletDetail() {
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
     setTxs(readArray<TxDraft>(TX_KEY));
-    setProviders(installedBrowserWallets());
+    const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
     fetch("/api/cardano/provider")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => setProviderStatus(payload))
       .catch(() => setProviderStatus(null));
+    return stopWatchingWallets;
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);

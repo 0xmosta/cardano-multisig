@@ -27,7 +27,7 @@ import { Label } from "../components/ui/label";
 import { Progress } from "../components/ui/progress";
 import { Textarea } from "../components/ui/textarea";
 import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
-import { installedBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
+import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type MultisigWallet,
   type NativeScript,
@@ -439,23 +439,25 @@ export default function Home() {
   useEffect(() => {
     setWallets(loadWallets());
     setDrafts(loadDrafts());
-    setProviders(installedBrowserWallets());
+    const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
     fetch("/api/cardano/provider")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => setServerProvider(payload))
       .catch(() => setServerProvider(null));
 
     const invite = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("invite");
-    if (!invite) return;
-    const draft = decodeInvite(invite, migrateDraft);
-    if (!draft) {
-      setStatus("Invite link is malformed. Ask the coordinator to copy the signer invite again.");
-      return;
+    if (invite) {
+      const draft = decodeInvite(invite, migrateDraft);
+      if (!draft) {
+        setStatus("Invite link is malformed. Ask the coordinator to copy the signer invite again.");
+        return stopWatchingWallets;
+      }
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      setDrafts((current) => (current.some((item) => item.id === draft.id) ? current : [draft, ...current]));
+      setActiveDraftId(draft.id);
+      setStatus("Invite loaded. Review the transaction below, connect a signer wallet, then click Sign.");
     }
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-    setDrafts((current) => (current.some((item) => item.id === draft.id) ? current : [draft, ...current]));
-    setActiveDraftId(draft.id);
-    setStatus("Invite loaded. Review the transaction below, connect a signer wallet, then click Sign.");
+    return stopWatchingWallets;
   }, []);
 
   useEffect(() => saveWallets(wallets), [wallets]);

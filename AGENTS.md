@@ -13,6 +13,7 @@
 - Stack: React Router app, React 19, TypeScript, Tailwind CSS v4, Dockerfile deploy.
 - Server routes live in `app/routes/api.cardano.*.ts`.
 - Browser wallet integration is CIP-30 style and must stay client-side.
+- Browser wallet discovery must tolerate delayed/non-enumerable `window.cardano` providers. Use the shared detector and verify Lace, Eternl, VESPR, and other CIP-30 wallets remain visible after page load/focus.
 - Wallet and transaction data are currently browser-local. Invite links and witness packages are sensitive and should be shared privately.
 
 ## Safety Rules

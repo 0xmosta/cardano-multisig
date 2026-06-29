@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
-import { installedBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
+import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type AssetLine,
   type MultisigWallet as Wallet,
@@ -256,7 +256,7 @@ export default function NewTransaction() {
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
-    setProviders(installedBrowserWallets());
+    return watchInstalledBrowserWallets(setProviders);
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);

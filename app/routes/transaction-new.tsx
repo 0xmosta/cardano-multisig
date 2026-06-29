@@ -1,6 +1,6 @@
 import { Link, useNavigate, useParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Database, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronDown, Coins, Database, ImageIcon, RefreshCw, Search, X } from "lucide-react";
 import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Button } from "../components/ui/button";
@@ -30,6 +30,21 @@ type AssetOption = {
   outputCount?: number;
   decimals?: number;
   source: "treasury" | "default";
+  subject?: string;
+  fingerprint?: string;
+  image?: string;
+  mediaType?: string;
+  policyId?: string;
+  assetName?: string;
+};
+
+type SelectedAsset = AssetLine & {
+  maxQuantity?: string;
+  fingerprint?: string;
+  image?: string;
+  subject?: string;
+  policyId?: string;
+  assetName?: string;
 };
 
 type HandleInfo = {
@@ -101,6 +116,39 @@ function toRawQuantity(display: string, decimals = 0) {
 
 function defaultDisplayAmount(asset: { unit: string; decimals?: number }) {
   return asset.unit === "lovelace" ? "2" : "1";
+}
+
+function compactMiddle(value = "", start = 10, end = 6) {
+  if (!value || value.length <= start + end + 3) return value;
+  return `${value.slice(0, start)}...${value.slice(-end)}`;
+}
+
+function assetSubtitle(asset: Pick<AssetOption, "unit" | "fingerprint" | "policyId" | "assetName">) {
+  if (asset.unit === "lovelace") return "Cardano native currency";
+  if (asset.fingerprint) return asset.fingerprint;
+  if (asset.policyId) return `${compactMiddle(asset.policyId, 12, 8)}${asset.assetName ? `.${compactMiddle(asset.assetName, 8, 4)}` : ""}`;
+  return compactMiddle(asset.unit, 18, 10);
+}
+
+function AssetThumb({
+  asset,
+  className = "size-11",
+}: {
+  asset: Pick<AssetOption, "label" | "unit" | "image">;
+  className?: string;
+}) {
+  if (asset.image) {
+    return (
+      <div className={`${className} overflow-hidden rounded-md border border-white/10 bg-black/30`}>
+        <img src={asset.image} alt="" className="h-full w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
+      </div>
+    );
+  }
+  return (
+    <div className={`${className} flex shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/5 text-zinc-300`}>
+      {asset.unit === "lovelace" ? <Coins className="size-5 text-sky-200" /> : <ImageIcon className="size-5 text-zinc-400" />}
+    </div>
+  );
 }
 
 function handleCandidate(wallet: { name?: string; handle?: string }) {
@@ -192,13 +240,15 @@ export default function NewTransaction() {
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
   const [title, setTitle] = useState("Treasury payment");
   const [recipient, setRecipient] = useState("");
-  const [assets, setAssets] = useState<AssetLine[]>([
+  const [assets, setAssets] = useState<SelectedAsset[]>([
     { id: createId("asset"), unit: "lovelace", label: "ADA", quantity: "2", decimals: 6 },
   ]);
   const [unsignedTxCbor, setUnsignedTxCbor] = useState("");
   const [buildInfo, setBuildInfo] = useState("");
   const [note, setNote] = useState("");
   const [status, setStatus] = useState("");
+  const [openAssetPickerId, setOpenAssetPickerId] = useState<string | null>(null);
+  const [assetSearch, setAssetSearch] = useState("");
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
@@ -257,14 +307,21 @@ export default function NewTransaction() {
               label: chosen.label,
               decimals: chosen.decimals ?? (chosen.unit === "lovelace" ? 6 : 0),
               maxQuantity: chosen.quantity,
+              fingerprint: chosen.fingerprint,
+              image: chosen.image,
+              subject: chosen.subject,
+              policyId: chosen.policyId,
+              assetName: chosen.assetName,
               quantity: defaultDisplayAmount(chosen),
             }
           : asset,
       ),
     );
+    setOpenAssetPickerId(null);
+    setAssetSearch("");
   }
 
-  function updateAsset(id: string, patch: Partial<AssetLine>) {
+  function updateAsset(id: string, patch: Partial<SelectedAsset>) {
     setAssets((current) => current.map((asset) => (asset.id === id ? { ...asset, ...patch } : asset)));
   }
 
@@ -280,8 +337,31 @@ export default function NewTransaction() {
         quantity: defaultDisplayAmount(next),
         maxQuantity: next.quantity,
         decimals: next.decimals ?? (next.unit === "lovelace" ? 6 : 0),
+        fingerprint: next.fingerprint,
+        image: next.image,
+        subject: next.subject,
+        policyId: next.policyId,
+        assetName: next.assetName,
       },
     ]);
+  }
+
+  function filteredAssetOptions(currentUnit: string) {
+    const query = assetSearch.trim().toLowerCase();
+    return assetOptions
+      .filter((option) => {
+        if (!query) return true;
+        return [option.label, option.unit, option.fingerprint, option.policyId, option.assetName]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(query));
+      })
+      .sort((left, right) => {
+        if (left.unit === currentUnit) return -1;
+        if (right.unit === currentUnit) return 1;
+        if (left.unit === "lovelace") return -1;
+        if (right.unit === "lovelace") return 1;
+        return left.label.localeCompare(right.label);
+      });
   }
 
   async function buildUnsignedTx(txAssets: AssetLine[]) {
@@ -490,29 +570,90 @@ export default function NewTransaction() {
               </div>
               {assets.map((asset) => {
                 const option = assetOptions.find((item) => item.unit === asset.unit);
+                const selected = option || ({ ...asset, source: "treasury", outputCount: 0 } satisfies AssetOption);
+                const pickerOpen = openAssetPickerId === asset.id;
+                const choices = filteredAssetOptions(asset.unit);
                 return (
                   <div key={asset.id} className="grid gap-2 md:grid-cols-[minmax(0,1fr)_150px_40px]">
-                    <select
-                      className="h-10 rounded-md border border-input bg-transparent px-3 py-1 text-base text-slate-100 shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      value={asset.unit}
-                      onChange={(event) => applyAsset(asset.id, event.target.value)}
-                    >
-                      {assetOptions.map((choice) => (
-                        <option className="bg-slate-950 text-slate-100" key={choice.unit} value={choice.unit}>
-                          {choice.label} · {formatRawQuantity(choice.quantity, choice.unit, choice.decimals)}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative min-w-0">
+                      <button
+                        type="button"
+                        className="flex min-h-16 w-full items-center justify-between gap-3 rounded-md border border-input bg-transparent px-3 py-2 text-left shadow-xs outline-none transition hover:bg-white/[0.03] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        onClick={() => {
+                          setOpenAssetPickerId(pickerOpen ? null : asset.id);
+                          setAssetSearch("");
+                        }}
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <AssetThumb asset={selected} />
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-semibold text-slate-100">
+                              {selected.label}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-slate-500">
+                              {assetSubtitle(selected)}
+                            </span>
+                          </span>
+                        </span>
+                        <ChevronDown className="size-4 shrink-0 text-slate-500" />
+                      </button>
+
+                      {pickerOpen ? (
+                        <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 overflow-hidden rounded-xl border border-border bg-[#18181b] shadow-2xl shadow-black/50">
+                          <div className="border-b border-border p-2">
+                            <div className="flex items-center gap-2 rounded-md border border-input bg-black/20 px-3">
+                              <Search className="size-4 shrink-0 text-slate-500" />
+                              <input
+                                value={assetSearch}
+                                onChange={(event) => setAssetSearch(event.target.value)}
+                                placeholder="Search asset, fingerprint, policy..."
+                                className="h-10 min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                                autoFocus
+                              />
+                            </div>
+                          </div>
+                          <div className="max-h-80 overflow-y-auto p-2">
+                            {choices.length ? (
+                              choices.map((choice) => (
+                                <button
+                                  key={choice.unit}
+                                  type="button"
+                                  className="flex w-full items-center gap-3 rounded-lg p-2 text-left transition hover:bg-white/[0.05]"
+                                  onClick={() => applyAsset(asset.id, choice.unit)}
+                                >
+                                  <AssetThumb asset={choice} className="size-12" />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="flex items-center justify-between gap-3">
+                                      <span className="truncate text-sm font-semibold text-slate-100">{choice.label}</span>
+                                      <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-xs text-slate-400">
+                                        {formatRawQuantity(choice.quantity, choice.unit, choice.decimals)}
+                                      </span>
+                                    </span>
+                                    <span className="mt-1 block truncate text-xs text-slate-500">{assetSubtitle(choice)}</span>
+                                  </span>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="p-4 text-sm text-slate-500">No matching asset in this multisig wallet.</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                     <Input
                       value={asset.quantity}
                       onChange={(event) => updateAsset(asset.id, { quantity: event.target.value })}
                       placeholder="Amount"
                     />
-                    <Button variant="ghost" onClick={() => setAssets((current) => current.filter((item) => item.id !== asset.id))}>
-                      ×
+                    <Button variant="ghost" onClick={() => setAssets((current) => current.filter((item) => item.id !== asset.id))} aria-label="Remove asset">
+                      <X className="size-4" />
                     </Button>
                     {option?.quantity ? (
-                      <div className="md:col-span-3 text-xs text-slate-500">Available: {formatRawQuantity(option.quantity, option.unit, option.decimals)}</div>
+                      <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                        <span>Available: {formatRawQuantity(option.quantity, option.unit, option.decimals)}</span>
+                        {option.outputCount ? <span>from {option.outputCount} UTxO{option.outputCount === 1 ? "" : "s"}</span> : null}
+                        {option.policyId ? <span className="font-mono">policy {compactMiddle(option.policyId, 12, 8)}</span> : null}
+                      </div>
                     ) : null}
                   </div>
                 );

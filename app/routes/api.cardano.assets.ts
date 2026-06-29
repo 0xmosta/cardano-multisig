@@ -1,11 +1,36 @@
 type KupoValue = { coins?: number | string; assets?: Record<string, number | string> };
 type KupoOutput = { transaction_id?: string; output_index?: number; value?: KupoValue; address?: string; spent_at?: unknown };
-type AssetSummary = { unit: string; label: string; quantity: string; outputCount: number; decimals: number; subject?: string; fingerprint?: string };
-type RegistryMetadata = { name?: { value?: string }; ticker?: { value?: string }; decimals?: { value?: number | string } };
+type AssetSummary = {
+  unit: string;
+  label: string;
+  quantity: string;
+  outputCount: number;
+  decimals: number;
+  subject?: string;
+  fingerprint?: string;
+  image?: string;
+  mediaType?: string;
+  policyId?: string;
+  assetName?: string;
+};
+type RegistryMetadata = {
+  name?: { value?: string };
+  ticker?: { value?: string };
+  decimals?: { value?: number | string };
+  logo?: { value?: string };
+};
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 type NativeScriptJson = { type?: string; scripts?: NativeScriptJson[]; keyHash?: string; required?: number; slot?: number; [key: string]: unknown };
 type RecoveredScript = { source: "koios"; txHash: string; scriptHash: string; paymentScript: NativeScriptJson };
 type KoiosAsset = { decimals?: number | null; quantity?: string; policy_id?: string; asset_name?: string; fingerprint?: string };
+type KoiosAssetInfo = {
+  policy_id?: string;
+  asset_name?: string;
+  asset_name_ascii?: string;
+  fingerprint?: string;
+  minting_tx_metadata?: Record<string, unknown> | null;
+  token_registry_metadata?: RegistryMetadata | null;
+};
 type KoiosUtxo = { value?: string; asset_list?: KoiosAsset[] };
 type KoiosAddressInfo = { address?: string; balance?: string; utxo_set?: KoiosUtxo[] };
 type KoiosAddressTx = { tx_hash?: string };
@@ -13,7 +38,13 @@ type KoiosNativeScript = { script_hash?: string; script_json?: NativeScriptJson 
 type KoiosTxInfo = { tx_hash?: string; native_scripts?: KoiosNativeScript[] };
 type BlockfrostAmount = { unit: string; quantity: string };
 type BlockfrostUtxo = { tx_hash?: string; output_index?: number; amount?: BlockfrostAmount[] };
-type BlockfrostAsset = { decimals?: number | null; fingerprint?: string };
+type BlockfrostAsset = {
+  decimals?: number | null;
+  fingerprint?: string;
+  metadata?: { name?: string; ticker?: string; decimals?: number | string; logo?: string } | null;
+  onchain_metadata?: Record<string, unknown> | null;
+  onchain_metadata_standard?: string;
+};
 
 type CardanoNetwork = "mainnet" | "preprod" | "preview";
 
@@ -55,8 +86,53 @@ function subjectFromUnit(unit: string) { if (unit === "lovelace") return undefin
 function unitFromBlockfrost(unit: string) { return unit === "lovelace" ? unit : `${unit.slice(0, 56)}.${unit.slice(56)}`; }
 function decodeAssetName(nameHex = "") { try { const text = Buffer.from(nameHex, "hex").toString("utf8"); if (/^[\x20-\x7E]{1,32}$/.test(text)) return text; } catch {} return ""; }
 function assetLabel(unit: string) { if (unit === "lovelace") return "ADA"; const [, nameHex = ""] = unit.split("."); const decoded = decodeAssetName(nameHex); if (decoded) return decoded; return nameHex ? nameHex.slice(0, 12) + (nameHex.length > 12 ? "…" : "") : unit.slice(0, 16) + "…"; }
+function unitParts(unit: string) { if (unit === "lovelace") return { policyId: undefined, assetName: undefined }; const [policyId, assetName = ""] = unit.split("."); return { policyId, assetName }; }
+function joinMetadataValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const joined = value.map((item) => (typeof item === "string" ? item : "")).join("");
+    return joined || undefined;
+  }
+  return undefined;
+}
+function normalizeImageUrl(value: unknown): string | undefined {
+  const raw = joinMetadataValue(value)?.trim();
+  if (!raw) return undefined;
+  if (/^ipfs:\/\//i.test(raw)) return `https://ipfs.io/ipfs/${raw.replace(/^ipfs:\/\//i, "").replace(/^ipfs\//i, "")}`;
+  if (/^ipfs\//i.test(raw)) return `https://ipfs.io/ipfs/${raw.replace(/^ipfs\//i, "")}`;
+  if (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw)) return raw;
+  if (/^[a-z0-9]{46,}|^bafy[a-z0-9]+/i.test(raw)) return `https://ipfs.io/ipfs/${raw}`;
+  return undefined;
+}
+function metadataName(value: unknown): string | undefined {
+  const name = joinMetadataValue(value);
+  return name && name.length <= 80 ? name : undefined;
+}
+function cip25Metadata(info: KoiosAssetInfo): Record<string, unknown> | null {
+  const policy = info.policy_id;
+  if (!policy) return null;
+  const root = info.minting_tx_metadata?.["721"];
+  if (!root || typeof root !== "object" || Array.isArray(root)) return null;
+  const byPolicy = (root as Record<string, unknown>)[policy];
+  if (!byPolicy || typeof byPolicy !== "object" || Array.isArray(byPolicy)) return null;
+  const candidates = [info.asset_name_ascii, info.asset_name].filter((item): item is string => Boolean(item));
+  for (const candidate of candidates) {
+    const metadata = (byPolicy as Record<string, unknown>)[candidate];
+    if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) return metadata as Record<string, unknown>;
+  }
+  const first = Object.values(byPolicy as Record<string, unknown>).find((item) => item && typeof item === "object" && !Array.isArray(item));
+  return (first as Record<string, unknown>) || null;
+}
+function onchainMetadataSummary(metadata: Record<string, unknown> | null | undefined) {
+  if (!metadata) return {};
+  return {
+    label: metadataName(metadata.name),
+    image: normalizeImageUrl(metadata.image),
+    mediaType: joinMetadataValue(metadata.mediaType) || joinMetadataValue(metadata.media_type),
+  };
+}
 
-async function registryMetadata(unit: string): Promise<{ label?: string; decimals: number; subject?: string }> {
+async function registryMetadata(unit: string): Promise<{ label?: string; decimals: number; subject?: string; image?: string }> {
   if (unit === "lovelace") return { label: "ADA", decimals: 6 };
   const subject = subjectFromUnit(unit);
   if (!subject) return { decimals: 0 };
@@ -70,8 +146,57 @@ async function registryMetadata(unit: string): Promise<{ label?: string; decimal
     const rawDecimals = metadata.decimals?.value;
     const decimals = Number.isInteger(Number(rawDecimals)) ? Math.max(0, Math.min(30, Number(rawDecimals))) : 0;
     const label = metadata.ticker?.value || metadata.name?.value;
-    return { label, decimals, subject };
+    const image = metadata.logo?.value ? `data:image/png;base64,${metadata.logo.value}` : undefined;
+    return { label, decimals, subject, image };
   } catch { return { decimals: 0, subject }; }
+}
+
+async function koiosAssetInfo(unit: string): Promise<Partial<AssetSummary>> {
+  if (unit === "lovelace") return {};
+  const { policyId, assetName = "" } = unitParts(unit);
+  if (!policyId) return {};
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    const response = await fetch(
+      `https://api.koios.rest/api/v1/asset_info?_asset_policy=${encodeURIComponent(policyId)}&_asset_name=${encodeURIComponent(assetName)}`,
+      { signal: controller.signal, headers: { accept: "application/json" } },
+    );
+    clearTimeout(timer);
+    if (!response.ok) return {};
+    const rows = (await response.json()) as KoiosAssetInfo[];
+    const info = rows?.[0];
+    if (!info) return {};
+    const cip25 = onchainMetadataSummary(cip25Metadata(info));
+    const registry = info.token_registry_metadata;
+    const registryDecimals = registry?.decimals?.value;
+    const registryImage = registry?.logo?.value ? `data:image/png;base64,${registry.logo.value}` : undefined;
+    return {
+      label: registry?.ticker?.value || registry?.name?.value || cip25.label || info.asset_name_ascii || undefined,
+      decimals: Number.isInteger(Number(registryDecimals)) ? Math.max(0, Math.min(30, Number(registryDecimals))) : undefined,
+      fingerprint: info.fingerprint,
+      image: registryImage || cip25.image,
+      mediaType: cip25.mediaType,
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function assetMetadata(unit: string): Promise<Partial<AssetSummary>> {
+  if (unit === "lovelace") return { label: "ADA", decimals: 6 };
+  const { policyId, assetName } = unitParts(unit);
+  const [registry, koios] = await Promise.all([registryMetadata(unit), koiosAssetInfo(unit)]);
+  return {
+    policyId,
+    assetName,
+    subject: registry.subject,
+    label: koios.label || registry.label,
+    decimals: koios.decimals ?? registry.decimals,
+    fingerprint: koios.fingerprint,
+    image: koios.image || registry.image,
+    mediaType: koios.mediaType,
+  };
 }
 
 function parsePatterns(url: URL) {
@@ -142,8 +267,8 @@ async function koiosAddressAssets(address: string): Promise<{ assets: AssetSumma
     }
     const assets: AssetSummary[] = [{ unit: "lovelace", label: "ADA", quantity: String(info.balance || "0"), outputCount: utxos.length, decimals: 6 }];
     for (const [unit, info] of native) {
-      const metadata = await registryMetadata(unit);
-      assets.push({ unit, label: metadata.label || assetLabel(unit), quantity: info.quantity, outputCount: info.outputCount, decimals: metadata.decimals || info.decimals || 0, subject: metadata.subject, fingerprint: info.fingerprint });
+      const metadata = await assetMetadata(unit);
+      assets.push({ unit, label: metadata.label || assetLabel(unit), quantity: info.quantity, outputCount: info.outputCount, decimals: metadata.decimals ?? info.decimals ?? 0, subject: metadata.subject, fingerprint: metadata.fingerprint || info.fingerprint, image: metadata.image, mediaType: metadata.mediaType, policyId: metadata.policyId, assetName: metadata.assetName });
     }
     assets.sort((a, b) => a.unit === "lovelace" ? -1 : b.unit === "lovelace" ? 1 : a.label.localeCompare(b.label));
     return { assets, outputs: utxos.length };
@@ -226,9 +351,12 @@ async function blockfrostAddressAssets(address: string): Promise<{ assets: Asset
     }
   }
   const assets = await Promise.all(Array.from(totals, async ([unit, info]) => {
-    const [metadata, chainInfo] = await Promise.all([registryMetadata(unit), blockfrostAssetInfo(unit)]);
-    const decimals = metadata.decimals || (Number.isInteger(Number(chainInfo?.decimals)) ? Number(chainInfo?.decimals) : info.decimals);
-    return { unit, label: metadata.label || assetLabel(unit), quantity: info.quantity, outputCount: info.outputCount, decimals, subject: metadata.subject, fingerprint: chainInfo?.fingerprint || info.fingerprint } satisfies AssetSummary;
+    const [metadata, chainInfo] = await Promise.all([assetMetadata(unit), blockfrostAssetInfo(unit)]);
+    const onchain = onchainMetadataSummary(chainInfo?.onchain_metadata);
+    const registryDecimals = chainInfo?.metadata?.decimals;
+    const decimals = metadata.decimals ?? (Number.isInteger(Number(chainInfo?.decimals)) ? Number(chainInfo?.decimals) : Number.isInteger(Number(registryDecimals)) ? Number(registryDecimals) : info.decimals);
+    const registryImage = chainInfo?.metadata?.logo ? `data:image/png;base64,${chainInfo.metadata.logo}` : undefined;
+    return { unit, label: chainInfo?.metadata?.ticker || chainInfo?.metadata?.name || metadata.label || onchain.label || assetLabel(unit), quantity: info.quantity, outputCount: info.outputCount, decimals, subject: metadata.subject, fingerprint: chainInfo?.fingerprint || metadata.fingerprint || info.fingerprint, image: registryImage || metadata.image || onchain.image, mediaType: metadata.mediaType || onchain.mediaType, policyId: metadata.policyId, assetName: metadata.assetName } satisfies AssetSummary;
   }));
   assets.sort((a, b) => a.unit === "lovelace" ? -1 : b.unit === "lovelace" ? 1 : a.label.localeCompare(b.label));
   return { outputs: utxos.length, assets };
@@ -253,7 +381,7 @@ async function kupoPatternAssets(patterns: string[], kupoUrl: string) {
     if (coins !== "0") { const current = totals.get("lovelace") || { quantity: "0", outputCount: 0 }; totals.set("lovelace", { quantity: addQuantity(current.quantity, coins), outputCount: current.outputCount + 1 }); }
     for (const [unit, rawQuantity] of Object.entries(value.assets || {})) { const current = totals.get(unit) || { quantity: "0", outputCount: 0 }; totals.set(unit, { quantity: addQuantity(current.quantity, String(rawQuantity || "0")), outputCount: current.outputCount + 1 }); }
   }
-  const assets = await Promise.all(Array.from(totals, async ([unit, info]) => { const metadata = await registryMetadata(unit); return { unit, label: metadata.label || assetLabel(unit), decimals: metadata.decimals, subject: metadata.subject, ...info } satisfies AssetSummary; }));
+  const assets = await Promise.all(Array.from(totals, async ([unit, info]) => { const metadata = await assetMetadata(unit); return { unit, label: metadata.label || assetLabel(unit), decimals: metadata.decimals ?? 0, subject: metadata.subject, fingerprint: metadata.fingerprint, image: metadata.image, mediaType: metadata.mediaType, policyId: metadata.policyId, assetName: metadata.assetName, ...info } satisfies AssetSummary; }));
   assets.sort((a, b) => a.unit === "lovelace" ? -1 : b.unit === "lovelace" ? 1 : a.label.localeCompare(b.label));
   return { outputs: uniqueOutputs.size, assets };
 }

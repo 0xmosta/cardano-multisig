@@ -36,6 +36,15 @@ export type AssetLine = {
 
 export type TxStatus = "pending" | "succeeded" | "failed";
 
+export type WalletDiscovery = {
+  kind: "script" | "address";
+  address?: string;
+  source?: string;
+  outputs?: number;
+  assets?: AssetLine[];
+  handle?: { name: string; address: string };
+};
+
 export type TxDraft = {
   id: string;
   walletId?: string;
@@ -63,12 +72,13 @@ export type MultisigWallet = {
   network: Network;
   threshold: number;
   signers: Signer[];
-  paymentScript: NativeScript;
+  paymentScript?: NativeScript;
   stakeScript?: NativeScript | null;
-  script: NativeScript;
+  script?: NativeScript;
   createdAt: string;
   imported: boolean;
   handle?: string;
+  discovery?: WalletDiscovery;
 };
 
 export type InvitePayload = {

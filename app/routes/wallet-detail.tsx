@@ -219,6 +219,16 @@ async function walletResolution(wallet: Wallet): Promise<{ patterns: string[]; s
 }
 
 async function fetchWalletAssets(wallet: Wallet): Promise<AssetFetch> {
+  if (!wallet.paymentScript && wallet.discovery?.address) {
+    const params = new URLSearchParams();
+    params.set("network", wallet.network || "preprod");
+    params.set("address", wallet.discovery.address);
+    const response = await fetch(`/api/cardano/assets?${params.toString()}`);
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Could not load address assets.");
+    return { assets: body.assets || [], handle: body.handle, source: body.source, address: body.address, outputs: body.outputs };
+  }
+
   const { patterns, stakeAddress } = await walletResolution(wallet);
   const query = assetQuery(patterns, wallet, stakeAddress);
   if (!query) throw new Error("Could not derive wallet script hash or ADA Handle.");
@@ -290,6 +300,7 @@ function mergeNativeScripts(CSL: any, current: any, incoming: any) {
 }
 
 async function buildSignedTxCbor(wallet: Wallet, tx: TxDraft) {
+  if (!wallet.paymentScript) throw new Error("This wallet is watch-only. Import its native script before submitting transactions.");
   const CSL = await import("@emurgo/cardano-serialization-lib-browser");
   const unsigned = CSL.Transaction.from_hex(tx.unsignedTxCbor.trim());
   const witnessSet = CSL.TransactionWitnessSet.new();
@@ -364,6 +375,7 @@ export default function WalletDetail() {
       .filter((tx) => tx.walletId === walletId || (!tx.walletId && wallet && tx.walletName === wallet.name))
       .sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
   }, [txs, wallet, walletId]);
+  const isWatchOnly = wallet ? !wallet.paymentScript && Boolean(wallet.discovery?.address) : false;
 
   useEffect(() => {
     if (wallet) void refreshAssets(wallet);
@@ -631,26 +643,40 @@ export default function WalletDetail() {
             {resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}
           </h1>
           <p className="mt-2 text-slate-400">
-            {resolvedHandle ? `${wallet.name} · ` : ""}
-            {wallet.network} · {wallet.signers.length} signers · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript)}
+            {isWatchOnly ? (
+              <>
+                {wallet.network} · watch-only · <span className="break-all">{wallet.discovery?.address}</span>
+              </>
+            ) : (
+              <>
+                {resolvedHandle ? `${wallet.name} · ` : ""}
+                {wallet.network} · {wallet.signers.length} signers · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript)}
+              </>
+            )}
           </p>
         </div>
         <div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[560px]">
           <div className="flex justify-end">
-            <a
-              href={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
-            >
-              <Plus className="size-4" /> Create transaction
-            </a>
+            {isWatchOnly ? (
+              <Badge variant="outline">native script not imported</Badge>
+            ) : (
+              <a
+                href={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
+              >
+                <Plus className="size-4" /> Create transaction
+              </a>
+            )}
           </div>
-          <WalletConnectorBar
-            providers={providers}
-            connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-            connectingId={connecting}
-            onConnect={(provider) => void connectSigner(provider)}
-            emptyLabel={providers.length ? "Choose a signer wallet" : "No CIP-30 browser wallet detected"}
-          />
+          {isWatchOnly ? null : (
+            <WalletConnectorBar
+              providers={providers}
+              connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+              connectingId={connecting}
+              onConnect={(provider) => void connectSigner(provider)}
+              emptyLabel={providers.length ? "Choose a signer wallet" : "No CIP-30 browser wallet detected"}
+            />
+          )}
         </div>
       </div>
 
@@ -680,6 +706,12 @@ export default function WalletDetail() {
           <AlertTriangle className="mr-2 inline size-4" /> {connectWarning}
         </div>
       ) : null}
+      {isWatchOnly ? (
+        <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+          <AlertTriangle className="mr-2 inline size-4" />
+          This wallet was imported from an address or ADA Handle. It can show visible assets, but transaction creation and signing need the native script or wallet export.
+        </div>
+      ) : null}
       {signStatus ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{signStatus}</div> : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -693,7 +725,9 @@ export default function WalletDetail() {
             </div>
               {walletTxs.length === 0 ? (
                 <div className="rounded-lg border border-white/7 bg-black/20 p-4 text-sm text-zinc-400">
-                  No transactions yet. Create one to start collecting signatures.
+                  {isWatchOnly
+                    ? "This is a watch-only wallet. Import the native script or wallet export to create transactions and collect signatures."
+                    : "No transactions yet. Create one to start collecting signatures."}
                 </div>
               ) : (
                 walletTxs.map((tx) => {
@@ -855,25 +889,27 @@ export default function WalletDetail() {
         </div>
 
         <div className="space-y-6">
-          <Card className="glass-panel">
-            <CardHeader>
-              <CardTitle>Import returned witness package</CardTitle>
-              <CardDescription>
-                Paste a signature package from a signer. Both the old single-signature format and the new multi-signature format are accepted. Imported witnesses stay in this browser's local storage until you clear site data.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <textarea
-                className="min-h-48 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm text-slate-100 shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                value={signaturePackageInput}
-                onChange={(event) => setSignaturePackageInput(event.target.value)}
-                placeholder="Paste the witness package JSON here"
-              />
-              <Button className="w-full" onClick={importReturnedSignatures}>
-                <FileUp className="size-4" /> Import witness package
-              </Button>
-            </CardContent>
-          </Card>
+          {!isWatchOnly ? (
+            <Card className="glass-panel">
+              <CardHeader>
+                <CardTitle>Import returned witness package</CardTitle>
+                <CardDescription>
+                  Paste a signature package from a signer. Both the old single-signature format and the new multi-signature format are accepted. Imported witnesses stay in this browser's local storage until you clear site data.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <textarea
+                  className="min-h-48 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm text-slate-100 shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  value={signaturePackageInput}
+                  onChange={(event) => setSignaturePackageInput(event.target.value)}
+                  placeholder="Paste the witness package JSON here"
+                />
+                <Button className="w-full" onClick={importReturnedSignatures}>
+                  <FileUp className="size-4" /> Import witness package
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card className="glass-panel">
             <CardHeader>
@@ -904,7 +940,9 @@ export default function WalletDetail() {
                 <div>
                   <CardTitle>Multisig assets</CardTitle>
                   <CardDescription>
-                    {resolvedHandle
+                    {isWatchOnly
+                      ? "Fetched directly from the saved address. Import the native script when this needs to become an active multisig wallet."
+                      : resolvedHandle
                       ? `ADA Handle ${handleLabel(resolvedHandle)} resolved to this multisig script address.`
                       : "Fetched from the server-managed Cardano provider for this script wallet."}
                   </CardDescription>

@@ -225,9 +225,28 @@ function collectSigners(script: NativeScript | null, source: "payment" | "stake"
   return signers;
 }
 
+function migrateDiscovery(raw: Record<string, unknown>): MultisigWallet["discovery"] | undefined {
+  const discovery = isRecord(raw.discovery) ? raw.discovery : raw;
+  const address = typeof discovery.address === "string" ? discovery.address : undefined;
+  if (!address) return undefined;
+  const handle = isRecord(discovery.handle) && typeof discovery.handle.name === "string" && typeof discovery.handle.address === "string"
+    ? { name: discovery.handle.name, address: discovery.handle.address }
+    : undefined;
+  return {
+    kind: discovery.kind === "script" ? "script" : "address",
+    address,
+    source: typeof discovery.source === "string" ? discovery.source : undefined,
+    outputs: typeof discovery.outputs === "number" ? discovery.outputs : undefined,
+    assets: Array.isArray(discovery.assets) ? (discovery.assets as AssetLine[]) : undefined,
+    handle,
+  };
+}
+
 function migrateWallet(raw: unknown): MultisigWallet | null {
-  if (!isRecord(raw) || typeof raw.name !== "string" || !isRecord(raw.script)) return null;
-  const script = raw.script as NativeScript;
+  if (!isRecord(raw) || typeof raw.name !== "string") return null;
+  const script = isRecord(raw.script) ? (raw.script as NativeScript) : isRecord(raw.paymentScript) ? (raw.paymentScript as NativeScript) : null;
+  const discovery = migrateDiscovery(raw);
+  if (!script && !discovery?.address) return null;
   const signers = Array.isArray(raw.signers)
     ? (raw.signers as Signer[]).filter((signer) => isKeyHash(signer.keyHash))
     : collectSigners(script, "payment");
@@ -238,11 +257,12 @@ function migrateWallet(raw: unknown): MultisigWallet | null {
     network: NETWORKS.includes(raw.network as any) ? (raw.network as any) : DEFAULT_NETWORK,
     threshold: typeof raw.threshold === "number" ? raw.threshold : requiredSignatures(script),
     signers,
-    paymentScript: isRecord(raw.paymentScript) ? (raw.paymentScript as NativeScript) : script,
+    paymentScript: isRecord(raw.paymentScript) ? (raw.paymentScript as NativeScript) : script || undefined,
     stakeScript: isRecord(raw.stakeScript) ? (raw.stakeScript as NativeScript) : null,
-    script,
+    script: script || undefined,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : nowIso(),
     imported: Boolean(raw.imported),
+    discovery,
   };
 }
 
@@ -466,7 +486,7 @@ export default function Home() {
   const importThreshold = parsedImportSource.kind === "wallet" ? parsedImportSource.wallet.threshold : requiredSignatures(parsedPayment.script);
   const canImport =
     parsedImportSource.kind === "wallet"
-      ? Boolean(parsedImportSource.wallet.paymentScript)
+      ? Boolean(parsedImportSource.wallet.paymentScript || parsedImportSource.wallet.discovery?.address)
       : Boolean(parsedPayment.script) && !parsedPayment.error && !parsedStake.error;
   const signerWalletMatches = useMemo(
     () => (connected?.keyHash ? wallets.filter((wallet) => wallet.signers.some((signer) => signer.keyHash.toLowerCase() === connected.keyHash!.toLowerCase())) : []),
@@ -619,6 +639,41 @@ export default function Home() {
     } finally {
       setDiscoveringAddress(false);
     }
+  }
+
+  function saveAddressDiscovery() {
+    if (!addressDiscovery?.address) {
+      setAddressDiscoveryError("Inspect an address or ADA Handle before saving it.");
+      return;
+    }
+
+    const handle = addressDiscovery.handle?.name || (!looksLikeAddress(addressOrHandle) ? normalizeHandleInput(addressOrHandle) : "");
+    const name = handle ? `$${handle.replace(/^\$/, "")}` : "Watch-only address";
+    const wallet: MultisigWallet = {
+      id: createId("wallet"),
+      name,
+      handle: handle ? handle.replace(/^\$/, "") : undefined,
+      network: DEFAULT_NETWORK,
+      threshold: 0,
+      signers: [],
+      stakeScript: null,
+      createdAt: nowIso(),
+      imported: true,
+      discovery: {
+        kind: "address",
+        address: addressDiscovery.address,
+        source: addressDiscovery.source,
+        outputs: addressDiscovery.outputs,
+        assets: addressDiscovery.assets,
+        handle: addressDiscovery.handle,
+      },
+    };
+
+    setWallets((current) => {
+      const withoutDuplicate = current.filter((item) => item.discovery?.address !== addressDiscovery.address);
+      return [wallet, ...withoutDuplicate];
+    });
+    setStatus("Address saved as watch-only. Import the native script or wallet export later to create transactions from it.");
   }
 
   function saveCreatedWallet() {
@@ -1000,8 +1055,11 @@ export default function Home() {
                         ))}
                       </div>
                       <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                        Discovery can confirm the resolved address and visible assets, but it cannot recover the native script from chain state alone. To save this wallet, re-import from a wallet export or native script.
+                        Discovery can confirm the resolved address and visible assets, but it cannot recover the native script from chain state alone. Save it as watch-only now; import the native script later when you need to create transactions.
                       </div>
+                      <Button onClick={saveAddressDiscovery} disabled={!addressDiscovery.address}>
+                        <Plus className="size-4" /> Save watch-only wallet
+                      </Button>
                     </div>
                   ) : null}
                 </>
@@ -1096,46 +1154,68 @@ export default function Home() {
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
-              {wallets.map((wallet) => (
-                <article className="rounded-lg border border-white/7 bg-white/[0.02] p-4 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.04]" key={wallet.id}>
-                  <a href={walletHref(wallet)} className="block space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-3">
-                        <div className="flex size-11 items-center justify-center rounded-lg bg-white/5 text-zinc-300 ring-1 ring-white/10">
-                          <WalletCards className="size-5" />
+              {wallets.map((wallet) => {
+                const isWatchOnly = !wallet.paymentScript && Boolean(wallet.discovery?.address);
+                const title = wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name;
+                const assetCount = wallet.discovery?.assets?.length || 0;
+                return (
+                  <article className="rounded-lg border border-white/7 bg-white/[0.02] p-4 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.04]" key={wallet.id}>
+                    <a href={walletHref(wallet)} className="block space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <div className="flex size-11 items-center justify-center rounded-lg bg-white/5 text-zinc-300 ring-1 ring-white/10">
+                            <WalletCards className="size-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-semibold text-zinc-50">{title}</h3>
+                            <div className="text-xs text-zinc-500">
+                              {isWatchOnly ? "watch-only address" : `${wallet.threshold} of ${wallet.signers.length} signers`}
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <h3 className="text-lg font-semibold text-zinc-50">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</h3>
-                          <div className="text-xs text-zinc-500">{wallet.threshold} of {wallet.signers.length} signers</div>
+                        <Badge variant={isWatchOnly ? "outline" : wallet.imported ? "default" : "secondary"}>
+                          {isWatchOnly ? "watch-only" : wallet.imported ? "imported" : "created"}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-zinc-400">
+                        {isWatchOnly ? (
+                          <>
+                            {wallet.network} · {assetCount} visible asset{assetCount === 1 ? "" : "s"} ·{" "}
+                            <span className="break-all">{wallet.discovery?.address}</span>
+                          </>
+                        ) : (
+                          <>
+                            {wallet.handle ? `${wallet.name} · ` : ""}
+                            {wallet.network} · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)}
+                          </>
+                        )}
+                      </p>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="-space-x-2">
+                          {isWatchOnly ? (
+                            <Avatar label={title} className="size-8 border border-[#121214]" />
+                          ) : (
+                            wallet.signers.slice(0, 5).map((signer) => (
+                              <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-[#121214]" />
+                            ))
+                          )}
+                        </div>
+                        <div className="inline-flex items-center gap-1 text-sm font-medium text-emerald-300">
+                          {isWatchOnly ? "Open watch" : "Open wallet"} <ArrowRight className="size-4" />
                         </div>
                       </div>
-                      <Badge variant={wallet.imported ? "default" : "secondary"}>{wallet.imported ? "imported" : "created"}</Badge>
+                    </a>
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-white/7 pt-3">
+                      <Button variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
+                        <Download className="size-4" /> Export
+                      </Button>
+                      <Button variant="destructive" onClick={() => setWallets((current) => current.filter((item) => item.id !== wallet.id))}>
+                        <Trash2 className="size-4" /> Delete
+                      </Button>
                     </div>
-                    <p className="text-sm text-zinc-400">
-                      {wallet.handle ? `${wallet.name} · ` : ""}
-                      {wallet.network} · payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript ?? null)}
-                    </p>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="-space-x-2">
-                        {wallet.signers.slice(0, 5).map((signer) => (
-                          <Avatar key={signer.id} label={signer.label || signer.keyHash} className="size-8 border border-[#121214]" />
-                        ))}
-                      </div>
-                      <div className="inline-flex items-center gap-1 text-sm font-medium text-emerald-300">
-                        Open wallet <ArrowRight className="size-4" />
-                      </div>
-                    </div>
-                  </a>
-                  <div className="mt-3 flex flex-wrap gap-2 border-t border-white/7 pt-3">
-                    <Button variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
-                      <Download className="size-4" /> Export
-                    </Button>
-                    <Button variant="destructive" onClick={() => setWallets((current) => current.filter((item) => item.id !== wallet.id))}>
-                      <Trash2 className="size-4" /> Delete
-                    </Button>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           )}
         </AppWindow>

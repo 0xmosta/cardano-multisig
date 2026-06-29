@@ -260,6 +260,7 @@ export default function NewTransaction() {
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);
+  const isWatchOnly = wallet ? !wallet.paymentScript && Boolean(wallet.discovery?.address) : false;
   const assetOptions = useMemo(
     () =>
       (multisigAssets.length ? multisigAssets : [DEFAULT_ASSET]).sort((left, right) => {
@@ -276,9 +277,9 @@ export default function NewTransaction() {
       : "";
 
   useEffect(() => {
-    if (!wallet) return;
+    if (!wallet || isWatchOnly) return;
     void refreshMultisigAssets(wallet);
-  }, [wallet?.id]);
+  }, [wallet?.id, isWatchOnly]);
 
   async function refreshMultisigAssets(target = wallet) {
     if (!target) return;
@@ -422,6 +423,10 @@ export default function NewTransaction() {
 
   async function createAndMaybeSign() {
     if (!wallet) return;
+    if (!wallet.paymentScript) {
+      setStatus("This wallet was imported from an address or ADA Handle. Import the native script or wallet export before creating transactions.");
+      return;
+    }
 
     const now = nowIso();
     const txAssets = assets.map((asset) => ({
@@ -510,6 +515,32 @@ export default function NewTransaction() {
         </Link>
         <Card className="glass-panel mt-6">
           <CardContent className="p-8 text-slate-300">Wallet not found. Import or create it first.</CardContent>
+        </Card>
+      </main>
+    );
+  }
+
+  if (isWatchOnly) {
+    return (
+      <main className="mx-auto max-w-5xl px-4 py-8 text-slate-100">
+        <Link className="inline-flex items-center gap-2 text-sm text-sky-300" to={`/wallets/${encodeURIComponent(wallet.id)}`}>
+          <ArrowLeft className="size-4" /> Back to wallet
+        </Link>
+        <Card className="glass-panel mt-6">
+          <CardHeader>
+            <CardTitle>Native script required</CardTitle>
+            <CardDescription>
+              {wallet.name} was saved from an address or ADA Handle, so it is watch-only. Import the native script or wallet export before creating transactions from this multisig wallet.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link
+              to="/"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
+            >
+              Import script or wallet export
+            </Link>
+          </CardContent>
         </Card>
       </main>
     );

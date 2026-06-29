@@ -1,12 +1,12 @@
 import { Link, useNavigate, useParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Database, RefreshCw } from "lucide-react";
+import { AppHeader, type AppHeaderProviderStatus } from "../components/app-header";
 import { AppWindow } from "../components/ui/app-window";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type AssetLine,
@@ -253,10 +253,16 @@ export default function NewTransaction() {
   const [buildInfo, setBuildInfo] = useState("");
   const [note, setNote] = useState("");
   const [status, setStatus] = useState("");
+  const [providerStatus, setProviderStatus] = useState<AppHeaderProviderStatus>(null);
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
-    return watchInstalledBrowserWallets(setProviders);
+    const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
+    fetch("/api/cardano/provider")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => setProviderStatus(payload))
+      .catch(() => setProviderStatus(null));
+    return stopWatchingWallets;
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);
@@ -509,11 +515,23 @@ export default function NewTransaction() {
 
   if (!wallet) {
     return (
-      <main className="mx-auto w-full max-w-[1800px] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+        <AppHeader
+          providers={providers}
+          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+          connectingId={connecting}
+          providerStatus={providerStatus}
+          walletCount={wallets.length}
+          onConnect={(provider) => void connect(provider)}
+          onDisconnect={() => {
+            setConnected(null);
+            setStatus("Signer wallet disconnected from this browser session.");
+          }}
+        />
         <Link className="text-sm text-sky-300" to="/">
           ← Back
         </Link>
-        <Card className="glass-panel mt-6">
+        <Card className="glass-panel">
           <CardContent className="p-8 text-slate-300">Wallet not found. Import or create it first.</CardContent>
         </Card>
       </main>
@@ -522,11 +540,23 @@ export default function NewTransaction() {
 
   if (isWatchOnly) {
     return (
-      <main className="mx-auto w-full max-w-[1800px] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+        <AppHeader
+          providers={providers}
+          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+          connectingId={connecting}
+          providerStatus={providerStatus}
+          walletCount={wallets.length}
+          onConnect={(provider) => void connect(provider)}
+          onDisconnect={() => {
+            setConnected(null);
+            setStatus("Signer wallet disconnected from this browser session.");
+          }}
+        />
         <Link className="inline-flex items-center gap-2 text-sm text-sky-300" to={`/wallets/${encodeURIComponent(wallet.id)}`}>
           <ArrowLeft className="size-4" /> Back to wallet
         </Link>
-        <Card className="glass-panel mt-6">
+        <Card className="glass-panel">
           <CardHeader>
             <CardTitle>Native script required</CardTitle>
             <CardDescription>
@@ -548,6 +578,19 @@ export default function NewTransaction() {
 
   return (
     <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+      <AppHeader
+        providers={providers}
+        connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+        connectingId={connecting}
+        providerStatus={providerStatus}
+        walletCount={wallets.length}
+        onConnect={(provider) => void connect(provider)}
+        onDisconnect={() => {
+          setConnected(null);
+          setStatus("Signer wallet disconnected from this browser session.");
+        }}
+      />
+
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link to={`/wallets/${encodeURIComponent(wallet.id)}`} className="inline-flex items-center gap-2 text-sm text-sky-300">
@@ -559,15 +602,6 @@ export default function NewTransaction() {
             the unsigned transaction from multisig UTxOs; any connected browser wallet is used only for signing.
           </p>
         </div>
-
-        <WalletConnectorBar
-          className="w-full lg:max-w-xl"
-          providers={providers}
-          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-          connectingId={connecting}
-          onConnect={(provider) => void connect(provider)}
-          emptyLabel={providers.length ? "Connect only to sign" : "No browser wallet detected"}
-        />
       </div>
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">

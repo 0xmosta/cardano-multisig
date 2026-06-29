@@ -1,7 +1,6 @@
 import {
   ArrowRight,
   Check,
-  CircleUserRound,
   Clock,
   Copy,
   Download,
@@ -19,6 +18,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
+import { AppHeader } from "../components/app-header";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -414,14 +414,6 @@ function signerSummary(draft: TxDraft) {
   return `${signatureCount(draft)}/${draft.requiredSignatures} matched signatures`;
 }
 
-function providerReadyLabel(serverProvider: ServerProviderStatus | null) {
-  if (!serverProvider) return "Provider status unavailable";
-  if (serverProvider.ready) {
-    return `${serverProvider.network} provider ready${serverProvider.services.submit ? " · submit enabled" : " · submit disabled"}`;
-  }
-  return `${serverProvider.network} provider needs attention`;
-}
-
 function signerCountLabel(draft: TxDraft) {
   const pending = pendingSignatureCount(draft);
   const optional = optionalSignerKeyHashes(draft).length;
@@ -429,66 +421,6 @@ function signerCountLabel(draft: TxDraft) {
     return optional ? `Threshold reached · ${optional} optional signer${optional === 1 ? "" : "s"} unsigned` : "All policy signers collected";
   }
   return `${pending} signer${pending === 1 ? "" : "s"} still needed`;
-}
-
-function WalletProfileMenu({
-  providers,
-  connected,
-  connectingWalletId,
-  onConnect,
-  onDisconnect,
-}: {
-  providers: WalletProvider[];
-  connected: ConnectedWallet | null;
-  connectingWalletId: string | null;
-  onConnect: (provider: WalletProvider) => void;
-  onDisconnect: () => void;
-}) {
-  return (
-    <details className="group relative">
-      <summary className="flex h-10 cursor-pointer list-none items-center gap-2 rounded-md border border-border bg-secondary px-2.5 text-sm text-zinc-100 transition hover:bg-secondary/80 [&::-webkit-details-marker]:hidden">
-        <CircleUserRound className="size-5 text-zinc-300" />
-        <span className="hidden max-w-28 truncate sm:inline">{connected ? connected.name : "Signer"}</span>
-        <Badge variant={connected ? "default" : "secondary"}>{connected ? networkLabel(connected.networkId) : "off"}</Badge>
-      </summary>
-      <div className="absolute right-0 top-12 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
-        <div className="flex items-start gap-3 border-b border-border pb-3">
-          <Avatar label={connected?.name || "Signer"} tone={connected ? "success" : "muted"} />
-          <div className="min-w-0">
-            <div className="font-semibold text-zinc-50">Signer wallet</div>
-            <div className="mt-1 text-xs text-zinc-400">
-              {connected ? `${connected.name} · ${networkLabel(connected.networkId)}` : "Connect Lace, Eternl, or VESPR"}
-            </div>
-            {connected?.keyHash ? <div className="mt-2 break-all font-mono text-[11px] text-zinc-500">{connected.keyHash}</div> : null}
-          </div>
-        </div>
-        <div className="mt-3 grid gap-2">
-          {providers.length ? (
-            providers.map((provider) => (
-              <Button
-                key={provider.id}
-                type="button"
-                variant={connected?.id === provider.id ? "default" : "secondary"}
-                disabled={Boolean(connectingWalletId)}
-                onClick={() => onConnect(provider)}
-                className="justify-start"
-              >
-                {provider.icon ? <img alt="" className="size-4" src={provider.icon} /> : <WalletCards className="size-4" />}
-                {connectingWalletId === provider.id ? "Waiting..." : provider.name}
-              </Button>
-            ))
-          ) : (
-            <div className="rounded-lg border border-border bg-black/20 p-3 text-sm text-zinc-400">No browser wallet detected.</div>
-          )}
-          {connected ? (
-            <Button type="button" variant="ghost" onClick={onDisconnect}>
-              Disconnect local session
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    </details>
-  );
 }
 
 export default function Home() {
@@ -941,35 +873,19 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
-      <header className="glass-panel flex flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-5">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="mr-2 text-xl font-semibold leading-tight text-zinc-50 sm:text-2xl">Cardano multisig</h1>
-            <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">{DEFAULT_NETWORK}</Badge>
-            <Badge variant="secondary">{providerReadyLabel(serverProvider)}</Badge>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <span>{wallets.length} wallet{wallets.length === 1 ? "" : "s"}</span>
-            <span>·</span>
-            <span>{drafts.length} room{drafts.length === 1 ? "" : "s"}</span>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button type="button" onClick={() => setWalletDialogOpen(true)}>
-            <Import className="size-4" /> Import or create
-          </Button>
-          <WalletProfileMenu
-            providers={providers}
-            connected={connected}
-            connectingWalletId={connectingWalletId}
-            onConnect={(provider) => void connectWallet(provider)}
-            onDisconnect={() => {
-              setConnected(null);
-              setStatus("Signer wallet disconnected from this browser session.");
-            }}
-          />
-        </div>
-      </header>
+      <AppHeader
+        providers={providers}
+        connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+        connectingId={connectingWalletId}
+        providerStatus={serverProvider}
+        walletCount={wallets.length}
+        roomCount={drafts.length}
+        onConnect={(provider) => void connectWallet(provider)}
+        onDisconnect={() => {
+          setConnected(null);
+          setStatus("Signer wallet disconnected from this browser session.");
+        }}
+      />
 
       {activeDraft ? (
         <AppWindow title="Pending signature request" className="border-emerald-400/25">
@@ -1346,6 +1262,9 @@ export default function Home() {
               <Badge variant="secondary">
                 {importMode === "signer" && activeSignerKeyHash ? `${visibleWallets.length} / ${wallets.length}` : wallets.length} wallet{wallets.length === 1 ? "" : "s"}
               </Badge>
+              <Button type="button" onClick={() => setWalletDialogOpen(true)}>
+                <Import className="size-4" /> Import or create
+              </Button>
               {importMode === "signer" && activeSignerKeyHash ? (
                 <Button type="button" variant="ghost" size="sm" onClick={clearSignerSearch}>Clear signer</Button>
               ) : null}

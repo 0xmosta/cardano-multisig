@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { AppHeader } from "../components/app-header";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -23,7 +24,6 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
-import { WalletConnectorBar } from "../components/ui/wallet-connector-bar";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import {
   type MultisigWallet as Wallet,
@@ -618,11 +618,24 @@ export default function WalletDetail() {
 
   if (!wallet) {
     return (
-      <main className="mx-auto w-full max-w-[1800px] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+        <AppHeader
+          providers={providers}
+          connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+          connectingId={connecting}
+          providerStatus={providerStatus}
+          walletCount={wallets.length}
+          roomCount={txs.length}
+          onConnect={(provider) => void connectSigner(provider)}
+          onDisconnect={() => {
+            setConnected(null);
+            setSignStatus("Signer wallet disconnected from this browser session.");
+          }}
+        />
         <Link className="text-sm text-sky-300" to="/">
           ← Back
         </Link>
-        <Card className="glass-panel mt-6">
+        <Card className="glass-panel">
           <CardContent className="p-8 text-slate-300">Wallet not found in this browser. Import or create it first.</CardContent>
         </Card>
       </main>
@@ -635,6 +648,20 @@ export default function WalletDetail() {
 
   return (
     <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+      <AppHeader
+        providers={providers}
+        connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
+        connectingId={connecting}
+        providerStatus={providerStatus}
+        walletCount={wallets.length}
+        roomCount={txs.length}
+        onConnect={(provider) => void connectSigner(provider)}
+        onDisconnect={() => {
+          setConnected(null);
+          setSignStatus("Signer wallet disconnected from this browser session.");
+        }}
+      />
+
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300">
@@ -669,15 +696,6 @@ export default function WalletDetail() {
               </a>
             )}
           </div>
-          {isWatchOnly ? null : (
-            <WalletConnectorBar
-              providers={providers}
-              connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}
-              connectingId={connecting}
-              onConnect={(provider) => void connectSigner(provider)}
-              emptyLabel={providers.length ? "Choose a signer wallet" : "No CIP-30 browser wallet detected"}
-            />
-          )}
         </div>
       </div>
 

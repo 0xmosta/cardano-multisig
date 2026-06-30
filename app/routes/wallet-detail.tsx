@@ -40,6 +40,7 @@ import {
   mergeSignatures,
   networkLabel,
   nowIso,
+  normalizeKeyHash,
   optionalSignerKeyHashes,
   parseSignaturePackage,
   pendingSignatureCount,
@@ -456,9 +457,46 @@ export default function WalletDetail() {
     return body.room;
   }
 
+  function relayTokenFromInviteUrl(inviteUrl: string) {
+    try {
+      const parsed = new URL(inviteUrl, window.location.origin);
+      const token = new URLSearchParams(parsed.hash.replace(/^#/, "")).get("r");
+      return token || "";
+    } catch {
+      return inviteUrl.split("#r=")[1]?.trim() || "";
+    }
+  }
+
+  async function syncExistingWitnessesToRelayRoom(tx: TxDraft, relayRoom: RelayRoomRef) {
+    if (!relayRoom.signerInvites?.length || !tx.signatures?.length) return;
+    await Promise.all(
+      tx.signatures
+        .filter((signature) => signature.witnessCbor?.trim())
+        .map(async (signature) => {
+          const keyHash = normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || "");
+          const invite = relayRoom.signerInvites?.find((item) => normalizeKeyHash(item.keyHash) === keyHash);
+          const token = invite ? relayTokenFromInviteUrl(invite.inviteUrl) : "";
+          if (!token) return;
+          await fetch("/api/cardano/relay-room", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              intent: "sign",
+              token,
+              witnessCbor: signature.witnessCbor,
+              walletName: signature.walletName,
+              signerName: signature.signerName,
+              signedAt: signature.signedAt,
+            }),
+          }).catch(() => undefined);
+        }),
+    );
+  }
+
   async function ensureRelayRoom(tx: TxDraft) {
     if (!wallet) throw new Error("Wallet not loaded in this browser.");
     if (tx.relayRoom?.coordinatorToken && tx.relayRoom.signerInvites?.length) {
+      await syncExistingWitnessesToRelayRoom(tx, tx.relayRoom);
       return tx.relayRoom;
     }
     if (!tx.unsignedTxCbor.trim()) {

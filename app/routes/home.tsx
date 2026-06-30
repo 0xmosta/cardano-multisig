@@ -55,6 +55,7 @@ import {
   mergeSignatures,
   networkLabel,
   nowIso,
+  normalizeKeyHash,
   optionalSignerKeyHashes,
   parseSignaturePackage,
   pendingSignatureCount,
@@ -837,8 +838,47 @@ export default function Home() {
     }));
   }
 
+  function relayTokenFromInviteUrl(inviteUrl: string) {
+    try {
+      const parsed = new URL(inviteUrl, window.location.origin);
+      const token = new URLSearchParams(parsed.hash.replace(/^#/, "")).get("r");
+      return token || "";
+    } catch {
+      return inviteUrl.split("#r=")[1]?.trim() || "";
+    }
+  }
+
+  async function syncExistingWitnessesToRelayRoom(draft: TxDraft, relayRoom: RelayRoomRef) {
+    if (!relayRoom.signerInvites?.length || !draft.signatures?.length) return;
+    await Promise.all(
+      draft.signatures
+        .filter((signature) => signature.witnessCbor?.trim())
+        .map(async (signature) => {
+          const keyHash = normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || "");
+          const invite = relayRoom.signerInvites?.find((item) => normalizeKeyHash(item.keyHash) === keyHash);
+          const token = invite ? relayTokenFromInviteUrl(invite.inviteUrl) : "";
+          if (!token) return;
+          await fetch("/api/cardano/relay-room", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              intent: "sign",
+              token,
+              witnessCbor: signature.witnessCbor,
+              walletName: signature.walletName,
+              signerName: signature.signerName,
+              signedAt: signature.signedAt,
+            }),
+          }).catch(() => undefined);
+        }),
+    );
+  }
+
   async function ensureHomeRelayRoom(draft: TxDraft) {
-    if (draft.relayRoom?.coordinatorToken && draft.relayRoom.signerInvites?.length) return draft.relayRoom;
+    if (draft.relayRoom?.coordinatorToken && draft.relayRoom.signerInvites?.length) {
+      await syncExistingWitnessesToRelayRoom(draft, draft.relayRoom);
+      return draft.relayRoom;
+    }
     if (!draft.unsignedTxCbor.trim()) throw new Error("This transaction has no unsigned tx CBOR yet, so a short relay link cannot be created.");
     const wallet = wallets.find((item) => item.id === draft.walletId || item.name === draft.walletName);
     const response = await fetch("/api/cardano/relay-room", {

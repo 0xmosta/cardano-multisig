@@ -146,7 +146,7 @@ async function kupoScriptUtxos(paymentScriptHash: string, expectedAddress: strin
 }
 async function addressUtxos(address: string, paymentScriptHash: string): Promise<KoiosUtxo[]> {
   const kupo = await kupoScriptUtxos(paymentScriptHash, address);
-  if (kupo) return kupo;
+  if (kupo?.length) return kupo;
   if (hasBlockfrost()) {
     const pages: BlockfrostUtxo[][] = [];
     for (let page = 1; page <= 10; page += 1) {

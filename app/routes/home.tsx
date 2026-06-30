@@ -700,7 +700,7 @@ export default function Home() {
     });
   }, [scopedWallets, walletSearch]);
 
-  const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
+  const activeDraft = activeDraftId ? drafts.find((draft) => draft.id === activeDraftId) ?? null : null;
   const visibleDraft = relayInviteRoom ? draftFromRelaySignerView(relayInviteRoom) : activeDraft;
   const relayInviteActive = Boolean(relayInviteRoom && relayInviteToken);
   const relayRoomSyncKey = useMemo(
@@ -1355,6 +1355,62 @@ export default function Home() {
         </div>
       ) : null}
 
+      {!visibleDraft ? (
+        <AppWindow title="Workspace" contentClassName="p-5">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
+                  {DEFAULT_NETWORK}
+                </Badge>
+                <Badge variant="secondary">
+                  {wallets.length} wallet{wallets.length === 1 ? "" : "s"}
+                </Badge>
+                <Badge variant="secondary">
+                  {drafts.length} transaction{drafts.length === 1 ? "" : "s"}
+                </Badge>
+              </div>
+              <h2 className="mt-4 text-3xl font-semibold tracking-tight text-zinc-50">Cardano multisig workspace</h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+                Use this page to start a wallet or handle an incoming signer link. Wallet management and transaction tracking now live in their own pages.
+              </p>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Button type="button" onClick={() => setWalletDialogOpen(true)}>
+                  <Import className="size-4" /> Import or create
+                </Button>
+                <Link to="/wallets" className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-secondary px-4 text-sm font-medium text-secondary-foreground hover:bg-secondary/80">
+                  <WalletCards className="size-4" /> Wallets
+                </Link>
+                <Link to="/transactions" className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-secondary px-4 text-sm font-medium text-secondary-foreground hover:bg-secondary/80">
+                  <Users className="size-4" /> Transactions
+                </Link>
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              <Link to="/wallets" className="group rounded-lg border border-border bg-black/20 p-4 transition hover:border-white/18 hover:bg-white/[0.04]">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-zinc-50">Manage wallets</div>
+                    <div className="mt-1 text-sm text-zinc-400">Open saved multisig policies and signer rules.</div>
+                  </div>
+                  <ArrowRight className="size-5 text-zinc-500 transition group-hover:translate-x-0.5 group-hover:text-zinc-200" />
+                </div>
+              </Link>
+              <Link to="/transactions" className="group rounded-lg border border-border bg-black/20 p-4 transition hover:border-white/18 hover:bg-white/[0.04]">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-zinc-50">Track transactions</div>
+                    <div className="mt-1 text-sm text-zinc-400">Review signature progress and coordinator rooms.</div>
+                  </div>
+                  <ArrowRight className="size-5 text-zinc-500 transition group-hover:translate-x-0.5 group-hover:text-zinc-200" />
+                </div>
+              </Link>
+            </div>
+          </div>
+        </AppWindow>
+      ) : null}
+
       <Dialog open={walletDialogOpen} onOpenChange={setWalletDialogOpen}>
         <DialogContent onClose={() => setWalletDialogOpen(false)}>
           <DialogHeader>
@@ -1585,6 +1641,8 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
+      {false ? (
+      <>
       <section id="wallets" className="scroll-mt-24">
         <AppWindow title="Wallets" contentClassName="p-0">
           <div className="border-b border-white/8 p-5">
@@ -1940,6 +1998,8 @@ export default function Home() {
         </Card>
       ) : null}
       </section>
+      </>
+      ) : null}
 
       {status ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{status}</div> : null}
     </div>

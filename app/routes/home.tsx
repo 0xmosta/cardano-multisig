@@ -460,6 +460,30 @@ function signerCountLabel(draft: TxDraft) {
   return `${pending} signer${pending === 1 ? "" : "s"} still needed`;
 }
 
+const RELAY_INVITE_SESSION_KEY = "cardano-multisig.relay-invite.session.v1";
+
+function readRelayInviteSession() {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(RELAY_INVITE_SESSION_KEY) || "null") as unknown;
+    if (!isRecord(parsed) || typeof parsed.token !== "string") return null;
+    return { token: parsed.token, draftId: typeof parsed.draftId === "string" ? parsed.draftId : undefined };
+  } catch {
+    return null;
+  }
+}
+
+function writeRelayInviteSession(token: string, room: RelayRoomSignerView) {
+  window.sessionStorage.setItem(
+    RELAY_INVITE_SESSION_KEY,
+    JSON.stringify({ token, draftId: room.tx.draftId, roomId: room.roomId, savedAt: nowIso() }),
+  );
+}
+
+function clearRelayInviteSession() {
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(RELAY_INVITE_SESSION_KEY);
+}
+
 export default function Home() {
   const { connected, refreshConnectedWallet } = useAppShell();
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
@@ -492,7 +516,7 @@ export default function Home() {
   const [copyingInviteId, setCopyingInviteId] = useState<string | null>(null);
   const signaturePanelRef = useRef<HTMLDivElement>(null);
 
-  async function loadRelayInvite(token: string) {
+  async function loadRelayInvite(token: string, options: { quiet?: boolean } = {}) {
     const response = await fetch("/api/cardano/relay-room", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -505,11 +529,14 @@ export default function Home() {
     setRelayInviteToken(token);
     setRelayInviteRoom(body.room);
     setActiveDraftId(body.room.tx.draftId);
-    setStatus(
-      body.room.signer.alreadyDelivered
-        ? "Signature already delivered to the coordinator. You can close this page or sign again to replace it."
-        : "Relay invite loaded. Review the transaction below, connect a signer wallet, then click Sign.",
-    );
+    writeRelayInviteSession(token, body.room);
+    if (!options.quiet) {
+      setStatus(
+        body.room.signer.alreadyDelivered
+          ? "Signature already delivered to the coordinator. You can close this page or sign again to replace it."
+          : "Relay invite loaded. Review the transaction below, connect a signer wallet, then click Sign.",
+      );
+    }
     return body.room;
   }
 
@@ -537,7 +564,20 @@ export default function Home() {
       setHydrated(true);
       return;
     }
+    const restoredRelay = readRelayInviteSession();
+    if (restoredRelay?.token) {
+      setStatus("Restoring relay signer room...");
+      void loadRelayInvite(restoredRelay.token).catch((error) => {
+        clearRelayInviteSession();
+        setRelayInviteToken(null);
+        setRelayInviteRoom(null);
+        setStatus(error instanceof Error ? error.message : "Could not restore the relay signer room.");
+      });
+      setHydrated(true);
+      return;
+    }
     if (invite) {
+      clearRelayInviteSession();
       const draft = decodeInvite(invite, migrateDraft);
       if (!draft) {
         setStatus("Invite link is malformed. Ask the coordinator to copy the signer invite again.");
@@ -562,6 +602,29 @@ export default function Home() {
     saveDrafts(drafts);
     notifyAppStorageChanged();
   }, [drafts, hydrated]);
+
+  useEffect(() => {
+    if (!relayInviteToken) return;
+    let cancelled = false;
+    const sync = async () => {
+      if (document.visibilityState === "hidden") return;
+      try {
+        const room = await loadRelayInvite(relayInviteToken, { quiet: true });
+        if (!cancelled && room.progress.matchedCount >= room.progress.requiredSignatures) {
+          setStatus("Threshold reached. You can close this page.");
+        }
+      } catch (error) {
+        if (!cancelled) setStatus(error instanceof Error ? error.message : "Could not refresh the relay signer room.");
+      }
+    };
+    const interval = window.setInterval(() => {
+      void sync();
+    }, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [relayInviteToken]);
 
   const cleanedSigners = useMemo(() => signers.map(cleanSigner), [signers]);
   const validSigners = cleanedSigners.filter((signer) => isKeyHash(signer.keyHash));
@@ -939,6 +1002,7 @@ export default function Home() {
   }
 
   function openTransactionRoom(draftId: string) {
+    clearRelayInviteSession();
     setRelayInviteToken(null);
     setRelayInviteRoom(null);
     setActiveDraftId(draftId);

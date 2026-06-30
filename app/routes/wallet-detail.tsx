@@ -54,6 +54,7 @@ import {
   type RelayRoomCoordinatorView,
   type RelayRoomCreateResponse,
   type RelayRoomSessionResponse,
+  type RelayRoomSignerView,
   applyRelayRoomToDraft,
 } from "../lib/relay-room";
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
@@ -109,13 +110,14 @@ function hydrateRelayRoomSession(tx: TxDraft): TxDraft {
 
 function stripRelayRoomSecrets(tx: TxDraft): TxDraft {
   if (!tx.relayRoom) return tx;
-  const { roomId, createdAt, lastSyncAt, status } = tx.relayRoom;
+  const { roomId, createdAt, lastSyncAt, sharedInviteUrl, status } = tx.relayRoom;
   return {
     ...tx,
     relayRoom: {
       roomId,
       createdAt,
       lastSyncAt,
+      sharedInviteUrl,
       status,
     } as RelayRoomRef,
   };
@@ -373,11 +375,11 @@ export default function WalletDetail() {
         .filter(
           (tx) =>
             tx.walletId === walletId &&
-            tx.relayRoom?.coordinatorToken &&
+            (tx.relayRoom?.coordinatorToken || tx.relayRoom?.sharedInviteUrl || tx.relayRoom?.roomId) &&
             (tx.relayRoom.status || "open") === "open" &&
             !tx.txHash,
         )
-        .map((tx) => `${tx.id}:${tx.relayRoom!.coordinatorToken}:${tx.relayRoom!.status || "open"}`)
+        .map((tx) => `${tx.id}:${tx.relayRoom!.coordinatorToken || tx.relayRoom!.sharedInviteUrl || tx.relayRoom!.roomId}:${tx.relayRoom!.status || "open"}`)
         .join("|"),
     [txs, walletId],
   );
@@ -386,10 +388,10 @@ export default function WalletDetail() {
     const relayDrafts = txs.filter(
       (tx) =>
         tx.walletId === walletId &&
-        tx.relayRoom?.coordinatorToken &&
+        (tx.relayRoom?.coordinatorToken || tx.relayRoom?.sharedInviteUrl || tx.relayRoom?.roomId) &&
         (tx.relayRoom.status || "open") === "open" &&
         !tx.txHash,
-    ) as Array<TxDraft & { relayRoom: RelayRoomRef & { coordinatorToken: string } }>;
+    ) as Array<TxDraft & { relayRoom: RelayRoomRef }>;
     if (!relayDrafts.length) return;
 
     let cancelled = false;
@@ -397,7 +399,8 @@ export default function WalletDetail() {
       const updates = await Promise.all(
         relayDrafts.map(async (tx) => {
           try {
-            const room = await fetchRelayCoordinatorRoom(tx.relayRoom!.coordinatorToken);
+            const token = tx.relayRoom!.coordinatorToken || relayTokenFromInviteUrl(tx.relayRoom!.sharedInviteUrl || "");
+            const room = token ? await fetchRelayRoom(token) : await fetchRelayRoomView(tx.relayRoom!.roomId);
             return { txId: tx.id, room };
           } catch {
             return null;
@@ -444,7 +447,7 @@ export default function WalletDetail() {
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this multisig wallet is on ${formatTargetNetwork(wallet.network)}.`
       : "";
 
-  async function fetchRelayCoordinatorRoom(token: string) {
+  async function fetchRelayRoom(token: string): Promise<RelayRoomCoordinatorView | RelayRoomSignerView> {
     const response = await fetch("/api/cardano/relay-room", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -452,6 +455,19 @@ export default function WalletDetail() {
     });
     const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
     if (!response.ok || !body.ok || body.role !== "coordinator") {
+      throw new Error(("error" in body && body.error) || "Could not load relay room state.");
+    }
+    return body.room;
+  }
+
+  async function fetchRelayRoomView(roomId: string): Promise<RelayRoomSignerView> {
+    const response = await fetch("/api/cardano/relay-room", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "view", roomId }),
+    });
+    const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
+    if (!response.ok || !body.ok || body.role !== "signer") {
       throw new Error(("error" in body && body.error) || "Could not load relay room state.");
     }
     return body.room;

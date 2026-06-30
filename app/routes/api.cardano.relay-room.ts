@@ -292,6 +292,15 @@ async function handleSubmit(raw: Record<string, unknown>) {
   return Response.json({ ok: true, room: { roomId: room.id, status: room.status, submission: room.submission } });
 }
 
+async function handleView(raw: Record<string, unknown>) {
+  const roomId = String(raw.roomId || "").trim();
+  if (!roomId) throw new Error("roomId is required.");
+  const { readRelayRoom, sharedSignerRoomView } = await relayStore();
+  const room = await readRelayRoom(roomId);
+  await configuredNetworkGuard(room.network);
+  return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(room) });
+}
+
 export async function action({ request }: { request: Request }) {
   try {
     if (request.method.toUpperCase() !== "POST") {
@@ -301,6 +310,7 @@ export async function action({ request }: { request: Request }) {
     const { intent, input } = assertIntent(body);
     if (intent === "create") return await handleCreate(request, input);
     if (intent === "session") return await handleSession(input);
+    if (intent === "view") return await handleView(input);
     if (intent === "sign") return await handleSign(input);
     if (intent === "submit") return await handleSubmit(input);
     throw new Error(`Unsupported relay room intent: ${intent}`);

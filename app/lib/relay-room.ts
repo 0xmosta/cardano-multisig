@@ -157,7 +157,7 @@ export function relayWitnessesToSignatures(witnesses: RelayRoomWitnessRecord[]) 
   return witnesses.map(relayWitnessToSignature);
 }
 
-export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorView): TxDraft {
+export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorView | RelayRoomSignerView): TxDraft {
   const relayRoom: RelayRoomRef | undefined = tx.relayRoom
     ? {
         ...tx.relayRoom,
@@ -180,7 +180,7 @@ export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorVie
     signerKeyHashes: room.tx.signerKeyHashes,
     signatures: mergeSignatures(tx.signatures || [], relayWitnessesToSignatures(room.witnesses)),
     updatedAt: nowIso(),
-    txHash: room.submission?.txHash || tx.txHash,
+    txHash: "submission" in room ? room.submission?.txHash || tx.txHash : tx.txHash,
     relayRoom,
   };
 }

@@ -14,9 +14,18 @@ async function relayStore() {
 }
 
 function requestOrigin(request: Request) {
+  const configuredOrigin = (process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN || "").trim().replace(/\/$/, "");
+  if (configuredOrigin) return configuredOrigin;
+
   const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
-  const forwardedProto = request.headers.get("x-forwarded-proto") || new URL(request.url).protocol.replace(/:$/, "");
-  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedHost) {
+    const hostname = forwardedHost.split(":")[0] || "";
+    const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    const proto = forwardedProto || (isLocalHost ? new URL(request.url).protocol.replace(/:$/, "") : "https");
+    return `${proto}://${forwardedHost}`;
+  }
+
   return new URL(request.url).origin;
 }
 

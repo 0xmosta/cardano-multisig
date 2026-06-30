@@ -15,7 +15,7 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
@@ -486,6 +486,8 @@ export default function Home() {
   const [signaturePackage, setSignaturePackage] = useState("");
   const [status, setStatus] = useState("");
   const [walletSearch, setWalletSearch] = useState("");
+  const [copyingInviteId, setCopyingInviteId] = useState<string | null>(null);
+  const signaturePanelRef = useRef<HTMLDivElement>(null);
 
   async function loadRelayInvite(token: string) {
     const response = await fetch("/api/cardano/relay-room", {
@@ -862,6 +864,7 @@ export default function Home() {
           keyHash,
           label: wallet?.signers.find((signer) => signer.keyHash.toLowerCase() === keyHash.toLowerCase())?.label,
         })),
+        witnesses: draft.signatures || [],
       }),
     });
     const body = (await response.json()) as RelayRoomCreateResponse | { ok: false; error?: string };
@@ -878,6 +881,8 @@ export default function Home() {
   }
 
   async function copyInvite(draft: TxDraft) {
+    setCopyingInviteId(draft.id);
+    setStatus("Preparing short signer link…");
     try {
       const relayRoom = await ensureHomeRelayRoom(draft);
       const missing = requiredPendingSignerKeyHashes(draft);
@@ -888,7 +893,19 @@ export default function Home() {
       setStatus(`Short signer link copied for ${invite.label || `${invite.keyHash.slice(0, 12)}…`}. The signer opens it, connects wallet, and signs; no copy/paste witness package needed.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not create the short signer link.");
+    } finally {
+      setCopyingInviteId(null);
     }
+  }
+
+  function openTransactionRoom(draftId: string) {
+    setRelayInviteToken(null);
+    setRelayInviteRoom(null);
+    setActiveDraftId(draftId);
+    setStatus("Transaction room opened.");
+    window.requestAnimationFrame(() => {
+      signaturePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   async function signActiveDraft() {
@@ -1006,6 +1023,7 @@ export default function Home() {
   return (
     <div className="flex flex-col gap-6">
       {visibleDraft ? (
+        <div ref={signaturePanelRef}>
         <AppWindow title="Pending signature request" className="border-emerald-400/25">
           <div className="px-5 pt-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1145,6 +1163,7 @@ export default function Home() {
             </div>
           </div>
         </AppWindow>
+        </div>
       ) : null}
 
       <Dialog open={walletDialogOpen} onOpenChange={setWalletDialogOpen}>
@@ -1714,8 +1733,10 @@ export default function Home() {
                 ) : null}
                 {unmatchedSignatureCount(draft) ? <div className="mt-2 text-xs text-amber-300">{unmatchedSignatureCount(draft)} unmatched signature{unmatchedSignatureCount(draft) === 1 ? "" : "s"}</div> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button className="min-w-20 flex-1" variant="default" size="sm" onClick={() => setActiveDraftId(draft.id)}>Open</Button>
-                  <Button className="min-w-20 flex-1" variant="secondary" size="sm" onClick={() => void copyInvite(draft)}><Link2 className="size-4" /> Invite</Button>
+                  <Button className="min-w-20 flex-1" variant="default" size="sm" onClick={() => openTransactionRoom(draft.id)}>Open</Button>
+                  <Button className="min-w-20 flex-1" variant="secondary" size="sm" onClick={() => void copyInvite(draft)} disabled={copyingInviteId === draft.id}>
+                    <Link2 className="size-4" /> {copyingInviteId === draft.id ? "Copying…" : "Invite"}
+                  </Button>
                   {unmatchedSignatureCount(draft) ? (
                     <Button className="min-w-28 flex-1" variant="secondary" size="sm" onClick={() => discardUnmatchedSignatures(draft.id)}>
                       <Trash2 className="size-4" /> Unmatched

@@ -300,12 +300,23 @@ export async function cleanupExpiredRelayRooms() {
   }
 }
 
-export async function createRelayRoom(input: { network: Network; tx: RelayRoomTx; signers: Array<{ keyHash: string; label?: string }> }) {
+export async function createRelayRoom(input: {
+  network: Network;
+  tx: RelayRoomTx;
+  signers: Array<{ keyHash: string; label?: string }>;
+  witnesses?: RelayRoomWitnessRecord[];
+}) {
   await cleanupExpiredRelayRooms();
   const createdAt = nowIso();
   const expiresAt = new Date(Date.now() + relayTtlMs()).toISOString();
   const coordinatorToken = capabilityToken();
   const signerTokens = input.signers.map((signer) => ({ ...signer, token: capabilityToken() }));
+  const witnesses = "witnesses" in input && Array.isArray(input.witnesses) ? input.witnesses : [];
+  const deliveredByKeyHash = new Map(
+    witnesses
+      .filter((witness) => witness.matchStatus === "matched" && witness.matchedSignerKeyHash)
+      .map((witness) => [normalizeKeyHash(witness.matchedSignerKeyHash!), witness.receivedAt]),
+  );
   const room: RelayRoomRecord = {
     id: roomId(),
     network: input.network,
@@ -322,8 +333,9 @@ export async function createRelayRoom(input: { network: Network; tx: RelayRoomTx
       label: signer.label,
       tokenHash: hashRelayToken(signer.token),
       createdAt,
+      deliveredAt: deliveredByKeyHash.get(signer.keyHash),
     })),
-    witnesses: [],
+    witnesses,
   };
   await writeRelayRoom(room);
   return {
@@ -388,11 +400,15 @@ export function signerRoomView(room: RelayRoomRecord, signer: RelayRoomStoredSig
     network: room.network,
     expiresAt: room.expiresAt,
     tx: room.tx,
+    witnesses: room.witnesses,
     signer: {
       keyHash: signer.keyHash,
       label: signer.label,
       alreadyDelivered: room.witnesses.some(
-        (witness) => witness.matchStatus === "matched" && witness.matchedSignerKeyHash === signer.keyHash,
+        (witness) =>
+          witness.matchStatus === "matched" &&
+          witness.matchedSignerKeyHash &&
+          normalizeKeyHash(witness.matchedSignerKeyHash) === signer.keyHash,
       ),
       thresholdReached: progress.matchedCount >= progress.requiredSignatures,
     },

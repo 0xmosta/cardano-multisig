@@ -5,6 +5,7 @@ import {
   type RelayRoomSessionRequest,
   type RelayRoomSignRequest,
   type RelayRoomSubmitRequest,
+  type RelayRoomWitnessRecord,
   relayInviteUrl,
 } from "../lib/relay-room";
 import { verifiedWitnessKeyHashes } from "../lib/witness-verification";
@@ -94,12 +95,61 @@ function assertRelaySubmitPayload(raw: Record<string, unknown>): RelayRoomSubmit
   return { intent: "submit", token, txHash };
 }
 
+function initialWitnessRecords(
+  witnesses: unknown,
+  unsignedTxCbor: string,
+  signerKeyHashes: string[],
+): RelayRoomWitnessRecord[] {
+  if (!Array.isArray(witnesses)) return [];
+  const expected = new Set(signerKeyHashes.map((keyHash) => normalizeKeyHash(keyHash)));
+  const receivedAt = new Date().toISOString();
+  const initial: RelayRoomWitnessRecord[] = [];
+  const seen = new Set<string>();
+
+  for (const item of witnesses) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const raw = item as Record<string, unknown>;
+    const witnessCbor = String(raw.witnessCbor || "").trim().toLowerCase();
+    if (!witnessCbor) continue;
+
+    let verified: string[];
+    try {
+      verified = verifiedWitnessKeyHashes(unsignedTxCbor, witnessCbor).map((keyHash) => normalizeKeyHash(keyHash));
+    } catch {
+      continue;
+    }
+    const matchedSignerKeyHash = verified.find((keyHash) => expected.has(keyHash));
+    if (!matchedSignerKeyHash || seen.has(matchedSignerKeyHash)) continue;
+    seen.add(matchedSignerKeyHash);
+
+    initial.push({
+      id: `initial_${Math.random().toString(36).slice(2, 10)}`,
+      source: "manual",
+      signerKeyHashClaim: normalizeKeyHash(String(raw.signerKeyHash || matchedSignerKeyHash)),
+      matchedSignerKeyHash,
+      witnessCbor,
+      walletName: String(raw.walletName || "").trim() || undefined,
+      signerName: String(raw.signerName || "").trim() || undefined,
+      signedAt: String(raw.signedAt || "").trim() || receivedAt,
+      receivedAt,
+      matchStatus: "matched",
+    });
+  }
+
+  return initial;
+}
+
 async function handleCreate(request: Request, raw: Record<string, unknown>) {
   const { assertRelayCreatePayload, createRelayRoom } = await relayStore();
   const payload = assertRelayCreatePayload(raw as unknown as RelayRoomCreateRequest);
   await configuredNetworkGuard(payload.network);
   CSL.Transaction.from_hex(payload.tx.unsignedTxCbor);
-  const created = await createRelayRoom(payload);
+  const created = await createRelayRoom({
+    network: payload.network,
+    tx: payload.tx,
+    signers: payload.signers,
+    witnesses: initialWitnessRecords(raw.witnesses, payload.tx.unsignedTxCbor, payload.tx.signerKeyHashes),
+  });
   const origin = requestOrigin(request);
   return Response.json({
     ok: true,

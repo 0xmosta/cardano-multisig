@@ -487,6 +487,7 @@ export default function WalletDetail() {
           keyHash,
           label: wallet.signers.find((signer) => signer.keyHash.toLowerCase() === keyHash.toLowerCase())?.label,
         })),
+        witnesses: tx.signatures || [],
       }),
     });
     const body = (await response.json()) as RelayRoomCreateResponse | { ok: false; error?: string };

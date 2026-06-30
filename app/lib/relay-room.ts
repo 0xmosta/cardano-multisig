@@ -76,6 +76,7 @@ export type RelayRoomSignerView = {
   network: Network;
   expiresAt: string;
   tx: RelayRoomTx;
+  witnesses: RelayRoomWitnessRecord[];
   signer: {
     keyHash: string;
     label?: string;
@@ -90,6 +91,7 @@ export type RelayRoomCreateRequest = {
   network: Network;
   draft: RelayRoomTx;
   signers: Array<{ keyHash: string; label?: string }>;
+  witnesses?: Array<Partial<SignatureRecord> & { witnessCbor: string }>;
 };
 
 export type RelayRoomCreateResponse = {
@@ -195,7 +197,7 @@ export function draftFromRelaySignerView(room: RelayRoomSignerView): TxDraft {
     unsignedTxCbor: room.tx.unsignedTxCbor,
     requiredSignatures: room.tx.requiredSignatures,
     signerKeyHashes: room.tx.signerKeyHashes,
-    signatures: [],
+    signatures: relayWitnessesToSignatures(room.witnesses || []),
     createdAt: nowIso(),
     assets: room.tx.assets,
     updatedAt: nowIso(),

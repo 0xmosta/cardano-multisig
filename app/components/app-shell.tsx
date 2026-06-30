@@ -113,9 +113,9 @@ export function useAppShell() {
 function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount: number }) {
   const location = useLocation();
   const items = [
-    { label: "Home", href: "/#home", icon: Home, active: location.pathname === "/" && (!location.hash || location.hash === "#home") },
-    { label: "Wallets", href: "/#wallets", icon: WalletCards, active: location.pathname === "/" && location.hash === "#wallets", count: walletCount },
-    { label: "Transactions", href: "/#transactions", icon: ListChecks, active: location.pathname === "/" && location.hash === "#transactions", count: roomCount },
+    { label: "Home", href: "/", icon: Home, active: location.pathname === "/" },
+    { label: "Wallets", href: "/wallets", icon: WalletCards, active: location.pathname === "/wallets" || location.pathname.startsWith("/wallets/"), count: walletCount },
+    { label: "Transactions", href: "/transactions", icon: ListChecks, active: location.pathname === "/transactions", count: roomCount },
   ];
 
   return (

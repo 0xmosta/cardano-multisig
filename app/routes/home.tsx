@@ -34,6 +34,7 @@ import { Textarea } from "../components/ui/textarea";
 import {
   type MultisigWallet,
   type NativeScript,
+  type RelayRoomRef,
   type SignatureRecord,
   type Signer,
   type TxDraft,
@@ -49,6 +50,7 @@ import {
   encodeInvite,
   expectedNetworkId,
   formatTargetNetwork,
+  hasMatchedSignature,
   isKeyHash,
   isRecord,
   mergeSignatures,
@@ -66,6 +68,13 @@ import {
   unmatchedSignatureCount,
   requiredSignatures,
 } from "../lib/multisig";
+import {
+  type RelayRoomSessionResponse,
+  type RelayRoomSignerView,
+  applyRelayRoomToDraft,
+  draftFromRelaySignerView,
+} from "../lib/relay-room";
+import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
 type Mode = "import" | "create";
 type ImportMode = "export" | "address" | "signer";
@@ -292,6 +301,20 @@ function saveWallets(wallets: MultisigWallet[]) {
 function migrateDraft(raw: unknown): TxDraft | null {
   if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.title !== "string") return null;
   const status = raw.status === "succeeded" || raw.status === "failed" ? raw.status : "pending";
+  const relayRoom = isRecord(raw.relayRoom)
+    ? {
+        roomId: typeof raw.relayRoom.roomId === "string" ? raw.relayRoom.roomId : "",
+        createdAt: typeof raw.relayRoom.createdAt === "string" ? raw.relayRoom.createdAt : nowIso(),
+        lastSyncAt: typeof raw.relayRoom.lastSyncAt === "string" ? raw.relayRoom.lastSyncAt : undefined,
+        status:
+          raw.relayRoom.status === "submitted" ||
+          raw.relayRoom.status === "cancelled" ||
+          raw.relayRoom.status === "expired" ||
+          raw.relayRoom.status === "open"
+            ? raw.relayRoom.status
+            : undefined,
+      } satisfies RelayRoomRef
+    : undefined;
   return {
     id: raw.id,
     walletId: typeof raw.walletId === "string" ? raw.walletId : undefined,
@@ -313,6 +336,7 @@ function migrateDraft(raw: unknown): TxDraft | null {
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
     txHash: typeof raw.txHash === "string" ? raw.txHash : undefined,
     failureReason: typeof raw.failureReason === "string" ? raw.failureReason : undefined,
+    relayRoom: relayRoom?.roomId ? relayRoom : undefined,
   };
 }
 
@@ -321,7 +345,20 @@ function loadDrafts() {
 }
 
 function saveDrafts(drafts: TxDraft[]) {
-  if (typeof window !== "undefined") window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(drafts, null, 2));
+  const sanitized = drafts.map((draft) =>
+    draft.relayRoom
+      ? {
+          ...draft,
+          relayRoom: {
+            roomId: draft.relayRoom.roomId,
+            createdAt: draft.relayRoom.createdAt,
+            lastSyncAt: draft.relayRoom.lastSyncAt,
+            status: draft.relayRoom.status,
+          } as RelayRoomRef,
+        }
+      : draft,
+  );
+  if (typeof window !== "undefined") window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(sanitized, null, 2));
 }
 
 function downloadJson(name: string, value: unknown) {
@@ -444,21 +481,61 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
 
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
+  const [relayInviteToken, setRelayInviteToken] = useState<string | null>(null);
+  const [relayInviteRoom, setRelayInviteRoom] = useState<RelayRoomSignerView | null>(null);
   const [signaturePackage, setSignaturePackage] = useState("");
   const [status, setStatus] = useState("");
   const [walletSearch, setWalletSearch] = useState("");
+
+  async function loadRelayInvite(token: string) {
+    const response = await fetch("/api/cardano/relay-room", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "session", token }),
+    });
+    const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
+    if (!response.ok || !body.ok || body.role !== "signer") {
+      throw new Error(("error" in body && body.error) || "Could not load the relay signer room.");
+    }
+    setRelayInviteToken(token);
+    setRelayInviteRoom(body.room);
+    setActiveDraftId(body.room.tx.draftId);
+    setStatus(
+      body.room.signer.alreadyDelivered
+        ? "Signature already delivered to the coordinator. You can close this page or sign again to replace it."
+        : "Relay invite loaded. Review the transaction below, connect a signer wallet, then click Sign.",
+    );
+    return body.room;
+  }
 
   useEffect(() => {
     const loadedWallets = loadWallets();
     const loadedDrafts = loadDrafts();
     setWallets(loadedWallets);
+    setDrafts(loadedDrafts);
 
-    const invite = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("invite");
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const relay = hashParams.get("relay");
+    const invite = hashParams.get("invite");
+    if (relay) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      setStatus("Loading relay signer room…");
+      void loadRelayInvite(relay).catch((error) => {
+        setRelayInviteToken(null);
+        setRelayInviteRoom(null);
+        setStatus(
+          error instanceof Error
+            ? `${error.message} If needed, ask the coordinator for a fresh relay link or the advanced witness package fallback.`
+            : "Could not load the relay signer room.",
+        );
+      });
+      setHydrated(true);
+      return;
+    }
     if (invite) {
       const draft = decodeInvite(invite, migrateDraft);
       if (!draft) {
         setStatus("Invite link is malformed. Ask the coordinator to copy the signer invite again.");
-        setDrafts(loadedDrafts);
         setHydrated(true);
         return;
       }
@@ -466,8 +543,6 @@ export default function Home() {
       setDrafts(loadedDrafts.some((item) => item.id === draft.id) ? loadedDrafts : [draft, ...loadedDrafts]);
       setActiveDraftId(draft.id);
       setStatus("Invite loaded. Review the transaction below, connect a signer wallet, then click Sign.");
-    } else {
-      setDrafts(loadedDrafts);
     }
     setHydrated(true);
   }, []);
@@ -542,9 +617,11 @@ export default function Home() {
   }, [scopedWallets, walletSearch]);
 
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
+  const visibleDraft = relayInviteRoom ? draftFromRelaySignerView(relayInviteRoom) : activeDraft;
+  const relayInviteActive = Boolean(relayInviteRoom && relayInviteToken);
   const activeNetworkWarning =
-    connected && activeDraft && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(activeDraft.network)
-      ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this transaction targets ${formatTargetNetwork(activeDraft.network)}.`
+    connected && visibleDraft && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(visibleDraft.network)
+      ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this transaction targets ${formatTargetNetwork(visibleDraft.network)}.`
       : "";
 
   async function refreshConnectedSigner() {
@@ -755,20 +832,56 @@ export default function Home() {
   }
 
   async function signActiveDraft() {
-    if (!activeDraft || !connected) return;
+    if (!visibleDraft || !connected) return;
     if (activeNetworkWarning) {
       setStatus(activeNetworkWarning);
       return;
     }
-    if (!activeDraft.unsignedTxCbor.trim()) {
+    if (!visibleDraft.unsignedTxCbor.trim()) {
       setStatus("This invite is missing unsigned transaction CBOR, so a wallet cannot sign it yet.");
       return;
     }
     try {
+      setStatus(`Requesting ${connected.name} signature…`);
       const signerKeyHash = connected.keyHash?.toLowerCase() || `unknown-${connected.id}`;
-      const witnessCbor = await connected.api.signTx(activeDraft.unsignedTxCbor.trim(), true);
+      const witnessCbor = await connected.api.signTx(visibleDraft.unsignedTxCbor.trim(), true);
+      if (relayInviteRoom && relayInviteToken) {
+        const response = await fetch("/api/cardano/relay-room", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            intent: "sign",
+            token: relayInviteToken,
+            witnessCbor,
+            walletName: connected.name,
+            signerName: connected.keyHash ? connected.keyHash.toLowerCase() : connected.name,
+            signedAt: nowIso(),
+          }),
+        });
+        const body = (await response.json()) as
+          | { ok: true; thresholdReached: boolean; matchStatus: "matched" | "unmatched" }
+          | { ok: false; error?: string };
+        if (!response.ok || !body.ok) {
+          throw new Error(("error" in body && body.error) || "Could not deliver the signature to the coordinator.");
+        }
+        const refreshed = await loadRelayInvite(relayInviteToken);
+        setSignaturePackage("");
+        if (body.matchStatus === "unmatched") {
+          setStatus(
+            "Witness delivered to the coordinator, but it did not match the expected signer key hash for this invite. The coordinator will see it as non-counting.",
+          );
+          return;
+        }
+        setStatus(
+          body.thresholdReached || refreshed.progress.matchedCount >= refreshed.progress.requiredSignatures
+            ? "Threshold already reached — your signature was delivered as optional. You can close this page."
+            : "Signature delivered to the coordinator. You can close this page.",
+        );
+        return;
+      }
       const signature: SignatureRecord = {
         signerKeyHash,
+        matchStatus: connected.keyHash ? "matched" : "unmatched",
         signerName: connected.keyHash ? connected.keyHash.toLowerCase() : connected.name,
         walletName: connected.name,
         witnessCbor,
@@ -776,12 +889,12 @@ export default function Home() {
       };
       setDrafts((current) =>
         current.map((draft) =>
-          draft.id === activeDraft.id
+          draft.id === visibleDraft.id
             ? { ...draft, signatures: mergeSignatures(draft.signatures, [signature]), updatedAt: nowIso() }
             : draft,
         ),
       );
-      setSignaturePackage(createSignaturePackage(activeDraft.id, [signature]));
+      setSignaturePackage(createSignaturePackage(visibleDraft.id, [signature]));
       setStatus(
         connected.keyHash
           ? "Witness captured. Copy the witness package and send it back to the coordinator."
@@ -796,15 +909,16 @@ export default function Home() {
     try {
       const { draftId, signatures } = parseSignaturePackage(signaturePackage);
       if (!signatures.length) throw new Error("The signature package does not contain any signatures.");
-      let found = false;
+      const target = drafts.find((draft) => draft.id === draftId);
+      if (!target) throw new Error("This signature package belongs to a different transaction room.");
+      const verifiedSignatures = verifySignatureRecordsForDraft(target, signatures);
       setDrafts((current) =>
-        current.map((draft) => {
-          if (draft.id !== draftId) return draft;
-          found = true;
-          return { ...draft, signatures: mergeSignatures(draft.signatures, signatures), updatedAt: nowIso() };
-        }),
+        current.map((draft) =>
+          draft.id === draftId
+            ? { ...draft, signatures: mergeSignatures(draft.signatures, verifiedSignatures), updatedAt: nowIso() }
+            : draft,
+        ),
       );
-      if (!found) throw new Error("This signature package belongs to a different transaction room.");
       setActiveDraftId(draftId);
       setStatus(`Imported ${signatures.length} signature${signatures.length === 1 ? "" : "s"}.`);
     } catch (error) {
@@ -831,7 +945,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-col gap-6">
-      {activeDraft ? (
+      {visibleDraft ? (
         <AppWindow title="Pending signature request" className="border-emerald-400/25">
           <div className="px-5 pt-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -840,14 +954,14 @@ export default function Home() {
                   <ShieldCheck className="size-6" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-2xl font-semibold leading-tight text-zinc-50">Sign {activeDraft.title}</h2>
+                  <h2 className="truncate text-2xl font-semibold leading-tight text-zinc-50">Sign {visibleDraft.title}</h2>
                   <p className="mt-1 text-sm text-zinc-400">
-                    {activeDraft.walletName} · {activeDraft.requiredSignatures}-of-{activeDraft.signerKeyHashes.length || activeDraft.requiredSignatures}
+                    {visibleDraft.walletName} · {visibleDraft.requiredSignatures}-of-{visibleDraft.signerKeyHashes.length || visibleDraft.requiredSignatures}
                   </p>
                 </div>
               </div>
               <Badge variant="secondary">
-                <Clock className="size-3" /> {pendingSignatureCount(activeDraft) <= 0 ? "ready" : `${pendingSignatureCount(activeDraft)} more`}
+                <Clock className="size-3" /> {pendingSignatureCount(visibleDraft) <= 0 ? "ready" : `${pendingSignatureCount(visibleDraft)} more`}
               </Badge>
             </div>
           </div>
@@ -858,22 +972,22 @@ export default function Home() {
                   <div className="min-w-0">
                     <div className="text-sm text-zinc-400">Required signatures</div>
                     <div className="mt-1 text-3xl font-semibold text-zinc-50">
-                      {signatureCount(activeDraft)} / {activeDraft.requiredSignatures}
+                      {signatureCount(visibleDraft)} / {visibleDraft.requiredSignatures}
                     </div>
-                    <div className="mt-2 break-all text-sm text-zinc-400">Recipient: {activeDraft.recipient || "Not provided"}</div>
+                    <div className="mt-2 break-all text-sm text-zinc-400">Recipient: {visibleDraft.recipient || "Not provided"}</div>
                   </div>
-                  <Avatar label={activeDraft.walletName} tone={pendingSignatureCount(activeDraft) ? "primary" : "success"} />
+                  <Avatar label={visibleDraft.walletName} tone={pendingSignatureCount(visibleDraft) ? "primary" : "success"} />
                 </div>
                 <div className="mt-4 space-y-2">
                   <div className="flex items-center justify-between text-xs text-zinc-400">
                     <span>Required signatures</span>
-                    <span>{signatureCount(activeDraft)} / {activeDraft.requiredSignatures}</span>
+                    <span>{signatureCount(visibleDraft)} / {visibleDraft.requiredSignatures}</span>
                   </div>
-                  <Progress value={signatureCount(activeDraft)} max={activeDraft.requiredSignatures} />
+                  <Progress value={signatureCount(visibleDraft)} max={visibleDraft.requiredSignatures} />
                 </div>
                 <div className="mt-5 space-y-3">
-                  {activeDraft.signerKeyHashes.map((hash, index) => {
-                    const signed = activeDraft.signatures.some((signature) => signature.signerKeyHash.toLowerCase() === hash.toLowerCase());
+                  {visibleDraft.signerKeyHashes.map((hash, index) => {
+                    const signed = hasMatchedSignature(visibleDraft, hash);
                     const label = `Signer ${index + 1}`;
                     return (
                       <div
@@ -902,18 +1016,18 @@ export default function Home() {
                     );
                   })}
                 </div>
-                {activeDraft.note ? <div className="mt-4 break-words text-sm text-zinc-300">Coordinator note: {activeDraft.note}</div> : null}
+                {visibleDraft.note ? <div className="mt-4 break-words text-sm text-zinc-300">Coordinator note: {visibleDraft.note}</div> : null}
               </div>
-              {optionalSignerKeyHashes(activeDraft).length && pendingSignatureCount(activeDraft) === 0 ? (
+              {optionalSignerKeyHashes(visibleDraft).length && pendingSignatureCount(visibleDraft) === 0 ? (
                 <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-                  Threshold reached. {optionalSignerKeyHashes(activeDraft).length} policy signer{optionalSignerKeyHashes(activeDraft).length === 1 ? "" : "s"} can still sign, but they are no longer required for submit.
+                  Threshold reached. {optionalSignerKeyHashes(visibleDraft).length} policy signer{optionalSignerKeyHashes(visibleDraft).length === 1 ? "" : "s"} can still sign, but they are no longer required for submit.
                 </div>
               ) : null}
-              {(activeDraft.assets?.length ? activeDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: activeDraft.lovelace || "0", decimals: 6 }]).length ? (
+              {(visibleDraft.assets?.length ? visibleDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: visibleDraft.lovelace || "0", decimals: 6 }]).length ? (
                 <div className="rounded-xl border border-border bg-slate-950/60 p-4">
                   <div className="text-sm text-slate-400">Assets</div>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {(activeDraft.assets?.length ? activeDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: activeDraft.lovelace || "0", decimals: 6 }]).map((asset) => (
+                    {(visibleDraft.assets?.length ? visibleDraft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: visibleDraft.lovelace || "0", decimals: 6 }]).map((asset) => (
                       <div key={asset.id} className="rounded-full border border-border px-3 py-1 text-sm text-slate-200">
                         {formatRawQuantity(asset.quantity, asset.unit, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0))}
                       </div>
@@ -921,41 +1035,53 @@ export default function Home() {
                   </div>
                 </div>
               ) : null}
-              {unmatchedSignatureCount(activeDraft) ? (
+              {unmatchedSignatureCount(visibleDraft) ? (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
                   <span>
-                    {unmatchedSignatureCount(activeDraft)} unmatched signature{unmatchedSignatureCount(activeDraft) === 1 ? " is" : "s are"} stored locally and will not count toward submit.
+                    {unmatchedSignatureCount(visibleDraft)} unmatched signature{unmatchedSignatureCount(visibleDraft) === 1 ? " is" : "s are"} stored locally and will not count toward submit.
                   </span>
-                  <Button size="sm" variant="secondary" onClick={() => discardUnmatchedSignatures(activeDraft.id)}>
+                  <Button size="sm" variant="secondary" onClick={() => discardUnmatchedSignatures(visibleDraft.id)}>
                     <Trash2 className="size-4" /> Remove unmatched
                   </Button>
                 </div>
               ) : null}
-              <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                Privacy note: this invite carries the recipient, asset amounts, coordinator note, signer list, and unsigned tx CBOR in the URL fragment. After load it is kept only in this browser's local storage, so use a trusted device and clear site data when the signing handoff is complete.
-              </div>
+              {relayInviteActive ? (
+                <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                  This relay invite keeps the unsigned transaction details on the server and delivers the witness back automatically after signing.
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                  Privacy note: this invite carries the recipient, asset amounts, coordinator note, signer list, and unsigned tx CBOR in the URL fragment. After load it is kept only in this browser's local storage, so use a trusted device and clear site data when the signing handoff is complete.
+                </div>
+              )}
             </div>
 
             <div className="min-w-0 space-y-3">
               <Card className="border-border bg-slate-950/60">
                 <CardHeader>
-                  <CardTitle className="text-base">Next signer step</CardTitle>
+                  <CardTitle className="text-base">{relayInviteActive ? "Automatic relay" : "Next signer step"}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm text-slate-300">
                   <div className="rounded-lg border border-border bg-slate-900/70 p-3">1. Connect the signer wallet above.</div>
-                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">2. Confirm the wallet is on {formatTargetNetwork(activeDraft.network)}.</div>
-                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">3. Click Sign, then copy the witness package back to the coordinator.</div>
+                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">2. Confirm the wallet is on {formatTargetNetwork(visibleDraft.network)}.</div>
+                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">
+                    {relayInviteActive
+                      ? "3. Click Sign. Your witness is delivered back to the coordinator automatically."
+                      : "3. Click Sign, then copy the witness package back to the coordinator."}
+                  </div>
                 </CardContent>
               </Card>
               {activeNetworkWarning ? (
                 <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{activeNetworkWarning}</div>
               ) : null}
-              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" onClick={() => void signActiveDraft()} disabled={!connected || !activeDraft.unsignedTxCbor.trim()}>
-                <ShieldCheck className="size-4" /> Sign loaded invite
+              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" onClick={() => void signActiveDraft()} disabled={!connected || !visibleDraft.unsignedTxCbor.trim()}>
+                <ShieldCheck className="size-4" /> {relayInviteActive ? "Sign and deliver" : "Sign loaded invite"}
               </Button>
-              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={copySignaturePackage} disabled={!signaturePackage.trim()}>
-                <Copy className="size-4" /> Copy witness package
-              </Button>
+              {!relayInviteActive ? (
+                <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={copySignaturePackage} disabled={!signaturePackage.trim()}>
+                  <Copy className="size-4" /> Copy witness package
+                </Button>
+              ) : null}
             </div>
           </div>
         </AppWindow>

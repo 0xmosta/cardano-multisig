@@ -27,6 +27,7 @@ import { Progress } from "../components/ui/progress";
 import {
   type MultisigWallet as Wallet,
   type NativeScript,
+  type RelayRoomRef,
   type SignatureRecord,
   type TxDraft,
   STORAGE_KEY as WALLET_KEY,
@@ -36,6 +37,7 @@ import {
   encodeInvite,
   expectedNetworkId,
   formatTargetNetwork,
+  hasMatchedSignature,
   mergeSignatures,
   networkLabel,
   nowIso,
@@ -48,6 +50,13 @@ import {
   summarizeScript,
   unmatchedSignatureCount,
 } from "../lib/multisig";
+import {
+  type RelayRoomCoordinatorView,
+  type RelayRoomCreateResponse,
+  type RelayRoomSessionResponse,
+  applyRelayRoomToDraft,
+} from "../lib/relay-room";
+import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
 type AssetLine = { id: string; unit: string; label: string; quantity: string; decimals?: number };
 type AssetOption = { unit: string; label: string; quantity: string; outputCount?: number; decimals?: number };
@@ -72,6 +81,48 @@ function readArray<T>(key: string): T[] {
 function writeArray<T>(key: string, value: T[]) {
   window.localStorage.setItem(key, JSON.stringify(value, null, 2));
   notifyAppStorageChanged();
+}
+
+const RELAY_SESSION_KEY = "cardano-multisig.relay-rooms.session.v1";
+
+function readRelaySessionRooms() {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(RELAY_SESSION_KEY) || "{}") as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, RelayRoomRef>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeRelaySessionRoom(txId: string, relayRoom: RelayRoomRef) {
+  const current = readRelaySessionRooms();
+  current[txId] = relayRoom;
+  window.sessionStorage.setItem(RELAY_SESSION_KEY, JSON.stringify(current, null, 2));
+}
+
+function hydrateRelayRoomSession(tx: TxDraft): TxDraft {
+  const base = tx.relayRoom ? stripRelayRoomSecrets(tx) : tx;
+  const sessionRelayRoom = readRelaySessionRooms()[tx.id];
+  return sessionRelayRoom ? { ...base, relayRoom: { ...base.relayRoom, ...sessionRelayRoom } } : base;
+}
+
+function stripRelayRoomSecrets(tx: TxDraft): TxDraft {
+  if (!tx.relayRoom) return tx;
+  const { roomId, createdAt, lastSyncAt, status } = tx.relayRoom;
+  return {
+    ...tx,
+    relayRoom: {
+      roomId,
+      createdAt,
+      lastSyncAt,
+      status,
+    } as RelayRoomRef,
+  };
+}
+
+function writeTransactions(value: TxDraft[]) {
+  writeArray(TX_KEY, value.map(stripRelayRoomSecrets));
 }
 
 function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {
@@ -296,7 +347,7 @@ export default function WalletDetail() {
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
-    setTxs(readArray<TxDraft>(TX_KEY));
+    setTxs(readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession));
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);
@@ -320,10 +371,146 @@ export default function WalletDetail() {
     if (wallet) void refreshAssets(wallet);
   }, [wallet?.id]);
 
+  const relaySyncKey = useMemo(
+    () =>
+      txs
+        .filter(
+          (tx) =>
+            tx.walletId === walletId &&
+            tx.relayRoom?.coordinatorToken &&
+            (tx.relayRoom.status || "open") === "open" &&
+            !tx.txHash,
+        )
+        .map((tx) => `${tx.id}:${tx.relayRoom!.coordinatorToken}:${tx.relayRoom!.status || "open"}`)
+        .join("|"),
+    [txs, walletId],
+  );
+
+  useEffect(() => {
+    const relayDrafts = txs.filter(
+      (tx) =>
+        tx.walletId === walletId &&
+        tx.relayRoom?.coordinatorToken &&
+        (tx.relayRoom.status || "open") === "open" &&
+        !tx.txHash,
+    ) as Array<TxDraft & { relayRoom: RelayRoomRef & { coordinatorToken: string } }>;
+    if (!relayDrafts.length) return;
+
+    let cancelled = false;
+    const sync = async () => {
+      const updates = await Promise.all(
+        relayDrafts.map(async (tx) => {
+          try {
+            const room = await fetchRelayCoordinatorRoom(tx.relayRoom!.coordinatorToken);
+            return { txId: tx.id, room };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const byId = new Map(updates.filter(Boolean).map((entry) => [entry!.txId, entry!.room]));
+      if (!byId.size) return;
+      setTxs((current) => {
+        let changed = false;
+        const next = current.map((tx) => {
+          const room = byId.get(tx.id);
+          if (!room) return tx;
+          const updated = applyRelayRoomToDraft(tx, room);
+          const beforeSignatureIds = (tx.signatures || []).map((signature) => signature.relayWitnessId || signature.witnessCbor).join("|");
+          const afterSignatureIds = (updated.signatures || []).map((signature) => signature.relayWitnessId || signature.witnessCbor).join("|");
+          const txChanged =
+            beforeSignatureIds !== afterSignatureIds ||
+            tx.relayRoom?.status !== updated.relayRoom?.status ||
+            tx.txHash !== updated.txHash;
+          if (txChanged) changed = true;
+          return txChanged ? updated : tx;
+        });
+        if (!changed) return current;
+        writeTransactions(next);
+        return next;
+      });
+    };
+
+    void sync();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void sync();
+    }, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [relaySyncKey, walletId]);
+
   const connectWarning =
     connected && wallet && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(wallet.network)
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this multisig wallet is on ${formatTargetNetwork(wallet.network)}.`
       : "";
+
+  async function fetchRelayCoordinatorRoom(token: string) {
+    const response = await fetch("/api/cardano/relay-room", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "session", token }),
+    });
+    const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
+    if (!response.ok || !body.ok || body.role !== "coordinator") {
+      throw new Error(("error" in body && body.error) || "Could not load relay room state.");
+    }
+    return body.room;
+  }
+
+  async function ensureRelayRoom(tx: TxDraft) {
+    if (!wallet) throw new Error("Wallet not loaded in this browser.");
+    if (tx.relayRoom?.coordinatorToken && tx.relayRoom.signerInvites?.length) {
+      return tx.relayRoom;
+    }
+    if (!tx.unsignedTxCbor.trim()) {
+      throw new Error("This transaction has no unsigned tx CBOR yet, so a relay room cannot be created.");
+    }
+    const response = await fetch("/api/cardano/relay-room", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        intent: "create",
+        network: tx.network,
+        draft: {
+          draftId: tx.id,
+          walletId: tx.walletId,
+          walletName: tx.walletName,
+          title: tx.title,
+          note: tx.note,
+          recipient: tx.recipient,
+          lovelace: tx.lovelace,
+          assets: tx.assets || [],
+          unsignedTxCbor: tx.unsignedTxCbor,
+          requiredSignatures: tx.requiredSignatures,
+          signerKeyHashes: tx.signerKeyHashes,
+        },
+        signers: tx.signerKeyHashes.map((keyHash) => ({
+          keyHash,
+          label: wallet.signers.find((signer) => signer.keyHash.toLowerCase() === keyHash.toLowerCase())?.label,
+        })),
+      }),
+    });
+    const body = (await response.json()) as RelayRoomCreateResponse | { ok: false; error?: string };
+    if (!response.ok || !body.ok) {
+      throw new Error(("error" in body && body.error) || "Could not create relay room.");
+    }
+    const relayRoom: RelayRoomRef = {
+      roomId: body.roomId,
+      coordinatorToken: body.coordinatorToken,
+      createdAt: nowIso(),
+      signerInvites: body.signerInvites,
+      status: "open",
+    };
+    const next = txs.map((item) => (item.id === tx.id ? { ...item, relayRoom, updatedAt: nowIso() } : item));
+    writeRelaySessionRoom(tx.id, relayRoom);
+    setTxs(next);
+    writeTransactions(next);
+    return relayRoom;
+  }
 
   async function signTransaction(tx: TxDraft) {
     if (!connected) {
@@ -349,6 +536,7 @@ export default function WalletDetail() {
       const witnessCbor = await connected.api.signTx(tx.unsignedTxCbor.trim(), true);
       const signature: SignatureRecord = {
         signerKeyHash: connected.keyHash?.toLowerCase() || `unknown-${connected.id}`,
+        matchStatus: connected.keyHash ? "matched" : "unmatched",
         signerName: connected.keyHash ? connected.keyHash.toLowerCase() : connected.name,
         walletName: connected.name,
         witnessCbor,
@@ -364,7 +552,7 @@ export default function WalletDetail() {
           : item,
       );
       setTxs(next);
-      writeArray(TX_KEY, next);
+      writeTransactions(next);
       setSignStatus(
         connected.keyHash
           ? "Signature captured. Copy the witness package for the coordinator or keep collecting signatures here."
@@ -376,8 +564,24 @@ export default function WalletDetail() {
   }
 
   async function copyInvite(tx: TxDraft) {
-    await navigator.clipboard.writeText(inviteLink(tx));
-    setSignStatus("Signer invite link copied. Share it privately with the intended signer.");
+    try {
+      const relayRoom = await ensureRelayRoom(tx);
+      const missing = requiredPendingSignerKeyHashes(tx);
+      const nextKeyHash = missing[0] || optionalSignerKeyHashes(tx)[0] || tx.signerKeyHashes[0];
+      const invite = relayRoom.signerInvites?.find((item) => item.keyHash.toLowerCase() === nextKeyHash.toLowerCase());
+      if (!invite) throw new Error("Relay room exists, but the next signer invite could not be found.");
+      await navigator.clipboard.writeText(invite.inviteUrl);
+      setSignStatus(
+        `Signer relay invite copied for ${invite.label || `${invite.keyHash.slice(0, 12)}…`}. Witnesses return automatically after signing.`,
+      );
+    } catch (error) {
+      await navigator.clipboard.writeText(inviteLink(tx));
+      setSignStatus(
+        error instanceof Error
+          ? `${error.message} Fell back to the legacy manual invite link.`
+          : "Relay room unavailable. Copied the legacy manual invite link instead.",
+      );
+    }
   }
 
   async function copySignatures(tx: TxDraft) {
@@ -428,8 +632,20 @@ export default function WalletDetail() {
           : item,
       );
       setTxs(next);
-      writeArray(TX_KEY, next);
-      setSignStatus(`Submitted on ${body.network}. Tx hash: ${body.txHash}`);
+      writeTransactions(next);
+      let relayNote = "";
+      if (tx.relayRoom?.coordinatorToken) {
+        const relayResponse = await fetch("/api/cardano/relay-room", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ intent: "submit", token: tx.relayRoom.coordinatorToken, txHash: String(body.txHash || "") }),
+        });
+        const relayBody = (await relayResponse.json()) as { ok?: boolean; error?: string };
+        if (!relayResponse.ok || !relayBody.ok) {
+          relayNote = relayBody.error ? ` Relay room update failed: ${relayBody.error}` : " Relay room update failed.";
+        }
+      }
+      setSignStatus(`Submitted on ${body.network}. Tx hash: ${body.txHash}.${relayNote}`.trim());
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not submit transaction.";
       const next = txs.map((item) =>
@@ -443,7 +659,7 @@ export default function WalletDetail() {
           : item,
       );
       setTxs(next);
-      writeArray(TX_KEY, next);
+      writeTransactions(next);
       setSignStatus(message);
     }
   }
@@ -456,11 +672,12 @@ export default function WalletDetail() {
       const next = txs.map((tx) => {
         if (tx.id !== draftId) return tx;
         found = true;
-        return { ...tx, signatures: mergeSignatures(tx.signatures || [], signatures), updatedAt: nowIso() };
+        const verifiedSignatures = verifySignatureRecordsForDraft(tx, signatures);
+        return { ...tx, signatures: mergeSignatures(tx.signatures || [], verifiedSignatures), updatedAt: nowIso() };
       });
       if (!found) throw new Error("This signature package belongs to a different transaction room.");
       setTxs(next);
-      writeArray(TX_KEY, next);
+      writeTransactions(next);
       setSignaturePackageInput("");
       setSignStatus(`Imported ${signatures.length} signature${signatures.length === 1 ? "" : "s"} into the coordinator view.`);
     } catch (error) {
@@ -473,7 +690,7 @@ export default function WalletDetail() {
       tx.id === txId ? { ...tx, signatures: removeUnmatchedSignatures(tx), updatedAt: nowIso() } : tx,
     );
     setTxs(next);
-    writeArray(TX_KEY, next);
+    writeTransactions(next);
     setSignStatus("Unmatched witness packages removed from this transaction.");
   }
 
@@ -611,7 +828,7 @@ export default function WalletDetail() {
             <div>
               <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>
               <p className="mt-1 text-sm text-zinc-400">
-                Copy a signer invite, collect witness packages, and watch the missing-signer list shrink to zero.
+                Copy relay signer invites, watch returned witnesses merge automatically, and keep the manual witness package fallback available.
               </p>
             </div>
               {walletTxs.length === 0 ? (
@@ -650,6 +867,7 @@ export default function WalletDetail() {
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
                             <span>{signed}/{tx.requiredSignatures} matched signatures</span>
                             <span>{pendingSignatureCount(tx)} still needed</span>
+                            {tx.relayRoom ? <span className="text-sky-300">relay {tx.relayRoom.status || "open"}</span> : null}
                             {pendingSignatureCount(tx) === 0 && optional.length ? (
                               <span className="text-emerald-300">{optional.length} optional signer{optional.length === 1 ? "" : "s"} unsigned</span>
                             ) : null}
@@ -686,7 +904,7 @@ export default function WalletDetail() {
 
                           <div className="space-y-3">
                             {tx.signerKeyHashes.map((keyHash) => {
-                              const hasSigned = tx.signatures.some((signature) => signature.signerKeyHash.toLowerCase() === keyHash.toLowerCase());
+                              const hasSigned = hasMatchedSignature(tx, keyHash);
                               const label = signerLabel(wallet, keyHash);
                               return (
                                 <div
@@ -722,7 +940,9 @@ export default function WalletDetail() {
                                 {phase === "submitted"
                                   ? "Submission already recorded for this transaction."
                                   : missing.length
-                                    ? "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
+                                    ? tx.relayRoom
+                                      ? "Copy the relay invite for a missing signer and send it privately. Returned witnesses merge into this room automatically; the manual package import remains available as a fallback."
+                                      : "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
                                     : providerStatus?.services.submit
                                       ? `All required witnesses are present. Submit to ${providerStatus.network} from this wallet page.`
                                       : "All required witnesses are present, but this deployment still has submit disabled."}
@@ -755,13 +975,13 @@ export default function WalletDetail() {
 
                         <div className="min-w-0 space-y-2">
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copyInvite(tx)}>
-                            <Copy className="size-4" /> Copy signer invite
+                            <Copy className="size-4" /> {tx.relayRoom ? "Copy next relay invite" : "Copy signer invite"}
                           </Button>
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign}>
                             <ShieldCheck className="size-4" /> Sign with connected wallet
                           </Button>
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
-                            <Copy className="size-4" /> Copy witness package
+                            <Copy className="size-4" /> Copy witness package fallback
                           </Button>
                           <Button
                             className="h-auto min-h-10 w-full whitespace-normal px-3 py-2"

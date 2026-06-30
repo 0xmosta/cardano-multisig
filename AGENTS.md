@@ -70,6 +70,8 @@
   - Chrome/Xvfb must inject providers before page load; expect `window.cardano.hermesQaSigner01` through `hermesQaSigner12`.
   - Handoff must label these runs as `CDP QA harness`, not third-party wallet extension tests.
 - For scripted QA that needs chain access, prefer the live app APIs (`/api/cardano/build-tx`, `/api/cardano/submit`) so server-side preprod Blockfrost env is used. Only call Blockfrost directly from scripts when the preprod env has been explicitly injected from the running preprod service, and never print the token.
+- Relay-room QA payloads must use the same full `AssetLine` shape as the app (`id`, `unit`, `label`, `quantity`, optional `maxQuantity`, `decimals`). Do not send reduced asset objects that only contain `unit` and `quantity`.
+- If a funded QA run fails after submitting a funding transaction but before spend/submit, record that as a partial run and include the script address in the next balance check; the next spend may consume those UTxOs as script change.
 - Run E2E thresholds in order: `2-of-3`, then `4-of-7`, then `6-of-12`. Do not scale up until the smaller case has produced a tx hash or a concrete blocker.
 - Any local helper server, Playwright session, shim, or long-running process started for QA must be stopped or explicitly documented in the handoff.
 

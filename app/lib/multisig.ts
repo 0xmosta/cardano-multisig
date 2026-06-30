@@ -1,5 +1,7 @@
 export type Network = "mainnet" | "preprod" | "preview";
 export type SignerSource = "payment" | "stake" | "manual";
+export type SignatureMatchStatus = "matched" | "unmatched";
+export type SignatureSource = "manual" | "relay";
 
 export type Signer = {
   id: string;
@@ -23,6 +25,10 @@ export type SignatureRecord = {
   walletName: string;
   witnessCbor: string;
   signedAt: string;
+  source?: SignatureSource;
+  matchStatus?: SignatureMatchStatus;
+  matchedSignerKeyHash?: string;
+  relayWitnessId?: string;
 };
 
 export type AssetLine = {
@@ -32,6 +38,21 @@ export type AssetLine = {
   quantity: string;
   maxQuantity?: string;
   decimals?: number;
+};
+
+export type RelayRoomInviteRef = {
+  keyHash: string;
+  label?: string;
+  inviteUrl: string;
+};
+
+export type RelayRoomRef = {
+  roomId: string;
+  coordinatorToken?: string;
+  createdAt: string;
+  lastSyncAt?: string;
+  status?: "open" | "submitted" | "cancelled" | "expired";
+  signerInvites?: RelayRoomInviteRef[];
 };
 
 export type TxStatus = "pending" | "succeeded" | "failed";
@@ -64,6 +85,7 @@ export type TxDraft = {
   updatedAt?: string;
   txHash?: string;
   failureReason?: string;
+  relayRoom?: RelayRoomRef;
 };
 
 export type MultisigWallet = {
@@ -189,18 +211,38 @@ export function formatTargetNetwork(network: string) {
   return network === "mainnet" ? "mainnet" : `${network} testnet`;
 }
 
-export function signatureCount(draft: Pick<TxDraft, "signatures" | "signerKeyHashes" | "requiredSignatures">) {
-  const matchedSigners = new Set(
+function normalizedMatchedSignerKeyHash(signature: SignatureRecord, expected?: Set<string>) {
+  if (signature.matchStatus === "unmatched") return null;
+  const candidate = normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash);
+  if (expected && !expected.has(candidate)) return null;
+  return candidate;
+}
+
+export function matchedSignerKeyHashes(
+  draft: Pick<TxDraft, "signatures" | "signerKeyHashes">,
+) {
+  const expected = new Set(draft.signerKeyHashes.map(normalizeKeyHash));
+  return new Set(
     draft.signatures
-      .map((signature) => normalizeKeyHash(signature.signerKeyHash))
-      .filter((keyHash) => draft.signerKeyHashes.some((expected) => normalizeKeyHash(expected) === keyHash)),
+      .map((signature) => normalizedMatchedSignerKeyHash(signature, expected))
+      .filter((keyHash): keyHash is string => Boolean(keyHash)),
   );
-  return Math.min(matchedSigners.size, Math.max(draft.requiredSignatures || 1, 1));
+}
+
+export function hasMatchedSignature(
+  draft: Pick<TxDraft, "signatures" | "signerKeyHashes">,
+  signerKeyHash: string,
+) {
+  return matchedSignerKeyHashes(draft).has(normalizeKeyHash(signerKeyHash));
+}
+
+export function signatureCount(draft: Pick<TxDraft, "signatures" | "signerKeyHashes" | "requiredSignatures">) {
+  return Math.min(matchedSignerKeyHashes(draft).size, Math.max(draft.requiredSignatures || 1, 1));
 }
 
 export function unmatchedSignatureCount(draft: Pick<TxDraft, "signatures" | "signerKeyHashes">) {
   const expected = new Set(draft.signerKeyHashes.map(normalizeKeyHash));
-  return draft.signatures.filter((signature) => !expected.has(normalizeKeyHash(signature.signerKeyHash))).length;
+  return draft.signatures.filter((signature) => !normalizedMatchedSignerKeyHash(signature, expected)).length;
 }
 
 export function pendingSignatureCount(draft: Pick<TxDraft, "signatures" | "signerKeyHashes" | "requiredSignatures">) {
@@ -208,7 +250,7 @@ export function pendingSignatureCount(draft: Pick<TxDraft, "signatures" | "signe
 }
 
 export function pendingSignerKeyHashes(draft: Pick<TxDraft, "signatures" | "signerKeyHashes">) {
-  const signed = new Set(draft.signatures.map((signature) => normalizeKeyHash(signature.signerKeyHash)));
+  const signed = matchedSignerKeyHashes(draft);
   return draft.signerKeyHashes.filter((keyHash) => !signed.has(normalizeKeyHash(keyHash)));
 }
 
@@ -224,7 +266,7 @@ export function optionalSignerKeyHashes(draft: Pick<TxDraft, "signatures" | "sig
 
 export function removeUnmatchedSignatures(draft: Pick<TxDraft, "signatures" | "signerKeyHashes">) {
   const expected = new Set(draft.signerKeyHashes.map(normalizeKeyHash));
-  return draft.signatures.filter((signature) => expected.has(normalizeKeyHash(signature.signerKeyHash)));
+  return draft.signatures.filter((signature) => Boolean(normalizedMatchedSignerKeyHash(signature, expected)));
 }
 
 export function slugify(value: string) {
@@ -235,7 +277,7 @@ export function encodeInvite(draft: TxDraft) {
   const payload: InvitePayload = {
     type: "cardano-multisig-invite",
     version: 1,
-    draft: { ...draft, signatures: [] },
+    draft: { ...draft, signatures: [], relayRoom: undefined },
   };
   return btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
     .replace(/\+/g, "-")
@@ -298,16 +340,35 @@ export function parseSignaturePackage(
   throw new Error("Invalid signature package.");
 }
 
+function signatureStorageKey(signature: SignatureRecord) {
+  const matched = normalizedMatchedSignerKeyHash(signature);
+  if (matched) return `matched:${matched}`;
+  if (signature.relayWitnessId) return `relay:${signature.relayWitnessId}`;
+  const claim = normalizeKeyHash(signature.signerKeyHash || "unknown");
+  const timestamp = signature.signedAt || signature.witnessCbor.slice(0, 32);
+  return `unmatched:${claim}:${timestamp}`;
+}
+
 export function mergeSignatures(existing: SignatureRecord[], incoming: SignatureRecord[]) {
   const next = new Map<string, SignatureRecord>();
   for (const signature of existing) {
-    next.set(normalizeKeyHash(signature.signerKeyHash), signature);
-  }
-  for (const signature of incoming) {
-    next.set(normalizeKeyHash(signature.signerKeyHash), {
+    next.set(signatureStorageKey(signature), {
       ...signature,
       signerKeyHash: normalizeKeyHash(signature.signerKeyHash),
+      matchedSignerKeyHash: signature.matchedSignerKeyHash
+        ? normalizeKeyHash(signature.matchedSignerKeyHash)
+        : undefined,
     });
+  }
+  for (const signature of incoming) {
+    const normalizedSignature: SignatureRecord = {
+      ...signature,
+      signerKeyHash: normalizeKeyHash(signature.signerKeyHash),
+      matchedSignerKeyHash: signature.matchedSignerKeyHash
+        ? normalizeKeyHash(signature.matchedSignerKeyHash)
+        : undefined,
+    };
+    next.set(signatureStorageKey(normalizedSignature), normalizedSignature);
   }
   return [...next.values()];
 }

@@ -5,7 +5,8 @@ type SubmitRequest = { signedTxCbor?: string; network?: string };
 
 type SubmitBackend =
   | { kind: "blockfrost"; network: CardanoNetwork; url: string; projectId: string }
-  | { kind: "custom"; network: CardanoNetwork; url: string };
+  | { kind: "custom"; network: CardanoNetwork; url: string }
+  | { kind: "ogmios"; network: CardanoNetwork; url: string };
 
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -61,6 +62,10 @@ function submitUrl() {
   ).trim();
 }
 
+function ogmiosUrl() {
+  return (process.env.CARDANO_OGMIOS_URL || process.env.OGMIOS_URL || "").trim();
+}
+
 function hexToBytes(hex: string) {
   const normalized = hex.trim().toLowerCase();
   if (!normalized || normalized.length % 2 !== 0 || !/^[0-9a-f]+$/.test(normalized)) {
@@ -83,13 +88,14 @@ function assertSubmitRequest(body: unknown) {
 
 function resolveSubmitBackend(): SubmitBackend {
   const network = configuredNetwork();
-  if (network === "mainnet") {
-    throw new Error("Mainnet submission is disabled in this build. Switch to preprod/preview or use an explicitly authorized mainnet flow.");
-  }
-
   const customUrl = submitUrl();
   if (customUrl) {
     return { kind: "custom", network, url: customUrl.replace(/\/$/, "") };
+  }
+
+  const ogmios = ogmiosUrl();
+  if (ogmios) {
+    return { kind: "ogmios", network, url: ogmios };
   }
 
   const blockfrost = getBlockfrostConfig();
@@ -97,7 +103,7 @@ function resolveSubmitBackend(): SubmitBackend {
     return { kind: "blockfrost", network, url: blockfrost.url, projectId: blockfrost.projectId };
   }
 
-  throw new Error("No preprod/preview submit backend is configured. Set Blockfrost or CARDANO_SUBMIT_URL first.");
+  throw new Error("No submit backend is configured. Set CARDANO_OGMIOS_URL, Blockfrost, or CARDANO_SUBMIT_URL first.");
 }
 
 function parseSubmitResponse(text: string, contentType: string, fallbackHash: string) {
@@ -156,6 +162,57 @@ async function submitViaCustom(backend: Extract<SubmitBackend, { kind: "custom" 
   return parseSubmitResponse(text, response.headers.get("content-type") || "", localTxHash);
 }
 
+async function submitViaOgmios(backend: Extract<SubmitBackend, { kind: "ogmios" }>, signedTxCbor: string, localTxHash: string) {
+  const socket = new WebSocket(backend.url);
+  const id = `submit-${Date.now().toString(36)}`;
+  const result = await new Promise<unknown>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error("Ogmios submit timed out."));
+    }, 30_000);
+
+    socket.addEventListener("open", () => {
+      socket.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "submitTransaction",
+        params: { transaction: { cbor: signedTxCbor } },
+        id,
+      }));
+    });
+
+    socket.addEventListener("message", (event) => {
+      clearTimeout(timeout);
+      socket.close();
+      try {
+        const body = JSON.parse(String(event.data)) as {
+          result?: string | { transaction?: { id?: string }; id?: string };
+          error?: { message?: string; data?: unknown };
+        };
+        if (body.error) {
+          const detail = body.error.data ? ` ${JSON.stringify(body.error.data)}` : "";
+          reject(new Error(`Ogmios submit failed: ${body.error.message || "unknown error"}.${detail}`));
+          return;
+        }
+        resolve(body.result);
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    socket.addEventListener("error", () => {
+      clearTimeout(timeout);
+      reject(new Error("Ogmios submit connection failed."));
+    });
+  });
+
+  if (typeof result === "string" && /^[0-9a-f]{64}$/i.test(result)) return result;
+  if (result && typeof result === "object") {
+    const body = result as { transaction?: { id?: string }; id?: string };
+    return body.transaction?.id || body.id || localTxHash;
+  }
+  return localTxHash;
+}
+
 export async function action({ request }: { request: Request }) {
   try {
     const input = assertSubmitRequest(await request.json());
@@ -169,7 +226,9 @@ export async function action({ request }: { request: Request }) {
     const txHash =
       backend.kind === "blockfrost"
         ? await submitViaBlockfrost(backend, input.signedTxCbor, localTxHash)
-        : await submitViaCustom(backend, input.signedTxCbor, localTxHash);
+        : backend.kind === "ogmios"
+          ? await submitViaOgmios(backend, input.signedTxCbor, localTxHash)
+          : await submitViaCustom(backend, input.signedTxCbor, localTxHash);
 
     return Response.json({ ok: true, network: backend.network, txHash, localTxHash, backend: backend.kind });
   } catch (error) {

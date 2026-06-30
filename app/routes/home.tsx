@@ -1210,7 +1210,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div id="home" className="flex scroll-mt-24 flex-col gap-6">
       {visibleDraft ? (
         <div ref={signaturePanelRef}>
         <AppWindow title="Pending signature request" className="border-emerald-400/25">
@@ -1585,7 +1585,7 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      <section>
+      <section id="wallets" className="scroll-mt-24">
         <AppWindow title="Wallets" contentClassName="p-0">
           <div className="border-b border-white/8 p-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1873,6 +1873,7 @@ export default function Home() {
         </AppWindow>
       </section>
 
+      <section id="transactions" className="scroll-mt-24">
       {drafts.length ? (
         <Card className="glass-panel overflow-hidden rounded-lg">
           <CardHeader className="border-b border-white/8 px-5 py-4">
@@ -1938,6 +1939,7 @@ export default function Home() {
           </CardContent>
         </Card>
       ) : null}
+      </section>
 
       {status ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{status}</div> : null}
     </div>

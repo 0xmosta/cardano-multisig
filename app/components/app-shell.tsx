@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import { Outlet, useOutletContext } from "react-router";
+import { Link, Outlet, useLocation, useOutletContext } from "react-router";
+import { Home, ListChecks, WalletCards } from "lucide-react";
 import { AppHeader, type AppHeaderProviderStatus } from "./app-header";
+import { Badge } from "./ui/badge";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import { STORAGE_KEY, TX_STORAGE_KEY, networkLabel } from "../lib/multisig";
+import { cn } from "../lib/utils";
 
 type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
 
@@ -107,6 +110,51 @@ export function useAppShell() {
   return useOutletContext<AppShellContext>();
 }
 
+function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount: number }) {
+  const location = useLocation();
+  const items = [
+    { label: "Home", href: "/#home", icon: Home, active: location.pathname === "/" && (!location.hash || location.hash === "#home") },
+    { label: "Wallets", href: "/#wallets", icon: WalletCards, active: location.pathname === "/" && location.hash === "#wallets", count: walletCount },
+    { label: "Transactions", href: "/#transactions", icon: ListChecks, active: location.pathname === "/" && location.hash === "#transactions", count: roomCount },
+  ];
+
+  return (
+    <nav aria-label="Primary" className="fixed bottom-4 left-1/2 z-40 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 rounded-xl border border-white/10 bg-[#18181b]/95 p-1 shadow-2xl shadow-black/50 backdrop-blur md:bottom-auto md:left-4 md:top-1/2 md:w-16 md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:p-2 xl:left-6">
+      <div className="grid grid-cols-3 gap-1 md:flex md:flex-col">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              to={item.href}
+              title={item.label}
+              aria-current={item.active ? "page" : undefined}
+              className={cn(
+                "group relative flex h-12 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-medium text-zinc-400 transition hover:bg-white/8 hover:text-zinc-50 md:w-12 md:px-0",
+                item.active ? "bg-zinc-50 text-zinc-950 shadow-sm hover:bg-zinc-50 hover:text-zinc-950" : "",
+              )}
+            >
+              <Icon className="size-5 shrink-0" />
+              <span className="truncate md:sr-only">{item.label}</span>
+              {typeof item.count === "number" ? (
+                <Badge
+                  variant={item.active ? "secondary" : "outline"}
+                  className={cn(
+                    "h-5 min-w-5 px-1 text-[10px] md:absolute md:-right-1 md:-top-1",
+                    item.active ? "bg-zinc-900 text-zinc-50" : "border-white/10 bg-[#202124] text-zinc-300",
+                  )}
+                >
+                  {item.count}
+                </Badge>
+              ) : null}
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
 export function AppShell() {
   const [providers, setProviders] = useState<WalletProvider[]>([]);
   const [connected, setConnected] = useState<ShellConnectedWallet | null>(null);
@@ -187,7 +235,8 @@ export function AppShell() {
   };
 
   return (
-    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
+    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 pb-24 pt-6 text-zinc-100 sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
+      <AppSidebar walletCount={walletCount} roomCount={roomCount} />
       <AppHeader
         providers={providers}
         connected={connected ? { id: connected.id, name: connected.name, networkLabel: networkLabel(connected.networkId), keyHash: connected.keyHash } : null}

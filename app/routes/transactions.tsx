@@ -83,7 +83,7 @@ export default function TransactionsRoute() {
 
       <AppWindow title="Transaction rooms" contentClassName="p-0">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-black/20 px-3">
+          <div className="flex min-w-full flex-1 items-center gap-2 rounded-md border border-input bg-black/20 px-3 sm:min-w-0">
             <Search className="size-4 shrink-0 text-zinc-500" />
             <input
               value={query}
@@ -92,7 +92,7 @@ export default function TransactionsRoute() {
               className="h-10 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
             />
           </div>
-          <Badge variant="secondary">{visibleTransactions.length} shown</Badge>
+          <Badge variant="secondary" className="max-sm:w-full max-sm:justify-center">{visibleTransactions.length} shown</Badge>
         </div>
 
         {visibleTransactions.length ? (

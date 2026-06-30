@@ -110,6 +110,26 @@ function trimDecimal(value: string) {
   return value.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
 
+function shortHash(value?: string | null, edge = 8) {
+  if (!value) return "";
+  return value.length > edge * 2 ? `${value.slice(0, edge)}…${value.slice(-edge)}` : value;
+}
+
+function relativeTime(value?: string) {
+  if (!value) return "never";
+  const date = new Date(value);
+  const diffMs = Date.now() - date.getTime();
+  if (!Number.isFinite(diffMs)) return "unknown";
+  const seconds = Math.max(0, Math.floor(diffMs / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return date.toLocaleDateString();
+}
+
 function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {
   const label = unit === "lovelace" ? "ADA" : "";
   const raw = BigInt(quantity || "0");
@@ -526,6 +546,8 @@ export default function Home() {
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [relayInviteToken, setRelayInviteToken] = useState<string | null>(null);
   const [relayInviteRoom, setRelayInviteRoom] = useState<RelayRoomSignerView | null>(null);
+  const [relayInviteSyncedAt, setRelayInviteSyncedAt] = useState<string | null>(null);
+  const [relayInviteSyncing, setRelayInviteSyncing] = useState(false);
   const [signaturePackage, setSignaturePackage] = useState("");
   const [status, setStatus] = useState("");
   const [walletSearch, setWalletSearch] = useState("");
@@ -544,6 +566,7 @@ export default function Home() {
     }
     setRelayInviteToken(token);
     setRelayInviteRoom(body.room);
+    setRelayInviteSyncedAt(nowIso());
     setActiveDraftId(body.room.tx.draftId);
     writeRelayInviteSession(token, body.room);
     if (!options.quiet) {
@@ -554,6 +577,23 @@ export default function Home() {
       );
     }
     return body.room;
+  }
+
+  async function refreshRelayInvite() {
+    if (!relayInviteToken) return;
+    setRelayInviteSyncing(true);
+    try {
+      const room = await loadRelayInvite(relayInviteToken, { quiet: true });
+      setStatus(
+        room.signer.alreadyDelivered
+          ? "Signature already delivered to the coordinator. The live relay state is up to date."
+          : "Relay signer room refreshed.",
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not refresh the relay signer room.");
+    } finally {
+      setRelayInviteSyncing(false);
+    }
   }
 
   useEffect(() => {
@@ -1221,15 +1261,22 @@ export default function Home() {
                   <ShieldCheck className="size-6" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-2xl font-semibold leading-tight text-zinc-50">Sign {visibleDraft.title}</h2>
+                  <h2 className="break-words text-2xl font-semibold leading-tight text-zinc-50">Sign {visibleDraft.title}</h2>
                   <p className="mt-1 text-sm text-zinc-400">
                     {visibleDraft.walletName} · {visibleDraft.requiredSignatures}-of-{visibleDraft.signerKeyHashes.length || visibleDraft.requiredSignatures}
                   </p>
                 </div>
               </div>
-              <Badge variant="secondary">
-                <Clock className="size-3" /> {pendingSignatureCount(visibleDraft) <= 0 ? "ready" : `${pendingSignatureCount(visibleDraft)} more`}
-              </Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                {relayInviteActive ? (
+                  <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
+                    synced {relativeTime(relayInviteSyncedAt || undefined)}
+                  </Badge>
+                ) : null}
+                <Badge variant="secondary">
+                  <Clock className="size-3" /> {pendingSignatureCount(visibleDraft) <= 0 ? "ready" : `${pendingSignatureCount(visibleDraft)} more`}
+                </Badge>
+              </div>
             </div>
           </div>
           <div className="grid min-w-0 gap-6 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -1255,7 +1302,11 @@ export default function Home() {
                 <div className="mt-5 space-y-3">
                   {visibleDraft.signerKeyHashes.map((hash, index) => {
                     const signed = hasMatchedSignature(visibleDraft, hash);
-                    const label = `Signer ${index + 1}`;
+                    const isConnectedSigner = Boolean(connected?.keyHash && normalizeKeyHash(connected.keyHash) === normalizeKeyHash(hash));
+                    const signature = visibleDraft.signatures.find(
+                      (item) => normalizeKeyHash(item.matchedSignerKeyHash || item.signerKeyHash || "") === normalizeKeyHash(hash),
+                    );
+                    const label = isConnectedSigner ? `Signer ${index + 1} · You` : `Signer ${index + 1}`;
                     return (
                       <div
                         key={hash}
@@ -1268,7 +1319,12 @@ export default function Home() {
                           <Avatar label={label} tone={signed ? "success" : "muted"} />
                           <div className="min-w-0">
                             <div className="font-semibold text-zinc-50">{label}</div>
-                            <div className="truncate font-mono text-xs text-zinc-500">{hash}</div>
+                            <div className="truncate font-mono text-xs text-zinc-500" title={hash}>{shortHash(hash)}</div>
+                            {signature ? (
+                              <div className="mt-1 text-xs text-emerald-300">
+                                signed {relativeTime(signature.signedAt)}{signature.walletName ? ` · ${signature.walletName}` : ""}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                         <div
@@ -1314,7 +1370,12 @@ export default function Home() {
               ) : null}
               {relayInviteActive ? (
                 <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-                  This relay invite keeps the unsigned transaction details on the server and delivers the witness back automatically after signing.
+                  <div className="font-semibold">Automatic relay is active</div>
+                  <div className="mt-1">
+                    {relayInviteRoom?.signer.alreadyDelivered
+                      ? "Your witness is already delivered to the coordinator. You can close this page or sign again to replace it."
+                      : "This invite keeps the unsigned transaction details on the server and delivers the witness back automatically after signing."}
+                  </div>
                 </div>
               ) : (
                 <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
@@ -1336,14 +1397,24 @@ export default function Home() {
                       ? "3. Click Sign. Your witness is delivered back to the coordinator automatically."
                       : "3. Click Sign, then copy the witness package back to the coordinator."}
                   </div>
+                  {relayInviteActive ? (
+                    <div className="rounded-lg border border-border bg-slate-900/70 p-3">
+                      Live status: {signatureCount(visibleDraft)} of {visibleDraft.requiredSignatures} required signatures synced {relativeTime(relayInviteSyncedAt || undefined)}.
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
               {activeNetworkWarning ? (
                 <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{activeNetworkWarning}</div>
               ) : null}
               <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" onClick={() => void signActiveDraft()} disabled={!connected || !visibleDraft.unsignedTxCbor.trim()}>
-                <ShieldCheck className="size-4" /> {relayInviteActive ? "Sign and deliver" : "Sign loaded invite"}
+                <ShieldCheck className="size-4" /> {relayInviteRoom?.signer.alreadyDelivered ? "Sign again and replace" : relayInviteActive ? "Sign and deliver" : "Sign loaded invite"}
               </Button>
+              {relayInviteActive ? (
+                <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void refreshRelayInvite()} disabled={relayInviteSyncing}>
+                  <RefreshCw className={cn("size-4", relayInviteSyncing ? "animate-spin" : "")} /> Refresh live status
+                </Button>
+              ) : null}
               {!relayInviteActive ? (
                 <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={copySignaturePackage} disabled={!signaturePackage.trim()}>
                   <Copy className="size-4" /> Copy witness package

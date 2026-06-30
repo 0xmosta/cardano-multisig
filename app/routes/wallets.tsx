@@ -81,7 +81,7 @@ export default function WalletsRoute() {
 
       <AppWindow title="Wallets" contentClassName="p-0">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-black/20 px-3">
+          <div className="flex min-w-full flex-1 items-center gap-2 rounded-md border border-input bg-black/20 px-3 sm:min-w-0">
             <Search className="size-4 shrink-0 text-zinc-500" />
             <Input
               value={query}
@@ -90,7 +90,7 @@ export default function WalletsRoute() {
               className="border-0 bg-transparent px-0 shadow-none"
             />
           </div>
-          <Badge variant="secondary">
+          <Badge variant="secondary" className="max-sm:w-full max-sm:justify-center">
             {visibleWallets.length} shown
           </Badge>
         </div>

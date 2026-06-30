@@ -64,6 +64,7 @@ type AssetOption = { unit: string; label: string; quantity: string; outputCount?
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 type AssetFetch = { assets: AssetOption[]; handle?: HandleInfo | null; source?: string; address?: string; outputs?: number };
 type TxPhase = "pending" | "ready" | "submitted";
+type RelaySyncState = { status: "idle" | "syncing" | "synced" | "failed"; at?: string; error?: string };
 
 export function meta() {
   return [{ title: "Wallet · Cardano Multisig" }];
@@ -160,6 +161,32 @@ function phaseLabel(status: TxPhase) {
   return status;
 }
 
+function shortHash(value?: string | null, edge = 8) {
+  if (!value) return "";
+  return value.length > edge * 2 ? `${value.slice(0, edge)}…${value.slice(-edge)}` : value;
+}
+
+function relativeTime(value?: string) {
+  if (!value) return "never";
+  const date = new Date(value);
+  const diffMs = Date.now() - date.getTime();
+  if (!Number.isFinite(diffMs)) return "unknown";
+  const seconds = Math.max(0, Math.floor(diffMs / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return date.toLocaleDateString();
+}
+
+function explorerTxUrl(network: string, txHash: string) {
+  if (!txHash) return "";
+  const prefix = network === "mainnet" ? "" : `${network}.`;
+  return `https://${prefix}cexplorer.io/tx/${txHash}`;
+}
+
 function handleCandidate(wallet: { name?: string; handle?: string }) {
   const candidate = (wallet.handle || wallet.name || "").trim().replace(/^\$/, "").toLowerCase();
   return /^[a-z0-9][a-z0-9_.-]{1,31}$/.test(candidate) ? candidate : "";
@@ -240,7 +267,16 @@ async function fetchWalletAssets(wallet: Wallet): Promise<AssetFetch> {
 
 function signerLabel(wallet: Wallet, keyHash: string) {
   const signer = wallet.signers.find((item) => item.keyHash.toLowerCase() === keyHash.toLowerCase());
-  return signer?.label || `${keyHash.slice(0, 10)}…`;
+  return signer?.label || shortHash(keyHash, 6);
+}
+
+function signerDisplay(wallet: Wallet, keyHash: string, connectedKeyHash?: string | null) {
+  const label = signerLabel(wallet, keyHash);
+  const isConnected = Boolean(connectedKeyHash && normalizeKeyHash(connectedKeyHash) === normalizeKeyHash(keyHash));
+  return {
+    label: isConnected ? `${label} · You` : label,
+    isConnected,
+  };
 }
 
 function mergeVkeyWitnesses(CSL: any, current: any, incoming: any) {
@@ -342,6 +378,7 @@ export default function WalletDetail() {
   const [nameInput, setNameInput] = useState("");
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
   const [signaturePackageInput, setSignaturePackageInput] = useState("");
+  const [relaySync, setRelaySync] = useState<RelaySyncState>({ status: "idle" });
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
@@ -384,34 +421,35 @@ export default function WalletDetail() {
     [txs, walletId],
   );
 
-  useEffect(() => {
-    const relayDrafts = txs.filter(
+  function relayDraftsForWallet(source: TxDraft[] = txs) {
+    return source.filter(
       (tx) =>
         tx.walletId === walletId &&
         (tx.relayRoom?.coordinatorToken || tx.relayRoom?.sharedInviteUrl || tx.relayRoom?.roomId) &&
         (tx.relayRoom.status || "open") === "open" &&
         !tx.txHash,
     ) as Array<TxDraft & { relayRoom: RelayRoomRef }>;
-    if (!relayDrafts.length) return;
+  }
 
-    let cancelled = false;
-    const sync = async () => {
+  async function refreshRelayRooms(source: TxDraft[] = txs) {
+    const relayDrafts = relayDraftsForWallet(source);
+    if (!relayDrafts.length) {
+      setRelaySync({ status: "idle" });
+      return false;
+    }
+
+    setRelaySync({ status: "syncing", at: nowIso() });
+    try {
       const updates = await Promise.all(
         relayDrafts.map(async (tx) => {
-          try {
-            const token = tx.relayRoom!.coordinatorToken || relayTokenFromInviteUrl(tx.relayRoom!.sharedInviteUrl || "");
-            const room = token ? await fetchRelayRoom(token) : await fetchRelayRoomView(tx.relayRoom!.roomId);
-            return { txId: tx.id, room };
-          } catch {
-            return null;
-          }
+          const token = tx.relayRoom!.coordinatorToken || relayTokenFromInviteUrl(tx.relayRoom!.sharedInviteUrl || "");
+          const room = token ? await fetchRelayRoom(token) : await fetchRelayRoomView(tx.relayRoom!.roomId);
+          return { txId: tx.id, room };
         }),
       );
-      if (cancelled) return;
-      const byId = new Map(updates.filter(Boolean).map((entry) => [entry!.txId, entry!.room]));
-      if (!byId.size) return;
+      const byId = new Map(updates.map((entry) => [entry.txId, entry.room]));
+      let changed = false;
       setTxs((current) => {
-        let changed = false;
         const next = current.map((tx) => {
           const room = byId.get(tx.id);
           if (!room) return tx;
@@ -421,14 +459,29 @@ export default function WalletDetail() {
           const txChanged =
             beforeSignatureIds !== afterSignatureIds ||
             tx.relayRoom?.status !== updated.relayRoom?.status ||
-            tx.txHash !== updated.txHash;
+            tx.txHash !== updated.txHash ||
+            tx.relayRoom?.lastSyncAt !== updated.relayRoom?.lastSyncAt;
           if (txChanged) changed = true;
           return txChanged ? updated : tx;
         });
-        if (!changed) return current;
-        writeTransactions(next);
-        return next;
+        if (changed) writeTransactions(next);
+        return changed ? next : current;
       });
+      setRelaySync({ status: "synced", at: nowIso() });
+      return changed;
+    } catch (error) {
+      setRelaySync({ status: "failed", at: nowIso(), error: error instanceof Error ? error.message : "Relay sync failed." });
+      throw error;
+    }
+  }
+
+  useEffect(() => {
+    if (!relayDraftsForWallet().length) return;
+
+    let cancelled = false;
+    const sync = async () => {
+      if (cancelled) return;
+      await refreshRelayRooms().catch(() => undefined);
     };
 
     void sync();
@@ -672,6 +725,13 @@ export default function WalletDetail() {
               txHash: String(body.txHash || ""),
               status: "succeeded" as const,
               failureReason: undefined,
+              relayRoom: item.relayRoom
+                ? {
+                    ...item.relayRoom,
+                    status: "submitted" as const,
+                    lastSyncAt: nowIso(),
+                  }
+                : item.relayRoom,
               updatedAt: nowIso(),
             }
           : item,
@@ -870,11 +930,46 @@ export default function WalletDetail() {
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-6">
           <AppWindow title="Transactions" contentClassName="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>
-              <p className="mt-1 text-sm text-zinc-400">
-                Copy one shared signer link, watch returned witnesses merge automatically, and keep the manual witness package fallback available.
-              </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>
+                <p className="mt-1 text-sm text-zinc-400">
+                  Copy one shared signer link, watch returned witnesses merge automatically, and keep the manual witness package fallback available.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <Badge
+                    variant={relaySync.status === "failed" ? "outline" : relaySync.status === "syncing" ? "secondary" : "outline"}
+                    className={cn(
+                      relaySync.status === "failed" ? "border-rose-400/30 bg-rose-400/10 text-rose-200" : "",
+                      relaySync.status === "synced" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" : "",
+                    )}
+                  >
+                    relay {relaySync.status}
+                  </Badge>
+                  <span>
+                    last synced{" "}
+                    {relativeTime(
+                      relaySync.at ||
+                        walletTxs
+                          .map((tx) => tx.relayRoom?.lastSyncAt)
+                          .filter((value): value is string => Boolean(value))
+                          .sort()
+                          .slice(-1)[0],
+                    )}
+                  </span>
+                  {relaySync.error ? <span className="text-rose-300">{relaySync.error}</span> : null}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="max-sm:w-full"
+                onClick={() => void refreshRelayRooms()}
+                disabled={relaySync.status === "syncing" || !relayDraftsForWallet().length}
+              >
+                <RefreshCw className={cn("size-4", relaySync.status === "syncing" ? "animate-spin" : "")} /> Refresh relay
+              </Button>
             </div>
               {walletTxs.length === 0 ? (
                 <div className="rounded-lg border border-white/7 bg-black/20 p-4 text-sm text-zinc-400">
@@ -912,12 +1007,16 @@ export default function WalletDetail() {
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
                             <span>{signed}/{tx.requiredSignatures} matched signatures</span>
                             <span>{pendingSignatureCount(tx)} still needed</span>
-                            {tx.relayRoom ? <span className="text-sky-300">relay {tx.relayRoom.status || "open"}</span> : null}
+                            {tx.relayRoom ? (
+                              <span className="text-sky-300">
+                                relay {tx.relayRoom.status || "open"} · synced {relativeTime(tx.relayRoom.lastSyncAt)}
+                              </span>
+                            ) : null}
                             {pendingSignatureCount(tx) === 0 && optional.length ? (
                               <span className="text-emerald-300">{optional.length} optional signer{optional.length === 1 ? "" : "s"} unsigned</span>
                             ) : null}
                             {unmatched ? <span className="text-amber-300">{unmatched} unmatched signature{unmatched === 1 ? "" : "s"}</span> : null}
-                            {tx.txHash ? <span className="text-emerald-300">tx {tx.txHash.slice(0, 16)}…</span> : null}
+                            {tx.txHash ? <span className="text-emerald-300">tx {shortHash(tx.txHash)}</span> : null}
                           </div>
                           </div>
                         </div>
@@ -950,7 +1049,10 @@ export default function WalletDetail() {
                           <div className="space-y-3">
                             {tx.signerKeyHashes.map((keyHash) => {
                               const hasSigned = hasMatchedSignature(tx, keyHash);
-                              const label = signerLabel(wallet, keyHash);
+                              const signer = signerDisplay(wallet, keyHash, connected?.keyHash);
+                              const signature = tx.signatures.find(
+                                (item) => normalizeKeyHash(item.matchedSignerKeyHash || item.signerKeyHash || "") === normalizeKeyHash(keyHash),
+                              );
                               return (
                                 <div
                                   key={keyHash}
@@ -960,10 +1062,20 @@ export default function WalletDetail() {
                                   )}
                                 >
                                   <div className="flex min-w-0 items-center gap-3">
-                                    <Avatar label={label} tone={hasSigned ? "success" : "muted"} />
+                                    <Avatar label={signer.label} tone={hasSigned ? "success" : "muted"} />
                                     <div className="min-w-0">
-                                      <div className="font-semibold text-zinc-50">{label}</div>
-                                      <div className="truncate font-mono text-xs text-zinc-500">{keyHash}</div>
+                                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                        <span className="font-semibold text-zinc-50">{signer.label}</span>
+                                        {signer.isConnected ? (
+                                          <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">connected</Badge>
+                                        ) : null}
+                                      </div>
+                                      <div className="truncate font-mono text-xs text-zinc-500" title={keyHash}>{shortHash(keyHash)}</div>
+                                      {signature ? (
+                                        <div className="mt-1 text-xs text-emerald-300">
+                                          signed {relativeTime(signature.signedAt)}{signature.walletName ? ` · ${signature.walletName}` : ""}
+                                        </div>
+                                      ) : null}
                                     </div>
                                   </div>
                                   <div
@@ -994,6 +1106,13 @@ export default function WalletDetail() {
                               </div>
                           </div>
 
+                          {phase === "ready" && providerStatus?.services.submit ? (
+                            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                              <div className="font-semibold">Ready to submit</div>
+                              <div className="mt-1">The required threshold is met. Review the recipient and assets, then submit the signed transaction.</div>
+                            </div>
+                          ) : null}
+
                           {unmatched ? (
                             <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
                               <span>
@@ -1011,6 +1130,24 @@ export default function WalletDetail() {
                             </div>
                           ) : null}
 
+                          {tx.txHash ? (
+                            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                              <div className="font-semibold">Transaction submitted</div>
+                              <div className="mt-1 break-all font-mono text-xs text-emerald-200">{tx.txHash}</div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <Button size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(tx.txHash || "")}>Copy tx hash</Button>
+                                <a
+                                  href={explorerTxUrl(tx.network, tx.txHash)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex h-8 items-center justify-center rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+                                >
+                                  Open explorer
+                                </a>
+                              </div>
+                            </div>
+                          ) : null}
+
                           {!canSign ? (
                             <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
                               Missing unsigned tx CBOR — rebuild or recreate the transaction before asking signers to approve it.
@@ -1019,21 +1156,24 @@ export default function WalletDetail() {
                         </div>
 
                         <div className="min-w-0 space-y-2">
-                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copyInvite(tx)}>
+                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copyInvite(tx)} disabled={phase === "submitted"}>
                             <Copy className="size-4" /> {tx.relayRoom ? "Copy signer link" : "Create signer link"}
                           </Button>
-                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign}>
+                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign || phase === "submitted"}>
                             <ShieldCheck className="size-4" /> Sign with connected wallet
                           </Button>
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
                             <Copy className="size-4" /> Copy witness package fallback
                           </Button>
                           <Button
-                            className="h-auto min-h-10 w-full whitespace-normal px-3 py-2"
+                            className={cn(
+                              "h-auto min-h-10 w-full whitespace-normal px-3 py-2",
+                              phase === "ready" ? "bg-emerald-300 text-emerald-950 hover:bg-emerald-200" : "",
+                            )}
                             onClick={() => void submitTransaction(tx)}
                             disabled={phase !== "ready" || !providerStatus?.services.submit}
                           >
-                            <ShieldCheck className="size-4" /> Submit signed transaction
+                            <ShieldCheck className="size-4" /> {phase === "submitted" ? "Submitted" : "Submit signed transaction"}
                           </Button>
                         </div>
                       </div>

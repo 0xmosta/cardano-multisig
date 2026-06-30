@@ -13,6 +13,13 @@ async function relayStore() {
   return import("../lib/server/relay-room-store");
 }
 
+function requestOrigin(request: Request) {
+  const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") || new URL(request.url).protocol.replace(/:$/, "");
+  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+  return new URL(request.url).origin;
+}
+
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -84,7 +91,7 @@ async function handleCreate(request: Request, raw: Record<string, unknown>) {
   await configuredNetworkGuard(payload.network);
   CSL.Transaction.from_hex(payload.tx.unsignedTxCbor);
   const created = await createRelayRoom(payload);
-  const origin = new URL(request.url).origin;
+  const origin = requestOrigin(request);
   return Response.json({
     ok: true,
     roomId: created.room.id,

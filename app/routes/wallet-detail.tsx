@@ -34,7 +34,6 @@ import {
   TX_STORAGE_KEY as TX_KEY,
   createSignaturePackage,
   decodeInvite,
-  encodeInvite,
   expectedNetworkId,
   formatTargetNetwork,
   hasMatchedSignature,
@@ -326,10 +325,6 @@ async function buildSignedTxCbor(wallet: Wallet, tx: TxDraft) {
   return CSL.Transaction.new(unsigned.body(), witnessSet, unsigned.auxiliary_data()).to_hex();
 }
 
-function inviteLink(tx: TxDraft) {
-  return `${window.location.origin}/#invite=${encodeInvite(tx)}`;
-}
-
 export default function WalletDetail() {
   const { walletId } = useParams();
   const [searchParams] = useSearchParams();
@@ -575,11 +570,10 @@ export default function WalletDetail() {
         `Signer relay invite copied for ${invite.label || `${invite.keyHash.slice(0, 12)}…`}. Witnesses return automatically after signing.`,
       );
     } catch (error) {
-      await navigator.clipboard.writeText(inviteLink(tx));
       setSignStatus(
         error instanceof Error
-          ? `${error.message} Fell back to the legacy manual invite link.`
-          : "Relay room unavailable. Copied the legacy manual invite link instead.",
+          ? `${error.message} Short relay link was not copied.`
+          : "Relay room unavailable. Short relay link was not copied.",
       );
     }
   }

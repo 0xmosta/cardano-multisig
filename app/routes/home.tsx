@@ -47,7 +47,6 @@ import {
   createId,
   createSignaturePackage,
   decodeInvite,
-  encodeInvite,
   expectedNetworkId,
   formatTargetNetwork,
   hasMatchedSignature,
@@ -69,6 +68,7 @@ import {
   requiredSignatures,
 } from "../lib/multisig";
 import {
+  type RelayRoomCreateResponse,
   type RelayRoomSessionResponse,
   type RelayRoomSignerView,
   applyRelayRoomToDraft,
@@ -515,7 +515,7 @@ export default function Home() {
     setDrafts(loadedDrafts);
 
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-    const relay = hashParams.get("relay");
+    const relay = hashParams.get("r") || hashParams.get("relay");
     const invite = hashParams.get("invite");
     if (relay) {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
@@ -825,10 +825,70 @@ export default function Home() {
     window.setTimeout(() => setCopied(false), 1600);
   }
 
+  function relayAssetLines(draft: TxDraft): AssetLine[] {
+    return (draft.assets?.length ? draft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: draft.lovelace || "0", decimals: 6 }]).map((asset, index) => ({
+      id: asset.id || `asset-${index}`,
+      unit: asset.unit,
+      label: asset.label || (asset.unit === "lovelace" ? "ADA" : asset.unit.slice(0, 16)),
+      quantity: asset.quantity,
+      decimals: asset.decimals,
+    }));
+  }
+
+  async function ensureHomeRelayRoom(draft: TxDraft) {
+    if (draft.relayRoom?.coordinatorToken && draft.relayRoom.signerInvites?.length) return draft.relayRoom;
+    if (!draft.unsignedTxCbor.trim()) throw new Error("This transaction has no unsigned tx CBOR yet, so a short relay link cannot be created.");
+    const wallet = wallets.find((item) => item.id === draft.walletId || item.name === draft.walletName);
+    const response = await fetch("/api/cardano/relay-room", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        intent: "create",
+        network: draft.network,
+        draft: {
+          draftId: draft.id,
+          walletId: draft.walletId,
+          walletName: draft.walletName,
+          title: draft.title,
+          note: draft.note,
+          recipient: draft.recipient,
+          lovelace: draft.lovelace,
+          assets: relayAssetLines(draft),
+          unsignedTxCbor: draft.unsignedTxCbor,
+          requiredSignatures: draft.requiredSignatures,
+          signerKeyHashes: draft.signerKeyHashes,
+        },
+        signers: draft.signerKeyHashes.map((keyHash) => ({
+          keyHash,
+          label: wallet?.signers.find((signer) => signer.keyHash.toLowerCase() === keyHash.toLowerCase())?.label,
+        })),
+      }),
+    });
+    const body = (await response.json()) as RelayRoomCreateResponse | { ok: false; error?: string };
+    if (!response.ok || !body.ok) throw new Error(("error" in body && body.error) || "Could not create the short relay invite.");
+    const relayRoom: RelayRoomRef = {
+      roomId: body.roomId,
+      coordinatorToken: body.coordinatorToken,
+      signerInvites: body.signerInvites,
+      createdAt: nowIso(),
+      status: "open",
+    };
+    setDrafts((current) => current.map((item) => (item.id === draft.id ? { ...item, relayRoom, updatedAt: nowIso() } : item)));
+    return relayRoom;
+  }
+
   async function copyInvite(draft: TxDraft) {
-    const link = `${window.location.origin}/#invite=${encodeInvite(draft)}`;
-    await navigator.clipboard.writeText(link);
-    setStatus("Invite link copied. Share it privately with the intended signer only.");
+    try {
+      const relayRoom = await ensureHomeRelayRoom(draft);
+      const missing = requiredPendingSignerKeyHashes(draft);
+      const nextKeyHash = missing[0] || optionalSignerKeyHashes(draft)[0] || draft.signerKeyHashes[0];
+      const invite = relayRoom.signerInvites?.find((item) => item.keyHash.toLowerCase() === nextKeyHash.toLowerCase());
+      if (!invite) throw new Error("Short relay room exists, but the next signer invite could not be found.");
+      await navigator.clipboard.writeText(invite.inviteUrl);
+      setStatus(`Short signer link copied for ${invite.label || `${invite.keyHash.slice(0, 12)}…`}. The signer opens it, connects wallet, and signs; no copy/paste witness package needed.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not create the short signer link.");
+    }
   }
 
   async function signActiveDraft() {

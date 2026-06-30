@@ -4,7 +4,7 @@ Network scope: preprod first. Mainnet deploy/submit remains off unless explicitl
 
 ## Current repo baseline
 
-- Signer invites are local fragment payloads today: `#invite=${encodeInvite(draft)}` in `app/routes/home.tsx:751-755` and `app/routes/wallet-detail.tsx:278-280`.
+- Legacy signer invites were local fragment payloads: `#invite=${encodeInvite(draft)}`. Current signer invites must use server relay capability tokens via short `#r=<token>` links.
 - Signers currently sign locally, then must copy a witness package back manually in `app/routes/home.tsx:757-789` and `app/routes/wallet-detail.tsx:328-385`.
 - Coordinator progress is local-only and manual import today in `app/routes/wallet-detail.tsx:451-478`.
 - Threshold math already exists and must stay authoritative: `signatureCount`, `pendingSignatureCount`, `requiredPendingSignerKeyHashes`, `optionalSignerKeyHashes`, `removeUnmatchedSignatures` in `app/lib/multisig.ts:192-313`.
@@ -111,7 +111,8 @@ Use capability tokens with raw secret only in the URL fragment.
 - token generation: `crypto.randomBytes(32).toString("base64url")`
 - persistence: store only `sha256(token)` server-side
 - URLs:
-  - signer: `/#relay=<signerToken>`
+  - signer: `/#r=<signerToken>` (short production format)
+  - legacy accepted: `/#relay=<signerToken>`
   - coordinator never receives authority from URL query; the local app stores its token after room creation and POSTs it intentionally
 
 Do not embed unsigned tx CBOR or coordinator authority in the link itself for the relay path.
@@ -162,7 +163,7 @@ Response:
   "roomId": "...",
   "coordinatorToken": "...",
   "signerInvites": [
-    { "keyHash": "...", "label": "Mosta", "inviteUrl": "https://cardano-preprod.0xm.sh/#relay=..." }
+    { "keyHash": "...", "label": "Mosta", "inviteUrl": "https://cardano-preprod.0xm.sh/#r=..." }
   ],
   "expiresAt": "..."
 }
@@ -292,8 +293,8 @@ This part must stay stricter than the current local-only merge in `app/lib/multi
 8. Manual witness textarea moves behind an `Advanced fallback` disclosure, not the primary card.
 
 ### Signer
-1. Open `/#relay=<token>`.
-2. `home.tsx` checks `relay` fragment before legacy `invite`.
+1. Open `/#r=<token>`.
+2. `home.tsx` checks `r`/`relay` fragments before legacy `invite`.
 3. Client POSTs token to `/api/cardano/relay-room/session`.
 4. UI shows tx title, wallet name, recipient, assets, note, required signatures, and network warning.
 5. Signer connects Lace/Eternl/VESPR.
@@ -307,9 +308,9 @@ This part must stay stricter than the current local-only merge in `app/lib/multi
 
 - Keep current `#invite=` decoding path unchanged for old links.
 - Keep `createSignaturePackage()` / `parseSignaturePackage()` manual import/export unchanged as fallback.
-- New relay links use `#relay=` only; do not overload the old payload format.
+- New relay links use `#r=` only; keep `#relay=` decoding for previously generated relay links.
 - If relay fetch fails (expired/not found), show a clear error plus manual fallback instructions.
-- If coordinator cannot create room (server data dir unavailable, validation error, network mismatch), fall back to existing manual invite copy instead of blocking signing entirely.
+- If coordinator cannot create room (server data dir unavailable, validation error, network mismatch), show a clear error and do not silently copy the huge legacy invite. Manual witness packages remain available behind the fallback UI.
 
 ## Validation / guardrails
 

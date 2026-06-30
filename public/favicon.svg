@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Cardano multisig">
+  <rect width="64" height="64" rx="14" fill="#0b0d0f"/>
+  <circle cx="18" cy="20" r="2.2" fill="#42f5b0" opacity=".9"/>
+  <circle cx="46" cy="20" r="2.2" fill="#42f5b0" opacity=".9"/>
+  <circle cx="16" cy="44" r="2.2" fill="#42f5b0" opacity=".55"/>
+  <circle cx="48" cy="44" r="2.2" fill="#42f5b0" opacity=".55"/>
+  <circle cx="32" cy="12" r="2" fill="#c7d2fe" opacity=".65"/>
+  <circle cx="32" cy="52" r="2" fill="#c7d2fe" opacity=".65"/>
+  <path d="M32 16 46 22v10c0 9.4-5.8 15.5-14 19-8.2-3.5-14-9.6-14-19V22l14-6Z" fill="#111827" stroke="#42f5b0" stroke-width="4" stroke-linejoin="round"/>
+  <path d="m25.5 33.5 4.5 4.4 9-10" fill="none" stroke="#f8fafc" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -166,7 +166,7 @@ async function handleCreate(request: Request, raw: Record<string, unknown>) {
 }
 
 async function handleSession(raw: Record<string, unknown>) {
-  const { coordinatorRoomView, replaceRelayRoomFile, resolveRelayTokenSession, sharedSignerRoomView, signerRoomView } = await relayStore();
+  const { coordinatorRoomView, replaceRelayRoomFile, resolveRelayTokenSession, sharedSignerRoomView, signerRoomView, syncEquivalentRelayRoomWitnesses } = await relayStore();
   const payload = assertRelaySessionPayload(raw);
   const session = await resolveRelayTokenSession(payload.token);
   if (!session) throw new Error("Relay room not found or invite has expired.");
@@ -196,21 +196,22 @@ async function handleSession(raw: Record<string, unknown>) {
       ),
     };
   });
+  const synced = await syncEquivalentRelayRoomWitnesses(current);
 
   if (session.role === "coordinator") {
-    return Response.json({ ok: true, role: "coordinator", room: coordinatorRoomView(current) });
+    return Response.json({ ok: true, role: "coordinator", room: coordinatorRoomView(synced) });
   }
   if (session.role === "shared-signer") {
-    return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(current) });
+    return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(synced) });
   }
 
-  const signer = current.signers.find((item) => item.keyHash === session.signer.keyHash);
+  const signer = synced.signers.find((item) => item.keyHash === session.signer.keyHash);
   if (!signer) throw new Error("Relay signer is no longer available for this room.");
-  return Response.json({ ok: true, role: "signer", room: signerRoomView(current, signer) });
+  return Response.json({ ok: true, role: "signer", room: signerRoomView(synced, signer) });
 }
 
 async function handleSign(raw: Record<string, unknown>) {
-  const { relayProgress, replaceRelayRoomFile, resolveRelayTokenSession } = await relayStore();
+  const { relayProgress, replaceRelayRoomFile, resolveRelayTokenSession, syncEquivalentRelayRoomWitnesses } = await relayStore();
   const payload = assertRelaySignPayload(raw);
   const session = await resolveRelayTokenSession(payload.token);
   if (!session || (session.role !== "signer" && session.role !== "shared-signer")) throw new Error("Relay signer room not found or invite has expired.");
@@ -262,13 +263,14 @@ async function handleSign(raw: Record<string, unknown>) {
       ],
     };
   });
+  const synced = await syncEquivalentRelayRoomWitnesses(room);
 
   return Response.json({
     ok: true,
     delivered: true,
     matchStatus: matchedSignerKeyHash ? "matched" : "unmatched",
     matchedSignerKeyHash,
-    thresholdReached: relayProgress(room).matchedCount >= Math.max(room.tx.requiredSignatures || 1, 1),
+    thresholdReached: relayProgress(synced).matchedCount >= Math.max(synced.tx.requiredSignatures || 1, 1),
   });
 }
 
@@ -295,10 +297,11 @@ async function handleSubmit(raw: Record<string, unknown>) {
 async function handleView(raw: Record<string, unknown>) {
   const roomId = String(raw.roomId || "").trim();
   if (!roomId) throw new Error("roomId is required.");
-  const { readRelayRoom, sharedSignerRoomView } = await relayStore();
+  const { readRelayRoom, sharedSignerRoomView, syncEquivalentRelayRoomWitnesses } = await relayStore();
   const room = await readRelayRoom(roomId);
   await configuredNetworkGuard(room.network);
-  return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(room) });
+  const synced = await syncEquivalentRelayRoomWitnesses(room);
+  return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(synced) });
 }
 
 export async function action({ request }: { request: Request }) {

@@ -283,6 +283,59 @@ export async function writeRelayRoom(room: RelayRoomRecord) {
   await atomicWriteJson(roomPath(room.id), room);
 }
 
+function equivalentRoomKey(room: RelayRoomRecord) {
+  const signerSet = [...room.tx.signerKeyHashes].sort().join(",");
+  return `${room.network}:${room.tx.draftId}:${room.tx.unsignedTxCbor}:${signerSet}`;
+}
+
+function witnessMergeKey(witness: RelayRoomWitnessRecord) {
+  if (witness.matchStatus === "matched" && witness.matchedSignerKeyHash) {
+    return `matched:${normalizeKeyHash(witness.matchedSignerKeyHash)}`;
+  }
+  return `cbor:${witness.witnessCbor}`;
+}
+
+function isNewerWitness(incoming: RelayRoomWitnessRecord, current: RelayRoomWitnessRecord) {
+  return Date.parse(incoming.receivedAt || incoming.signedAt) >= Date.parse(current.receivedAt || current.signedAt);
+}
+
+function mergeRoomWitnesses(rooms: RelayRoomRecord[]) {
+  const byKey = new Map<string, RelayRoomWitnessRecord>();
+  for (const room of rooms) {
+    for (const witness of room.witnesses) {
+      const key = witnessMergeKey(witness);
+      const current = byKey.get(key);
+      if (!current || isNewerWitness(witness, current)) {
+        byKey.set(key, witness);
+      }
+    }
+  }
+  return [...byKey.values()].sort((left, right) => Date.parse(left.receivedAt) - Date.parse(right.receivedAt));
+}
+
+function witnessListKey(witnesses: RelayRoomWitnessRecord[]) {
+  return witnesses
+    .map((witness) => `${witnessMergeKey(witness)}:${witness.id}:${witness.receivedAt}`)
+    .sort()
+    .join("|");
+}
+
+function applyDeliveredAtFromWitnesses(room: RelayRoomRecord, witnesses: RelayRoomWitnessRecord[]) {
+  const deliveredAtByKeyHash = new Map<string, string>();
+  for (const witness of witnesses) {
+    if (witness.matchStatus !== "matched" || !witness.matchedSignerKeyHash) continue;
+    const keyHash = normalizeKeyHash(witness.matchedSignerKeyHash);
+    const current = deliveredAtByKeyHash.get(keyHash);
+    if (!current || Date.parse(witness.receivedAt) > Date.parse(current)) {
+      deliveredAtByKeyHash.set(keyHash, witness.receivedAt);
+    }
+  }
+  return room.signers.map((signer) => {
+    const deliveredAt = deliveredAtByKeyHash.get(signer.keyHash);
+    return deliveredAt ? { ...signer, deliveredAt } : signer;
+  });
+}
+
 async function relayRoomFiles() {
   await ensureStore();
   const entries = await readdir(roomsDir(), { withFileTypes: true });
@@ -474,6 +527,35 @@ export async function replaceRelayRoomFile(room: RelayRoomRecord, updater: (curr
     await writeRelayRoom(next);
     return next;
   });
+}
+
+export async function syncEquivalentRelayRoomWitnesses(sourceRoom: RelayRoomRecord) {
+  const rooms = (await listRelayRooms()).filter((room) => equivalentRoomKey(room) === equivalentRoomKey(sourceRoom));
+  if (rooms.length <= 1) return sourceRoom;
+
+  const witnesses = mergeRoomWitnesses(rooms);
+  const witnessesKey = witnessListKey(witnesses);
+  let syncedSource = sourceRoom;
+
+  for (const room of rooms) {
+    const currentKey = witnessListKey(room.witnesses);
+    const nextSigners = applyDeliveredAtFromWitnesses(room, witnesses);
+    const signersChanged = JSON.stringify(nextSigners) !== JSON.stringify(room.signers);
+    if (currentKey === witnessesKey && !signersChanged) {
+      if (room.id === sourceRoom.id) syncedSource = room;
+      continue;
+    }
+
+    const updated = await replaceRelayRoomFile(room, (current) => ({
+      ...current,
+      updatedAt: nowIso(),
+      signers: applyDeliveredAtFromWitnesses(current, witnesses),
+      witnesses,
+    }));
+    if (updated.id === sourceRoom.id) syncedSource = updated;
+  }
+
+  return syncedSource;
 }
 
 export async function removeRelayRoom(roomIdValue: string) {

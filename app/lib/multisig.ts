@@ -52,6 +52,7 @@ export type RelayRoomRef = {
   createdAt: string;
   lastSyncAt?: string;
   status?: "open" | "submitted" | "cancelled" | "expired";
+  sharedInviteUrl?: string;
   signerInvites?: RelayRoomInviteRef[];
 };
 

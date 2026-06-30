@@ -155,6 +155,7 @@ async function handleCreate(request: Request, raw: Record<string, unknown>) {
     ok: true,
     roomId: created.room.id,
     coordinatorToken: created.coordinatorToken,
+    sharedInviteUrl: relayInviteUrl(origin, created.sharedSignerToken),
     signerInvites: created.signerTokens.map((signer) => ({
       keyHash: signer.keyHash,
       label: signer.label,
@@ -165,7 +166,7 @@ async function handleCreate(request: Request, raw: Record<string, unknown>) {
 }
 
 async function handleSession(raw: Record<string, unknown>) {
-  const { coordinatorRoomView, replaceRelayRoomFile, resolveRelayTokenSession, signerRoomView } = await relayStore();
+  const { coordinatorRoomView, replaceRelayRoomFile, resolveRelayTokenSession, sharedSignerRoomView, signerRoomView } = await relayStore();
   const payload = assertRelaySessionPayload(raw);
   const session = await resolveRelayTokenSession(payload.token);
   if (!session) throw new Error("Relay room not found or invite has expired.");
@@ -180,6 +181,13 @@ async function handleSession(raw: Record<string, unknown>) {
         coordinator: { ...room.coordinator, lastSeenAt: seenAt },
       };
     }
+    if (session.role === "shared-signer") {
+      return {
+        ...room,
+        updatedAt: seenAt,
+        sharedSigner: room.sharedSigner ? { ...room.sharedSigner, lastSeenAt: seenAt } : room.sharedSigner,
+      };
+    }
     return {
       ...room,
       updatedAt: seenAt,
@@ -192,6 +200,9 @@ async function handleSession(raw: Record<string, unknown>) {
   if (session.role === "coordinator") {
     return Response.json({ ok: true, role: "coordinator", room: coordinatorRoomView(current) });
   }
+  if (session.role === "shared-signer") {
+    return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(current) });
+  }
 
   const signer = current.signers.find((item) => item.keyHash === session.signer.keyHash);
   if (!signer) throw new Error("Relay signer is no longer available for this room.");
@@ -202,12 +213,15 @@ async function handleSign(raw: Record<string, unknown>) {
   const { relayProgress, replaceRelayRoomFile, resolveRelayTokenSession } = await relayStore();
   const payload = assertRelaySignPayload(raw);
   const session = await resolveRelayTokenSession(payload.token);
-  if (!session || session.role !== "signer") throw new Error("Relay signer room not found or invite has expired.");
+  if (!session || (session.role !== "signer" && session.role !== "shared-signer")) throw new Error("Relay signer room not found or invite has expired.");
   await configuredNetworkGuard(session.room.network);
-  const witnessKeyHashes = verifiedWitnessKeyHashes(session.room.tx.unsignedTxCbor, payload.witnessCbor);
-  const matchedSignerKeyHash = witnessKeyHashes.find((keyHash) => keyHash === session.signer.keyHash);
+  const witnessKeyHashes = verifiedWitnessKeyHashes(session.room.tx.unsignedTxCbor, payload.witnessCbor).map((keyHash) => normalizeKeyHash(keyHash));
+  const matchedSignerKeyHash =
+    session.role === "signer"
+      ? witnessKeyHashes.find((keyHash) => keyHash === session.signer.keyHash)
+      : witnessKeyHashes.find((keyHash) => session.room.tx.signerKeyHashes.includes(keyHash));
   if (!matchedSignerKeyHash) {
-    throw new Error("Witness is valid for this transaction, but it does not match the signer invite token.");
+    throw new Error("Witness is valid for this transaction, but it does not match any signer in this multisig policy.");
   }
   const deliveredAt = new Date().toISOString();
 
@@ -218,7 +232,7 @@ async function handleSign(raw: Record<string, unknown>) {
     const nextWitness = {
       id: `witness_${Math.random().toString(36).slice(2, 10)}`,
       source: "relay" as const,
-      signerKeyHashClaim: session.signer.keyHash,
+      signerKeyHashClaim: session.role === "signer" ? session.signer.keyHash : matchedSignerKeyHash,
       matchedSignerKeyHash,
       witnessCbor: payload.witnessCbor,
       walletName: payload.walletName,
@@ -231,7 +245,7 @@ async function handleSign(raw: Record<string, unknown>) {
       ...current,
       updatedAt: deliveredAt,
       signers: current.signers.map((signer) =>
-        signer.keyHash === session.signer.keyHash
+        signer.keyHash === matchedSignerKeyHash
           ? {
               ...signer,
               lastSeenAt: deliveredAt,
@@ -242,7 +256,7 @@ async function handleSign(raw: Record<string, unknown>) {
       witnesses: [
         ...current.witnesses.filter(
           (witness) =>
-            witness.source !== "relay" || normalizeKeyHash(witness.signerKeyHashClaim || "") !== session.signer.keyHash,
+            witness.source !== "relay" || normalizeKeyHash(witness.matchedSignerKeyHash || witness.signerKeyHashClaim || "") !== matchedSignerKeyHash,
         ),
         nextWitness,
       ],

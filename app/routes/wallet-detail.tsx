@@ -468,14 +468,14 @@ export default function WalletDetail() {
   }
 
   async function syncExistingWitnessesToRelayRoom(tx: TxDraft, relayRoom: RelayRoomRef) {
-    if (!relayRoom.signerInvites?.length || !tx.signatures?.length) return;
+    if (!tx.signatures?.length || (!relayRoom.sharedInviteUrl && !relayRoom.signerInvites?.length)) return;
     await Promise.all(
       tx.signatures
         .filter((signature) => signature.witnessCbor?.trim())
         .map(async (signature) => {
           const keyHash = normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || "");
           const invite = relayRoom.signerInvites?.find((item) => normalizeKeyHash(item.keyHash) === keyHash);
-          const token = invite ? relayTokenFromInviteUrl(invite.inviteUrl) : "";
+          const token = relayRoom.sharedInviteUrl ? relayTokenFromInviteUrl(relayRoom.sharedInviteUrl) : invite ? relayTokenFromInviteUrl(invite.inviteUrl) : "";
           if (!token) return;
           await fetch("/api/cardano/relay-room", {
             method: "POST",
@@ -495,7 +495,7 @@ export default function WalletDetail() {
 
   async function ensureRelayRoom(tx: TxDraft) {
     if (!wallet) throw new Error("Wallet not loaded in this browser.");
-    if (tx.relayRoom?.coordinatorToken && tx.relayRoom.signerInvites?.length) {
+    if (tx.relayRoom?.coordinatorToken && tx.relayRoom.signerInvites?.length && tx.relayRoom.sharedInviteUrl) {
       await syncExistingWitnessesToRelayRoom(tx, tx.relayRoom);
       return tx.relayRoom;
     }
@@ -535,6 +535,7 @@ export default function WalletDetail() {
     const relayRoom: RelayRoomRef = {
       roomId: body.roomId,
       coordinatorToken: body.coordinatorToken,
+      sharedInviteUrl: body.sharedInviteUrl,
       createdAt: nowIso(),
       signerInvites: body.signerInvites,
       status: "open",
@@ -600,14 +601,9 @@ export default function WalletDetail() {
   async function copyInvite(tx: TxDraft) {
     try {
       const relayRoom = await ensureRelayRoom(tx);
-      const missing = requiredPendingSignerKeyHashes(tx);
-      const nextKeyHash = missing[0] || optionalSignerKeyHashes(tx)[0] || tx.signerKeyHashes[0];
-      const invite = relayRoom.signerInvites?.find((item) => item.keyHash.toLowerCase() === nextKeyHash.toLowerCase());
-      if (!invite) throw new Error("Relay room exists, but the next signer invite could not be found.");
-      await navigator.clipboard.writeText(invite.inviteUrl);
-      setSignStatus(
-        `Signer relay invite copied for ${invite.label || `${invite.keyHash.slice(0, 12)}…`}. Witnesses return automatically after signing.`,
-      );
+      if (!relayRoom.sharedInviteUrl) throw new Error("Relay room exists, but the shared signer link could not be found.");
+      await navigator.clipboard.writeText(relayRoom.sharedInviteUrl);
+      setSignStatus("One signer link copied. Send this same link to every signer; witnesses return automatically after signing.");
     } catch (error) {
       setSignStatus(
         error instanceof Error
@@ -861,7 +857,7 @@ export default function WalletDetail() {
             <div>
               <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>
               <p className="mt-1 text-sm text-zinc-400">
-                Copy relay signer invites, watch returned witnesses merge automatically, and keep the manual witness package fallback available.
+                Copy one shared signer link, watch returned witnesses merge automatically, and keep the manual witness package fallback available.
               </p>
             </div>
               {walletTxs.length === 0 ? (
@@ -974,7 +970,7 @@ export default function WalletDetail() {
                                   ? "Submission already recorded for this transaction."
                                   : missing.length
                                     ? tx.relayRoom
-                                      ? "Copy the relay invite for a missing signer and send it privately. Returned witnesses merge into this room automatically; the manual package import remains available as a fallback."
+                                      ? "Copy one shared signer link and send it to every signer. Returned witnesses merge into this room automatically; the manual package import remains available as a fallback."
                                       : "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
                                     : providerStatus?.services.submit
                                       ? `All required witnesses are present. Submit to ${providerStatus.network} from this wallet page.`
@@ -1008,7 +1004,7 @@ export default function WalletDetail() {
 
                         <div className="min-w-0 space-y-2">
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copyInvite(tx)}>
-                            <Copy className="size-4" /> {tx.relayRoom ? "Copy next relay invite" : "Copy signer invite"}
+                            <Copy className="size-4" /> {tx.relayRoom ? "Copy signer link" : "Create signer link"}
                           </Button>
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign}>
                             <ShieldCheck className="size-4" /> Sign with connected wallet

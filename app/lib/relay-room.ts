@@ -98,6 +98,7 @@ export type RelayRoomCreateResponse = {
   ok: true;
   roomId: string;
   coordinatorToken: string;
+  sharedInviteUrl: string;
   signerInvites: RelayRoomSignerInvite[];
   expiresAt: string;
 };

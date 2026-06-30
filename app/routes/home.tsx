@@ -307,6 +307,7 @@ function migrateDraft(raw: unknown): TxDraft | null {
         roomId: typeof raw.relayRoom.roomId === "string" ? raw.relayRoom.roomId : "",
         createdAt: typeof raw.relayRoom.createdAt === "string" ? raw.relayRoom.createdAt : nowIso(),
         lastSyncAt: typeof raw.relayRoom.lastSyncAt === "string" ? raw.relayRoom.lastSyncAt : undefined,
+        sharedInviteUrl: typeof raw.relayRoom.sharedInviteUrl === "string" ? raw.relayRoom.sharedInviteUrl : undefined,
         status:
           raw.relayRoom.status === "submitted" ||
           raw.relayRoom.status === "cancelled" ||
@@ -354,6 +355,7 @@ function saveDrafts(drafts: TxDraft[]) {
             roomId: draft.relayRoom.roomId,
             createdAt: draft.relayRoom.createdAt,
             lastSyncAt: draft.relayRoom.lastSyncAt,
+            sharedInviteUrl: draft.relayRoom.sharedInviteUrl,
             status: draft.relayRoom.status,
           } as RelayRoomRef,
         }
@@ -849,14 +851,14 @@ export default function Home() {
   }
 
   async function syncExistingWitnessesToRelayRoom(draft: TxDraft, relayRoom: RelayRoomRef) {
-    if (!relayRoom.signerInvites?.length || !draft.signatures?.length) return;
+    if (!draft.signatures?.length || (!relayRoom.sharedInviteUrl && !relayRoom.signerInvites?.length)) return;
     await Promise.all(
       draft.signatures
         .filter((signature) => signature.witnessCbor?.trim())
         .map(async (signature) => {
           const keyHash = normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || "");
           const invite = relayRoom.signerInvites?.find((item) => normalizeKeyHash(item.keyHash) === keyHash);
-          const token = invite ? relayTokenFromInviteUrl(invite.inviteUrl) : "";
+          const token = relayRoom.sharedInviteUrl ? relayTokenFromInviteUrl(relayRoom.sharedInviteUrl) : invite ? relayTokenFromInviteUrl(invite.inviteUrl) : "";
           if (!token) return;
           await fetch("/api/cardano/relay-room", {
             method: "POST",
@@ -875,7 +877,7 @@ export default function Home() {
   }
 
   async function ensureHomeRelayRoom(draft: TxDraft) {
-    if (draft.relayRoom?.coordinatorToken && draft.relayRoom.signerInvites?.length) {
+    if (draft.relayRoom?.coordinatorToken && draft.relayRoom.signerInvites?.length && draft.relayRoom.sharedInviteUrl) {
       await syncExistingWitnessesToRelayRoom(draft, draft.relayRoom);
       return draft.relayRoom;
     }
@@ -912,6 +914,7 @@ export default function Home() {
     const relayRoom: RelayRoomRef = {
       roomId: body.roomId,
       coordinatorToken: body.coordinatorToken,
+      sharedInviteUrl: body.sharedInviteUrl,
       signerInvites: body.signerInvites,
       createdAt: nowIso(),
       status: "open",
@@ -925,12 +928,9 @@ export default function Home() {
     setStatus("Preparing short signer link…");
     try {
       const relayRoom = await ensureHomeRelayRoom(draft);
-      const missing = requiredPendingSignerKeyHashes(draft);
-      const nextKeyHash = missing[0] || optionalSignerKeyHashes(draft)[0] || draft.signerKeyHashes[0];
-      const invite = relayRoom.signerInvites?.find((item) => item.keyHash.toLowerCase() === nextKeyHash.toLowerCase());
-      if (!invite) throw new Error("Short relay room exists, but the next signer invite could not be found.");
-      await navigator.clipboard.writeText(invite.inviteUrl);
-      setStatus(`Short signer link copied for ${invite.label || `${invite.keyHash.slice(0, 12)}…`}. The signer opens it, connects wallet, and signs; no copy/paste witness package needed.`);
+      if (!relayRoom.sharedInviteUrl) throw new Error("Relay room exists, but the shared signer link could not be found.");
+      await navigator.clipboard.writeText(relayRoom.sharedInviteUrl);
+      setStatus("One signer link copied. Send this same link to every signer; each person opens it, connects their wallet, and signs.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not create the short signer link.");
     } finally {

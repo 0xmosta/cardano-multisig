@@ -26,6 +26,11 @@ type RelayRoomCoordinator = {
   lastSeenAt?: string;
 };
 
+type RelayRoomSharedSigner = {
+  tokenHash: string;
+  lastSeenAt?: string;
+};
+
 type RelayRoomStoredSigner = RelayRoomSignerRecord & {
   tokenHash: string;
 };
@@ -39,6 +44,7 @@ export type RelayRoomRecord = {
   expiresAt: string;
   tx: RelayRoomTx;
   coordinator: RelayRoomCoordinator;
+  sharedSigner?: RelayRoomSharedSigner;
   signers: RelayRoomStoredSigner[];
   witnesses: RelayRoomWitnessRecord[];
   submission?: RelayRoomSubmission;
@@ -46,6 +52,7 @@ export type RelayRoomRecord = {
 
 export type RelayRoomTokenSession =
   | { role: "coordinator"; room: RelayRoomRecord }
+  | { role: "shared-signer"; room: RelayRoomRecord }
   | { role: "signer"; room: RelayRoomRecord; signer: RelayRoomStoredSigner };
 
 function nowIso() {
@@ -219,6 +226,12 @@ function assertRelayRoomRecord(raw: unknown): RelayRoomRecord {
       tokenHash: assertString(raw.coordinator.tokenHash, "coordinator.tokenHash"),
       lastSeenAt: assertOptionalString(raw.coordinator.lastSeenAt),
     },
+    sharedSigner: isRecord(raw.sharedSigner)
+      ? {
+          tokenHash: assertString(raw.sharedSigner.tokenHash, "sharedSigner.tokenHash"),
+          lastSeenAt: assertOptionalString(raw.sharedSigner.lastSeenAt),
+        }
+      : undefined,
     signers,
     witnesses,
     submission: isRecord(raw.submission)
@@ -310,6 +323,7 @@ export async function createRelayRoom(input: {
   const createdAt = nowIso();
   const expiresAt = new Date(Date.now() + relayTtlMs()).toISOString();
   const coordinatorToken = capabilityToken();
+  const sharedSignerToken = capabilityToken();
   const signerTokens = input.signers.map((signer) => ({ ...signer, token: capabilityToken() }));
   const witnesses = "witnesses" in input && Array.isArray(input.witnesses) ? input.witnesses : [];
   const deliveredByKeyHash = new Map(
@@ -328,6 +342,9 @@ export async function createRelayRoom(input: {
     coordinator: {
       tokenHash: hashRelayToken(coordinatorToken),
     },
+    sharedSigner: {
+      tokenHash: hashRelayToken(sharedSignerToken),
+    },
     signers: signerTokens.map((signer) => ({
       keyHash: signer.keyHash,
       label: signer.label,
@@ -341,6 +358,7 @@ export async function createRelayRoom(input: {
   return {
     room,
     coordinatorToken,
+    sharedSignerToken,
     signerTokens: signerTokens.map((signer) => ({ keyHash: signer.keyHash, label: signer.label, token: signer.token })),
   };
 }
@@ -352,6 +370,9 @@ export async function resolveRelayTokenSession(token: string): Promise<RelayRoom
   for (const room of rooms) {
     if (room.coordinator.tokenHash === tokenHash) {
       return { role: "coordinator", room };
+    }
+    if (room.sharedSigner?.tokenHash === tokenHash) {
+      return { role: "shared-signer", room };
     }
     const signer = room.signers.find((item) => item.tokenHash === tokenHash);
     if (signer) {
@@ -389,6 +410,25 @@ export function coordinatorRoomView(room: RelayRoomRecord): RelayRoomCoordinator
     witnesses: room.witnesses,
     submission: room.submission,
     progress: relayProgress(room),
+  };
+}
+
+export function sharedSignerRoomView(room: RelayRoomRecord): RelayRoomSignerView {
+  const progress = relayProgress(room);
+  return {
+    roomId: room.id,
+    status: room.status,
+    network: room.network,
+    expiresAt: room.expiresAt,
+    tx: room.tx,
+    witnesses: room.witnesses,
+    signer: {
+      keyHash: "",
+      label: "Shared signer link",
+      alreadyDelivered: false,
+      thresholdReached: progress.matchedCount >= progress.requiredSignatures,
+    },
+    progress,
   };
 }
 

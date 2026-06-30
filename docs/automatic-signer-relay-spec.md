@@ -95,6 +95,7 @@ type RelayRoomRef = {
   coordinatorToken: string;       // localStorage only; never put in query params
   createdAt: string;
   lastSyncAt?: string;
+  sharedInviteUrl: string;        // primary UX: one link for every signer
   signerInvites: Array<{ keyHash: string; label?: string; inviteUrl: string }>;
 };
 ```
@@ -107,12 +108,13 @@ Use capability tokens with raw secret only in the URL fragment.
 
 - room id: public, random, non-secret identifier
 - coordinator token: can fetch full room state and poll witnesses for one tx
-- signer token: scoped to exactly one room + one signer key hash; can fetch signing payload and POST one replacement witness for that signer
+- shared signer token: primary signer UX; one link per transaction room, usable by every policy signer. The backend accepts only witnesses whose verified key hash belongs to the multisig policy.
+- per-signer token: legacy/compatibility fallback scoped to exactly one room + one signer key hash
 - token generation: `crypto.randomBytes(32).toString("base64url")`
 - persistence: store only `sha256(token)` server-side
 - URLs:
-  - signer: `/#r=<signerToken>` (short production format)
-  - legacy accepted: `/#relay=<signerToken>`
+  - signer: `/#r=<sharedSignerToken>` (short production format, one link for all signers)
+  - legacy accepted: `/#relay=<token>`
   - coordinator never receives authority from URL query; the local app stores its token after room creation and POSTs it intentionally
 
 Do not embed unsigned tx CBOR or coordinator authority in the link itself for the relay path.
@@ -162,6 +164,7 @@ Response:
   "ok": true,
   "roomId": "...",
   "coordinatorToken": "...",
+  "sharedInviteUrl": "https://cardano-preprod.0xm.sh/#r=...",
   "signerInvites": [
     { "keyHash": "...", "label": "Mosta", "inviteUrl": "https://cardano-preprod.0xm.sh/#r=..." }
   ],
@@ -284,9 +287,9 @@ This part must stay stricter than the current local-only merge in `app/lib/multi
 
 ### Coordinator
 1. Build tx as today in `transaction-new.tsx`.
-2. Wallet detail sees `tx.relayRoom` missing and offers primary CTA `Create signer relay room` or creates automatically on first `Copy signer invite`.
-3. After room creation, tx card stores `relayRoom` locally and primary CTA becomes `Copy signer invite`.
-4. Copy action should target one missing required signer first; optional signers only after threshold is reached or via dropdown.
+2. Wallet detail sees `tx.relayRoom` missing and creates the relay room automatically on first `Copy signer link`.
+3. After room creation, tx card stores `relayRoom` locally and primary CTA becomes `Copy signer link`.
+4. Copy action must copy `sharedInviteUrl`: the same link goes to every signer and must not require regenerating after each signature.
 5. Wallet detail polls `/api/cardano/relay-room/session` every 5-10s while the tx card is visible and room status is `open`.
 6. Poll response auto-merges remote witnesses into local `tx.signatures`, marks `updatedAt`, and updates progress without manual paste.
 7. If threshold reached, coordinator sees `Ready to submit`; optional remaining signers are labeled optional.

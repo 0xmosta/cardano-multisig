@@ -364,6 +364,22 @@ function saveDrafts(drafts: TxDraft[]) {
   if (typeof window !== "undefined") window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(sanitized, null, 2));
 }
 
+function draftRelayFingerprint(draft: TxDraft) {
+  return JSON.stringify({
+    status: draft.status,
+    txHash: draft.txHash,
+    relayStatus: draft.relayRoom?.status,
+    signatures: draft.signatures
+      .map((signature) => [
+        normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || ""),
+        signature.matchStatus || "",
+        signature.relayWitnessId || "",
+        signature.witnessCbor,
+      ])
+      .sort(),
+  });
+}
+
 function downloadJson(name: string, value: unknown) {
   const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -687,10 +703,79 @@ export default function Home() {
   const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0] ?? null;
   const visibleDraft = relayInviteRoom ? draftFromRelaySignerView(relayInviteRoom) : activeDraft;
   const relayInviteActive = Boolean(relayInviteRoom && relayInviteToken);
+  const relayRoomSyncKey = useMemo(
+    () =>
+      drafts
+        .filter((draft) => draft.relayRoom?.roomId)
+        .map((draft) => `${draft.id}:${draft.relayRoom?.roomId}`)
+        .sort()
+        .join("|"),
+    [drafts],
+  );
   const activeNetworkWarning =
     connected && visibleDraft && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(visibleDraft.network)
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this transaction targets ${formatTargetNetwork(visibleDraft.network)}.`
       : "";
+
+  async function refreshHomeRelayRooms(sourceDrafts: TxDraft[] = drafts) {
+    const relayDrafts = sourceDrafts.filter((draft) => draft.relayRoom?.roomId);
+    if (!relayDrafts.length) return;
+
+    const rooms = await Promise.all(
+      relayDrafts.map(async (draft) => {
+        const roomId = draft.relayRoom?.roomId;
+        if (!roomId) return null;
+        const response = await fetch("/api/cardano/relay-room", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ intent: "view", roomId }),
+        });
+        const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
+        if (!response.ok || !body.ok || body.role !== "signer") return null;
+        return { draftId: draft.id, room: body.room };
+      }),
+    );
+
+    const roomsByDraftId = new Map(rooms.filter((item): item is NonNullable<typeof item> => Boolean(item)).map((item) => [item.draftId, item.room]));
+    if (!roomsByDraftId.size) return;
+
+    setDrafts((current) =>
+      current.map((draft) => {
+        const room = roomsByDraftId.get(draft.id);
+        if (!room) return draft;
+        const synced = applyRelayRoomToDraft(draft, room);
+        const next: TxDraft = {
+          ...synced,
+          relayRoom: {
+            ...draft.relayRoom,
+            ...synced.relayRoom,
+            roomId: room.roomId,
+            createdAt: draft.relayRoom?.createdAt || nowIso(),
+            lastSyncAt: nowIso(),
+            status: room.status,
+          },
+        };
+        return draftRelayFingerprint(next) === draftRelayFingerprint(draft) ? draft : next;
+      }),
+    );
+  }
+
+  useEffect(() => {
+    if (!hydrated || !relayRoomSyncKey) return;
+    let cancelled = false;
+    const sync = async () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      await refreshHomeRelayRooms().catch(() => undefined);
+    };
+    void sync();
+    const interval = window.setInterval(() => {
+      void sync();
+    }, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [hydrated, relayRoomSyncKey]);
 
   async function refreshConnectedSigner() {
     if (!connected) {
@@ -940,7 +1025,7 @@ export default function Home() {
   }
 
   async function ensureHomeRelayRoom(draft: TxDraft) {
-    if (draft.relayRoom?.coordinatorToken && draft.relayRoom.signerInvites?.length && draft.relayRoom.sharedInviteUrl) {
+    if (draft.relayRoom?.roomId && draft.relayRoom.sharedInviteUrl) {
       await syncExistingWitnessesToRelayRoom(draft, draft.relayRoom);
       return draft.relayRoom;
     }

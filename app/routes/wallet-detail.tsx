@@ -44,6 +44,7 @@ import {
   formatTargetNetwork,
   hasMatchedSignature,
   mergeSignatures,
+  mergeTransactionDrafts,
   networkLabel,
   nowIso,
   normalizeRelayAssetLines,
@@ -143,7 +144,8 @@ function stripRelayRoomSecrets(tx: TxDraft): TxDraft {
 }
 
 function writeTransactions(value: TxDraft[]) {
-  writeArray(TX_KEY, value.map(stripRelayRoomSecrets));
+  const stored = readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession);
+  writeArray(TX_KEY, mergeTransactionDrafts(stored, value).map(stripRelayRoomSecrets));
 }
 
 function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {
@@ -448,6 +450,21 @@ export default function WalletDetail() {
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
     setTxs(readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession));
+  }, []);
+
+  useEffect(() => {
+    const refreshFromStorage = () => {
+      setWallets(readArray<Wallet>(WALLET_KEY));
+      setTxs((current) => mergeTransactionDrafts(current, readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession)));
+    };
+    window.addEventListener("storage", refreshFromStorage);
+    window.addEventListener("cardano-multisig:storage", refreshFromStorage);
+    window.addEventListener("focus", refreshFromStorage);
+    return () => {
+      window.removeEventListener("storage", refreshFromStorage);
+      window.removeEventListener("cardano-multisig:storage", refreshFromStorage);
+      window.removeEventListener("focus", refreshFromStorage);
+    };
   }, []);
 
   const wallet = wallets.find((item) => item.id === walletId);

@@ -13,6 +13,7 @@ import { Progress } from "../components/ui/progress";
 import {
   type TxDraft,
   TX_STORAGE_KEY,
+  mergeTransactionDrafts,
   pendingSignatureCount,
   signatureCount,
 } from "../lib/multisig";
@@ -45,6 +46,17 @@ export default function TransactionsRoute() {
 
   useEffect(() => {
     setTransactions(readTransactions());
+    const refreshFromStorage = () => {
+      setTransactions((current) => mergeTransactionDrafts(current, readTransactions()));
+    };
+    window.addEventListener("storage", refreshFromStorage);
+    window.addEventListener("cardano-multisig:storage", refreshFromStorage);
+    window.addEventListener("focus", refreshFromStorage);
+    return () => {
+      window.removeEventListener("storage", refreshFromStorage);
+      window.removeEventListener("cardano-multisig:storage", refreshFromStorage);
+      window.removeEventListener("focus", refreshFromStorage);
+    };
   }, []);
 
   const visibleTransactions = useMemo(() => {

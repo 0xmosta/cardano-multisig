@@ -43,6 +43,7 @@ import {
   createId,
   expectedNetworkId,
   formatTargetNetwork,
+  mergeTransactionDrafts,
   networkLabel,
   nowIso,
 } from "../lib/multisig";
@@ -520,7 +521,7 @@ export default function NewTransaction() {
       updatedAt: now,
     };
 
-    const next = [tx, ...readArray<TxDraft>(TX_STORAGE_KEY)];
+    const next = mergeTransactionDrafts(readArray<TxDraft>(TX_STORAGE_KEY), [tx]);
     writeArray(TX_STORAGE_KEY, next);
     toast.success("Transaction saved", {
       description: "The coordinator room is ready.",

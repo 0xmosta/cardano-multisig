@@ -392,3 +392,31 @@ export function mergeSignatures(existing: SignatureRecord[], incoming: Signature
   }
   return [...next.values()];
 }
+
+function txTime(value: Pick<TxDraft, "updatedAt" | "createdAt">) {
+  return new Date(value.updatedAt || value.createdAt || 0).getTime() || 0;
+}
+
+export function mergeTransactionDraft(existing: TxDraft, incoming: TxDraft): TxDraft {
+  const incomingIsNewer = txTime(incoming) >= txTime(existing);
+  const base = incomingIsNewer ? existing : incoming;
+  const latest = incomingIsNewer ? incoming : existing;
+  return {
+    ...base,
+    ...latest,
+    signatures: mergeSignatures(base.signatures || [], latest.signatures || []),
+    relayRoom: base.relayRoom || latest.relayRoom ? { ...base.relayRoom, ...latest.relayRoom } as RelayRoomRef : undefined,
+    txHash: latest.txHash || base.txHash,
+    failureReason: latest.failureReason || base.failureReason,
+  };
+}
+
+export function mergeTransactionDrafts(existing: TxDraft[], incoming: TxDraft[]) {
+  const merged = new Map<string, TxDraft>();
+  for (const draft of existing) merged.set(draft.id, draft);
+  for (const draft of incoming) {
+    const current = merged.get(draft.id);
+    merged.set(draft.id, current ? mergeTransactionDraft(current, draft) : draft);
+  }
+  return [...merged.values()].sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
+}

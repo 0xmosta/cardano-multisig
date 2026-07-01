@@ -55,6 +55,7 @@ import {
   isKeyHash,
   isRecord,
   mergeSignatures,
+  mergeTransactionDrafts,
   networkLabel,
   nowIso,
   normalizeRelayAssetLines,
@@ -369,22 +370,31 @@ function loadDrafts() {
   return readJsonArray(TX_STORAGE_KEY, migrateDraft);
 }
 
+function stripDraftRelaySecrets(draft: TxDraft): TxDraft {
+  return draft.relayRoom
+    ? {
+        ...draft,
+        relayRoom: {
+          roomId: draft.relayRoom.roomId,
+          createdAt: draft.relayRoom.createdAt,
+          lastSyncAt: draft.relayRoom.lastSyncAt,
+          sharedInviteUrl: draft.relayRoom.sharedInviteUrl,
+          status: draft.relayRoom.status,
+        } as RelayRoomRef,
+      }
+    : draft;
+}
+
 function saveDrafts(drafts: TxDraft[]) {
-  const sanitized = drafts.map((draft) =>
-    draft.relayRoom
-      ? {
-          ...draft,
-          relayRoom: {
-            roomId: draft.relayRoom.roomId,
-            createdAt: draft.relayRoom.createdAt,
-            lastSyncAt: draft.relayRoom.lastSyncAt,
-            sharedInviteUrl: draft.relayRoom.sharedInviteUrl,
-            status: draft.relayRoom.status,
-          } as RelayRoomRef,
-        }
-      : draft,
-  );
-  if (typeof window !== "undefined") window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(sanitized, null, 2));
+  const stored = loadDrafts();
+  const merged = mergeTransactionDrafts(stored, drafts);
+  if (typeof window !== "undefined") window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(merged.map(stripDraftRelaySecrets), null, 2));
+}
+
+function deleteStoredDraft(draftId: string) {
+  if (typeof window === "undefined") return;
+  const next = loadDrafts().filter((draft) => draft.id !== draftId);
+  window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(next.map(stripDraftRelaySecrets), null, 2));
 }
 
 function draftRelayFingerprint(draft: TxDraft) {
@@ -661,6 +671,20 @@ export default function Home() {
     saveDrafts(drafts);
     notifyAppStorageChanged();
   }, [drafts, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const refreshFromStorage = () => {
+      setWallets(loadWallets());
+      setDrafts((current) => mergeTransactionDrafts(current, loadDrafts()));
+    };
+    window.addEventListener("storage", refreshFromStorage);
+    window.addEventListener("focus", refreshFromStorage);
+    return () => {
+      window.removeEventListener("storage", refreshFromStorage);
+      window.removeEventListener("focus", refreshFromStorage);
+    };
+  }, [hydrated]);
 
   useEffect(() => {
     if (!relayInviteToken) return;
@@ -2024,7 +2048,18 @@ export default function Home() {
                       <Trash2 className="size-4" /> Unmatched
                     </Button>
                   ) : null}
-                  <Button className="min-w-24 flex-1" variant="destructive" size="sm" onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}><Trash2 className="size-4" /> Delete</Button>
+                  <Button
+                    className="min-w-24 flex-1"
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      deleteStoredDraft(draft.id);
+                      setDrafts((current) => current.filter((item) => item.id !== draft.id));
+                      notifyAppStorageChanged();
+                    }}
+                  >
+                    <Trash2 className="size-4" /> Delete
+                  </Button>
                 </div>
               </article>
             ))}

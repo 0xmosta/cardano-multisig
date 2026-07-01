@@ -57,6 +57,7 @@ import {
   mergeSignatures,
   networkLabel,
   nowIso,
+  normalizeRelayAssetLines,
   normalizeKeyHash,
   optionalSignerKeyHashes,
   parseSignaturePackage,
@@ -1032,16 +1033,6 @@ export default function Home() {
     window.setTimeout(() => setCopied(false), 1600);
   }
 
-  function relayAssetLines(draft: TxDraft): AssetLine[] {
-    return (draft.assets?.length ? draft.assets : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: draft.lovelace || "0", decimals: 6 }]).map((asset, index) => ({
-      id: asset.id || `asset-${index}`,
-      unit: asset.unit,
-      label: asset.label || (asset.unit === "lovelace" ? "ADA" : asset.unit.slice(0, 16)),
-      quantity: asset.quantity,
-      decimals: asset.decimals,
-    }));
-  }
-
   function relayTokenFromInviteUrl(inviteUrl: string) {
     try {
       const parsed = new URL(inviteUrl, window.location.origin);
@@ -1099,7 +1090,7 @@ export default function Home() {
           note: draft.note,
           recipient: draft.recipient,
           lovelace: draft.lovelace,
-          assets: relayAssetLines(draft),
+          assets: normalizeRelayAssetLines(draft),
           unsignedTxCbor: draft.unsignedTxCbor,
           requiredSignatures: draft.requiredSignatures,
           signerKeyHashes: draft.signerKeyHashes,

@@ -46,6 +46,7 @@ import {
   mergeSignatures,
   networkLabel,
   nowIso,
+  normalizeRelayAssetLines,
   normalizeKeyHash,
   optionalSignerKeyHashes,
   parseSignaturePackage,
@@ -635,6 +636,7 @@ export default function WalletDetail() {
     if (!tx.unsignedTxCbor.trim()) {
       throw new Error("This transaction has no unsigned tx CBOR yet, so a relay room cannot be created.");
     }
+    const relayAssets = normalizeRelayAssetLines(tx);
     const response = await fetch("/api/cardano/relay-room", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -649,7 +651,7 @@ export default function WalletDetail() {
           note: tx.note,
           recipient: tx.recipient,
           lovelace: tx.lovelace,
-          assets: tx.assets || [],
+          assets: relayAssets,
           unsignedTxCbor: tx.unsignedTxCbor,
           requiredSignatures: tx.requiredSignatures,
           signerKeyHashes: tx.signerKeyHashes,
@@ -675,7 +677,7 @@ export default function WalletDetail() {
       signerInvites: body.signerInvites,
       status: "open",
     };
-    const next = txs.map((item) => (item.id === tx.id ? { ...item, relayRoom, updatedAt: nowIso() } : item));
+    const next = txs.map((item) => (item.id === tx.id ? { ...item, assets: relayAssets, relayRoom, updatedAt: nowIso() } : item));
     writeRelaySessionRoom(tx.id, relayRoom);
     setTxs(next);
     writeTransactions(next);

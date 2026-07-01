@@ -274,6 +274,25 @@ export function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "cardano-multisig";
 }
 
+export function normalizeRelayAssetLines(draft: Pick<TxDraft, "assets" | "lovelace">): AssetLine[] {
+  const source =
+    draft.assets?.length
+      ? draft.assets
+      : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: draft.lovelace || "0", decimals: 6 }];
+
+  return source.map((asset, index) => {
+    const unit = asset.unit || "lovelace";
+    return {
+      id: asset.id || `${unit === "lovelace" ? "ada" : "asset"}-${index}`,
+      unit,
+      label: asset.label || (unit === "lovelace" ? "ADA" : unit.slice(0, 16)),
+      quantity: asset.quantity || "0",
+      maxQuantity: asset.maxQuantity,
+      decimals: asset.decimals,
+    };
+  });
+}
+
 export function encodeInvite(draft: TxDraft) {
   const payload: InvitePayload = {
     type: "cardano-multisig-invite",

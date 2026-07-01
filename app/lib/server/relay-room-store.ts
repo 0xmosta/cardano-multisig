@@ -129,11 +129,12 @@ function assertOptionalNativeScript(value: unknown): NativeScript | undefined {
   return script;
 }
 
-function assertAssetLine(raw: unknown) {
+function assertAssetLine(raw: unknown, index = 0) {
   if (!isRecord(raw)) throw new Error("Invalid relay room asset.");
+  const unit = assertString(raw.unit, "asset.unit");
   return {
-    id: assertString(raw.id, "asset.id"),
-    unit: assertString(raw.unit, "asset.unit"),
+    id: typeof raw.id === "string" && raw.id.trim() ? raw.id : `${unit === "lovelace" ? "ada" : "asset"}-${index}`,
+    unit,
     label: assertString(raw.label, "asset.label"),
     quantity: assertString(raw.quantity, "asset.quantity"),
     maxQuantity: assertOptionalString(raw.maxQuantity),
@@ -171,7 +172,7 @@ function assertRelayRoomTx(raw: unknown): RelayRoomTx {
     note: String(raw.note || ""),
     recipient: assertString(raw.recipient, "draft.recipient"),
     lovelace: assertString(raw.lovelace, "draft.lovelace"),
-    assets: Array.isArray(raw.assets) ? raw.assets.map(assertAssetLine) : [],
+    assets: Array.isArray(raw.assets) ? raw.assets.map((asset, index) => assertAssetLine(asset, index)) : [],
     unsignedTxCbor,
     requiredSignatures,
     signerKeyHashes,

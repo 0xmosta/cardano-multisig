@@ -1,3 +1,5 @@
+import * as React from "react";
+import * as AvatarPrimitive from "@radix-ui/react-avatar";
 import { cn } from "../../lib/utils";
 
 export function initials(value: string) {
@@ -25,15 +27,24 @@ export function Avatar({
   className?: string;
 }) {
   return (
-    <span
+    <AvatarPrimitive.Root
+      data-slot="avatar"
       className={cn(
-        "inline-flex size-10 shrink-0 select-none items-center justify-center rounded-full text-xs font-semibold tracking-wide",
+        "relative inline-flex size-10 shrink-0 overflow-hidden rounded-full",
         tones[tone],
         className,
       )}
       title={label}
     >
-      {initials(label)}
-    </span>
+      <AvatarPrimitive.Fallback
+        data-slot="avatar-fallback"
+        className="flex size-full items-center justify-center rounded-full text-xs font-semibold tracking-wide"
+      >
+        {initials(label)}
+      </AvatarPrimitive.Fallback>
+    </AvatarPrimitive.Root>
   );
 }
+
+export const AvatarImage = AvatarPrimitive.Image;
+export const AvatarFallback = AvatarPrimitive.Fallback;

@@ -1,5 +1,6 @@
 import { Link, useSearchParams, useParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -24,6 +25,8 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { Textarea } from "../components/ui/textarea";
 import {
   type MultisigWallet as Wallet,
   type NativeScript,
@@ -137,6 +140,11 @@ function formatRawQuantity(quantity: string, unit: string, decimals = unit === "
   const frac = raw % scale;
   const fracText = frac === 0n ? "" : `.${frac.toString().padStart(decimals, "0")}`;
   return `${`${whole.toLocaleString()}${fracText}`.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1")}${label ? ` ${label}` : ""}`;
+}
+
+function compactMiddle(value: string, start = 10, end = 8) {
+  if (value.length <= start + end + 3) return value;
+  return `${value.slice(0, start)}...${value.slice(-end)}`;
 }
 
 function txPhase(tx: TxDraft): TxPhase {
@@ -664,8 +672,14 @@ export default function WalletDetail() {
           ? "Signature captured. Copy the witness package for the coordinator or keep collecting signatures here."
           : "Signature captured, but the signer key hash could not be verified. The coordinator will see it as unmatched until they confirm the signer.",
       );
+      toast.success("Signature captured", {
+        description: connected.keyHash ? "The coordinator view was updated locally." : "Signer key hash could not be verified.",
+      });
     } catch (error) {
       setSignStatus(error instanceof Error ? error.message : "Wallet refused to sign.");
+      toast.error("Wallet refused to sign", {
+        description: error instanceof Error ? error.message : "The signing request was cancelled or rejected.",
+      });
     }
   }
 
@@ -675,18 +689,25 @@ export default function WalletDetail() {
       if (!relayRoom.sharedInviteUrl) throw new Error("Relay room exists, but the shared signer link could not be found.");
       await navigator.clipboard.writeText(relayRoom.sharedInviteUrl);
       setSignStatus("One signer link copied. Send this same link to every signer; witnesses return automatically after signing.");
+      toast.success("Signer link copied", {
+        description: "Send the same link to every signer.",
+      });
     } catch (error) {
       setSignStatus(
         error instanceof Error
           ? `${error.message} Short relay link was not copied.`
           : "Relay room unavailable. Short relay link was not copied.",
       );
+      toast.error("Could not copy signer link", {
+        description: error instanceof Error ? error.message : "Relay room unavailable.",
+      });
     }
   }
 
   async function copySignatures(tx: TxDraft) {
     await navigator.clipboard.writeText(createSignaturePackage(tx.id, tx.signatures || []));
     setSignStatus("Witness package copied.");
+    toast.success("Witness package copied");
   }
 
   async function submitTransaction(tx: TxDraft) {
@@ -753,6 +774,9 @@ export default function WalletDetail() {
         }
       }
       setSignStatus(`Submitted on ${body.network}. Tx hash: ${body.txHash}.${relayNote}`.trim());
+      toast.success("Transaction submitted", {
+        description: String(body.txHash || ""),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not submit transaction.";
       const next = txs.map((item) =>
@@ -768,6 +792,9 @@ export default function WalletDetail() {
       setTxs(next);
       writeTransactions(next);
       setSignStatus(message);
+      toast.error("Submit failed", {
+        description: message,
+      });
     }
   }
 
@@ -787,8 +814,14 @@ export default function WalletDetail() {
       writeTransactions(next);
       setSignaturePackageInput("");
       setSignStatus(`Imported ${signatures.length} signature${signatures.length === 1 ? "" : "s"} into the coordinator view.`);
+      toast.success("Witness package imported", {
+        description: `${signatures.length} signature${signatures.length === 1 ? "" : "s"} merged.`,
+      });
     } catch (error) {
       setSignStatus(error instanceof Error ? error.message : "Invalid signature package.");
+      toast.error("Invalid witness package", {
+        description: error instanceof Error ? error.message : "Could not parse the signature package.",
+      });
     }
   }
 
@@ -799,6 +832,7 @@ export default function WalletDetail() {
     setTxs(next);
     writeTransactions(next);
     setSignStatus("Unmatched witness packages removed from this transaction.");
+    toast("Unmatched witnesses removed");
   }
 
   function saveHandle() {
@@ -809,6 +843,13 @@ export default function WalletDetail() {
     setWallets(next);
     writeArray(WALLET_KEY, next);
     void refreshAssets({ ...wallet, name: label, handle: clean || undefined });
+  }
+
+  async function copyAssetUnit(asset: AssetOption) {
+    await navigator.clipboard.writeText(asset.unit);
+    toast.success("Asset unit copied", {
+      description: asset.label,
+    });
   }
 
   async function refreshAssets(target = wallet) {
@@ -905,12 +946,11 @@ export default function WalletDetail() {
             {isWatchOnly ? (
               <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">native script not imported</Badge>
             ) : (
-              <Link
-                to={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 max-sm:w-full"
-              >
-                <Plus className="size-4" /> Create transaction
-              </Link>
+              <Button asChild className="max-sm:w-full">
+                <Link to={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}>
+                  <Plus className="size-4" /> Create transaction
+                </Link>
+              </Button>
             )}
           </div>
         </div>
@@ -1138,14 +1178,11 @@ export default function WalletDetail() {
                               <div className="mt-1 break-all font-mono text-xs text-emerald-200">{tx.txHash}</div>
                               <div className="mt-3 flex flex-wrap gap-2">
                                 <Button size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(tx.txHash || "")}>Copy tx hash</Button>
-                                <a
-                                  href={explorerTxUrl(tx.network, tx.txHash)}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex h-8 items-center justify-center rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
-                                >
-                                  Open explorer
-                                </a>
+                                <Button asChild size="sm" variant="secondary">
+                                  <a href={explorerTxUrl(tx.network, tx.txHash)} target="_blank" rel="noreferrer">
+                                    Open explorer
+                                  </a>
+                                </Button>
                               </div>
                             </div>
                           ) : null}
@@ -1196,8 +1233,8 @@ export default function WalletDetail() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <textarea
-                  className="min-h-48 min-w-0 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm text-slate-100 shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                <Textarea
+                  className="min-h-48 min-w-0 font-mono text-sm text-slate-100"
                   value={signaturePackageInput}
                   onChange={(event) => setSignaturePackageInput(event.target.value)}
                   placeholder="Paste the witness package JSON here"
@@ -1232,10 +1269,10 @@ export default function WalletDetail() {
             </CardContent>
           </Card>
 
-          <Card className="glass-panel">
-            <CardHeader>
+          <Card className="glass-panel overflow-hidden">
+            <CardHeader className="border-b border-border">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                   <CardTitle>Multisig assets</CardTitle>
                   <CardDescription>
                     {isWatchOnly
@@ -1250,25 +1287,71 @@ export default function WalletDetail() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0">
               {walletAssets.length === 0 ? (
-                <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-400">
+                <div className="m-5 rounded-lg border border-border bg-black/20 p-4 text-sm text-slate-400">
                   <Database className="mr-2 inline size-4 text-sky-300" /> {assetStatus}
                 </div>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {walletAssets.map((asset) => (
-                    <div className="min-w-0 rounded-lg border border-border bg-slate-950/60 p-4" key={asset.unit}>
-                      <div className="break-words text-sm text-slate-400">{asset.label}</div>
-                      <div className="mt-1 font-mono text-lg font-semibold text-slate-100">
-                        {formatRawQuantity(asset.quantity, asset.unit, asset.decimals)}
-                      </div>
-                      <div className="mt-1 break-all text-xs text-slate-500">{asset.unit}</div>
-                    </div>
-                  ))}
-                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-[48%]">Asset</TableHead>
+                      <TableHead className="text-right">Balance</TableHead>
+                      <TableHead className="w-10 text-right">Unit</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {walletAssets.map((asset) => {
+                      const quantity = formatRawQuantity(asset.quantity, asset.unit, asset.decimals);
+                      const isAda = asset.unit === "lovelace";
+                      return (
+                        <TableRow key={asset.unit}>
+                          <TableCell className="min-w-0">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.03] text-xs font-semibold text-emerald-200">
+                                {asset.label.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-zinc-100">{asset.label}</div>
+                                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                                  <Badge variant={isAda ? "secondary" : "outline"} className="max-w-32 truncate border-white/10 text-[10px]">
+                                    {isAda ? "ADA" : "native asset"}
+                                  </Badge>
+                                  {asset.outputCount ? (
+                                    <Badge variant="outline" className="border-white/10 text-[10px] text-zinc-500">
+                                      {asset.outputCount} UTxO{asset.outputCount === 1 ? "" : "s"}
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="max-w-40 text-right align-middle">
+                            <div className="truncate font-mono text-sm font-semibold text-zinc-50" title={quantity}>
+                              {quantity}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right align-middle">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="ml-auto h-8 max-w-28 justify-end px-2 font-mono text-xs text-zinc-400"
+                              title={asset.unit}
+                              onClick={() => void copyAssetUnit(asset)}
+                            >
+                              <Copy className="size-3.5" />
+                              <span className="hidden sm:inline">{compactMiddle(asset.unit, 6, 4)}</span>
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               )}
-              <div className="mt-3 text-xs text-slate-500">{assetStatus}</div>
+              <div className="border-t border-border px-5 py-3 text-xs text-slate-500">{assetStatus}</div>
             </CardContent>
           </Card>
         </div>

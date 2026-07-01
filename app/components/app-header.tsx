@@ -2,6 +2,13 @@ import { CircleUserRound, WalletCards } from "lucide-react";
 import { Avatar } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import type { BrowserWalletApi, BrowserWalletProvider } from "../lib/browser-wallets";
 import { DEFAULT_NETWORK } from "../lib/multisig";
 
@@ -65,13 +72,16 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
         ) : null}
       </div>
 
-      <details className="group relative shrink-0 self-start sm:self-auto">
-        <summary className="flex h-10 cursor-pointer list-none items-center gap-2 rounded-md border border-border bg-secondary px-2.5 text-sm text-zinc-100 transition hover:bg-secondary/80 [&::-webkit-details-marker]:hidden">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="secondary" className="h-10 shrink-0 self-start px-2.5 sm:self-auto">
           <CircleUserRound className="size-5 text-zinc-300" />
           <span className="hidden max-w-28 truncate sm:inline">{connected ? connected.name : "Signer"}</span>
           <Badge variant={connected ? "default" : "secondary"}>{connected ? connected.networkLabel : "off"}</Badge>
-        </summary>
-        <div className="wallet-popover rounded-lg border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={8} className="wallet-popover p-3">
+          <DropdownMenuLabel className="sr-only">Signer wallet</DropdownMenuLabel>
           <div className="flex items-start gap-3 border-b border-border pb-3">
             <Avatar label={connected?.name || "Signer"} tone={connected ? "success" : "muted"} />
             <div className="min-w-0">
@@ -82,6 +92,7 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
               {connected?.keyHash ? <div className="mt-2 break-all font-mono text-[11px] text-zinc-500">{connected.keyHash}</div> : null}
             </div>
           </div>
+          <DropdownMenuSeparator className="hidden" />
           <div className="mt-3 grid gap-2">
             {providers.length ? (
               providers.map((provider) => (
@@ -106,8 +117,8 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
               </Button>
             ) : null}
           </div>
-        </div>
-      </details>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </header>
   );
 }

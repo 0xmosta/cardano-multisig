@@ -5,6 +5,7 @@ import type { Route } from "./+types/wallets";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import {
   type MultisigWallet,
@@ -74,9 +75,11 @@ export default function WalletsRoute() {
           <h1 className="text-3xl font-semibold text-zinc-50">Wallets</h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open saved multisig policies, review signer rules, and continue treasury work.</p>
         </div>
-        <Link to="/" className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
-          <Plus className="size-4" /> Import or create
-        </Link>
+        <Button asChild>
+          <Link to="/">
+            <Plus className="size-4" /> Import or create
+          </Link>
+        </Button>
       </div>
 
       <AppWindow title="Wallets" contentClassName="p-0">
@@ -128,9 +131,11 @@ export default function WalletsRoute() {
                     </div>
                   </div>
                   <div className="flex flex-wrap justify-start gap-2 md:justify-end">
-                    <Link to={walletHref(wallet)} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
-                      Open <ArrowRight className="size-4" />
-                    </Link>
+                    <Button asChild>
+                      <Link to={walletHref(wallet)}>
+                        Open <ArrowRight className="size-4" />
+                      </Link>
+                    </Button>
                   </div>
                 </article>
               );

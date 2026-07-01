@@ -4,6 +4,13 @@ import { cn } from "../../lib/utils";
 import { Avatar } from "./avatar";
 import { Badge } from "./badge";
 import { Button } from "./button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./dropdown-menu";
 
 export type WalletConnectorProvider = {
   id: string;
@@ -63,12 +70,15 @@ export function WalletConnectorBar<TProvider extends WalletConnectorProvider>({
         </div>
       </div>
 
-      <details className="group relative shrink-0">
-        <summary className="flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-border bg-secondary px-2.5 text-sm text-zinc-100 transition hover:bg-secondary/80 [&::-webkit-details-marker]:hidden">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="secondary" size="sm" className="h-9 shrink-0 px-2.5">
           <CircleUserRound className="size-5 text-zinc-300" />
           <span className="hidden max-w-24 truncate sm:inline">{connected ? connected.name : "Manage"}</span>
-        </summary>
-        <div className="wallet-popover rounded-lg border border-border bg-[#18181b] p-3 shadow-2xl shadow-black/50">
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={8} className="wallet-popover p-3">
+          <DropdownMenuLabel className="sr-only">Signer wallet</DropdownMenuLabel>
           <div className="flex items-start gap-3 border-b border-border pb-3">
             <Avatar label={connected?.name || "Signer"} tone={connected ? "success" : "muted"} />
             <div className="min-w-0">
@@ -79,6 +89,7 @@ export function WalletConnectorBar<TProvider extends WalletConnectorProvider>({
               {connected?.keyHash ? <div className="mt-2 break-all font-mono text-[11px] text-zinc-500">{connected.keyHash}</div> : null}
             </div>
           </div>
+          <DropdownMenuSeparator className="hidden" />
           <div className="mt-3 grid gap-2">
             {providers.length ? (
               providers.map((provider) => (
@@ -98,8 +109,8 @@ export function WalletConnectorBar<TProvider extends WalletConnectorProvider>({
               <div className="rounded-lg border border-border bg-black/20 p-3 text-sm text-zinc-400">{emptyLabel}</div>
             )}
           </div>
-        </div>
-      </details>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

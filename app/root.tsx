@@ -8,6 +8,7 @@ import {
 
 import type { Route } from "./+types/root";
 import { AppShell } from "./components/app-shell";
+import { Toaster } from "./components/ui/sonner";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
@@ -37,6 +38,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         {children}
+        <Toaster />
         <ScrollRestoration />
         <Scripts />
       </body>

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import { toast } from "sonner";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
 import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
@@ -25,6 +26,7 @@ import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -889,6 +891,9 @@ export default function Home() {
     setWallets((current) => [wallet, ...current]);
     setWalletDialogOpen(false);
     setStatus("Wallet imported. Open it to create transactions and track signer progress.");
+    toast.success("Wallet imported", {
+      description: "Open it to create transactions and track signer progress.",
+    });
   }
 
   async function lookupAddressImport() {
@@ -944,6 +949,9 @@ export default function Home() {
     } catch (error) {
       setAddressDiscovery(null);
       setAddressDiscoveryError(error instanceof Error ? error.message : "Could not inspect that address yet.");
+      toast.error("Address lookup failed", {
+        description: error instanceof Error ? error.message : "Could not inspect that address yet.",
+      });
     } finally {
       setDiscoveringAddress(false);
     }
@@ -991,6 +999,9 @@ export default function Home() {
         ? "Multisig wallet imported from ADA Handle/address. The native script was recovered automatically from historical chain data."
         : "Address saved as watch-only. Import the native script or wallet export later to create transactions from it.",
     );
+    toast.success(recoveredPayment ? "Multisig wallet imported" : "Watch-only wallet saved", {
+      description: recoveredPayment ? "Native script recovered automatically." : "Import the script later to create transactions.",
+    });
   }
 
   function saveCreatedWallet() {
@@ -1010,6 +1021,9 @@ export default function Home() {
     setWallets((current) => [wallet, ...current]);
     setWalletDialogOpen(false);
     setStatus("Wallet created. Open it to build transactions and share signer invites.");
+    toast.success("Wallet created", {
+      description: "Open it to build transactions and share signer invites.",
+    });
   }
 
   async function copyScript() {
@@ -1121,8 +1135,14 @@ export default function Home() {
       if (!relayRoom.sharedInviteUrl) throw new Error("Relay room exists, but the shared signer link could not be found.");
       await navigator.clipboard.writeText(relayRoom.sharedInviteUrl);
       setStatus("One signer link copied. Send this same link to every signer; each person opens it, connects their wallet, and signs.");
+      toast.success("Signer link copied", {
+        description: "Send the same link to every signer.",
+      });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not create the short signer link.");
+      toast.error("Could not copy signer link", {
+        description: error instanceof Error ? error.message : "Could not create the short signer link.",
+      });
     } finally {
       setCopyingInviteId(null);
     }
@@ -1134,6 +1154,7 @@ export default function Home() {
     setRelayInviteRoom(null);
     setActiveDraftId(draftId);
     setStatus("Transaction room opened.");
+    toast("Transaction room opened");
     window.requestAnimationFrame(() => {
       signaturePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -1143,10 +1164,12 @@ export default function Home() {
     if (!visibleDraft || !connected) return;
     if (activeNetworkWarning) {
       setStatus(activeNetworkWarning);
+      toast.warning("Wrong wallet network", { description: activeNetworkWarning });
       return;
     }
     if (!visibleDraft.unsignedTxCbor.trim()) {
       setStatus("This invite is missing unsigned transaction CBOR, so a wallet cannot sign it yet.");
+      toast.error("Unsigned transaction missing");
       return;
     }
     try {
@@ -1178,14 +1201,23 @@ export default function Home() {
           setStatus(
             "Witness delivered to the coordinator, but it did not match the expected signer key hash for this invite. The coordinator will see it as non-counting.",
           );
+          toast.warning("Witness delivered but unmatched", {
+            description: "The coordinator will see it as non-counting.",
+          });
           return;
         }
         if (body.submission?.txHash || refreshed.status === "submitted") {
           setStatus(`Signature delivered. Transaction submitted${body.submission?.txHash ? `: ${body.submission.txHash}` : "."}`);
+          toast.success("Transaction submitted", {
+            description: body.submission?.txHash || "Threshold reached and relay submit completed.",
+          });
           return;
         }
         if (body.autoSubmitError) {
           setStatus(`Signature delivered, but automatic submit failed: ${body.autoSubmitError}`);
+          toast.warning("Signature delivered", {
+            description: `Automatic submit failed: ${body.autoSubmitError}`,
+          });
           return;
         }
         setStatus(
@@ -1193,6 +1225,12 @@ export default function Home() {
             ? "Threshold reached. The coordinator can submit manually if automatic relay submit has not completed yet."
             : "Signature delivered to the coordinator. You can close this page.",
         );
+        toast.success("Signature delivered", {
+          description:
+            body.thresholdReached || refreshed.progress.matchedCount >= refreshed.progress.requiredSignatures
+              ? "Threshold reached."
+              : "The coordinator room updated automatically.",
+        });
         return;
       }
       const signature: SignatureRecord = {
@@ -1216,8 +1254,14 @@ export default function Home() {
           ? "Witness captured. Copy the witness package and send it back to the coordinator."
           : "Witness captured, but the signer key hash could not be verified automatically. The coordinator will see it as unmatched until they confirm the signer.",
       );
+      toast.success("Witness captured", {
+        description: connected.keyHash ? "Copy the witness package fallback if needed." : "Signer key hash could not be verified automatically.",
+      });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Wallet refused to sign.");
+      toast.error("Wallet refused to sign", {
+        description: error instanceof Error ? error.message : "The signing request was cancelled or rejected.",
+      });
     }
   }
 
@@ -1237,8 +1281,14 @@ export default function Home() {
       );
       setActiveDraftId(draftId);
       setStatus(`Imported ${signatures.length} signature${signatures.length === 1 ? "" : "s"}.`);
+      toast.success("Witness package imported", {
+        description: `${signatures.length} signature${signatures.length === 1 ? "" : "s"} merged.`,
+      });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Invalid signature package.");
+      toast.error("Invalid witness package", {
+        description: error instanceof Error ? error.message : "Could not parse the signature package.",
+      });
     }
   }
 
@@ -1251,12 +1301,14 @@ export default function Home() {
       ),
     );
     setStatus("Unmatched witness packages removed from this local transaction room.");
+    toast("Unmatched witnesses removed");
   }
 
   async function copySignaturePackage() {
     if (!signaturePackage.trim()) return;
     await navigator.clipboard.writeText(signaturePackage);
     setStatus("Witness package copied.");
+    toast.success("Witness package copied");
   }
 
   return (
@@ -1459,12 +1511,16 @@ export default function Home() {
                 <Button type="button" onClick={() => setWalletDialogOpen(true)}>
                   <Import className="size-4" /> Import or create
                 </Button>
-                <Link to="/wallets" className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-secondary px-4 text-sm font-medium text-secondary-foreground hover:bg-secondary/80">
-                  <WalletCards className="size-4" /> Wallets
-                </Link>
-                <Link to="/transactions" className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-secondary px-4 text-sm font-medium text-secondary-foreground hover:bg-secondary/80">
-                  <Users className="size-4" /> Transactions
-                </Link>
+                <Button asChild variant="secondary">
+                  <Link to="/wallets">
+                    <WalletCards className="size-4" /> Wallets
+                  </Link>
+                </Button>
+                <Button asChild variant="secondary">
+                  <Link to="/transactions">
+                    <Users className="size-4" /> Transactions
+                  </Link>
+                </Button>
               </div>
             </div>
 
@@ -1707,17 +1763,21 @@ export default function Home() {
               <Button onClick={saveCreatedWallet} disabled={!canSave}>Save created wallet</Button>
             </>
           )}
-          <details className="rounded-xl border border-white/8 bg-black/20 px-5 py-4 text-zinc-200">
-            <summary className="cursor-pointer list-none text-sm font-semibold text-zinc-100">Advanced witness import</summary>
-            <div className="mt-4 space-y-3">
+          <Collapsible className="rounded-xl border border-white/8 bg-black/20 px-5 py-4 text-zinc-200">
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" className="h-auto justify-start p-0 text-sm font-semibold text-zinc-100 hover:bg-transparent">
+                Advanced witness import
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-4 space-y-3">
               <p className="text-sm text-zinc-400">Paste a returned witness package from any signer. Both legacy and new formats still work here.</p>
               <Textarea value={signaturePackage} onChange={(event) => setSignaturePackage(event.target.value)} placeholder="Paste witness package JSON here" className="min-h-40 font-mono text-xs" />
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={importSignature}>Import witness package</Button>
                 {activeDraft ? <Button variant="ghost" onClick={() => setActiveDraftId(activeDraft.id)}>Back to active room</Button> : null}
               </div>
-            </div>
-          </details>
+            </CollapsibleContent>
+          </Collapsible>
           </DialogBody>
         </DialogContent>
       </Dialog>
@@ -1878,9 +1938,11 @@ export default function Home() {
                       </div>
 
                       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        <Link to={walletHref(wallet)} className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90">
-                          {isWatchOnly ? "Open watch" : "Open"} <ArrowRight className="size-4" />
-                        </Link>
+                        <Button asChild className="min-w-0">
+                          <Link to={walletHref(wallet)}>
+                            {isWatchOnly ? "Open watch" : "Open"} <ArrowRight className="size-4" />
+                          </Link>
+                        </Button>
                         <Button size="sm" variant="secondary" className="h-10 min-w-0" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
                           <Download className="size-4" /> Export
                         </Button>
@@ -1990,9 +2052,11 @@ export default function Home() {
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-2">
-                          <Link to={walletHref(wallet)} className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90">
-                            {isWatchOnly ? "Open watch" : "Open"} <ArrowRight className="size-4" />
-                          </Link>
+                          <Button asChild size="sm">
+                            <Link to={walletHref(wallet)}>
+                              {isWatchOnly ? "Open watch" : "Open"} <ArrowRight className="size-4" />
+                            </Link>
+                          </Button>
                           <Button size="sm" variant="secondary" onClick={() => downloadJson(`${slugify(wallet.name)}-wallet.json`, wallet)}>
                             <Download className="size-4" /> Export
                           </Button>

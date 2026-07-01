@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useOutletContext } from "react-router";
 import { Home, ListChecks, WalletCards } from "lucide-react";
+import { toast } from "sonner";
 import { AppHeader, type AppHeaderProviderStatus } from "./app-header";
 import { Badge } from "./ui/badge";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
@@ -45,6 +46,10 @@ function readStoredCount(key: string) {
   } catch {
     return 0;
   }
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }
 
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
@@ -199,7 +204,15 @@ export function AppShell() {
       );
       const next = await inspectWallet(provider, api);
       setConnected(next);
+      toast.success("Wallet connected", {
+        description: `${next.name} · ${networkLabel(next.networkId)}`,
+      });
       return next;
+    } catch (error) {
+      toast.error("Could not connect wallet", {
+        description: errorMessage(error, "Unlock the wallet popup, then try again."),
+      });
+      return null;
     } finally {
       setConnectingId(null);
     }
@@ -219,6 +232,7 @@ export function AppShell() {
 
   function disconnectWallet() {
     setConnected(null);
+    toast("Wallet disconnected");
   }
 
   const context: AppShellContext = {

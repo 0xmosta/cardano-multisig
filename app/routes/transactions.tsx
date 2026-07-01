@@ -5,6 +5,7 @@ import type { Route } from "./+types/transactions";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import { Progress } from "../components/ui/progress";
 import {
   type TxDraft,
@@ -135,12 +136,16 @@ export default function TransactionsRoute() {
                   <div className="mt-4 line-clamp-2 break-all text-sm text-zinc-400">{tx.recipient || "No recipient saved"}</div>
 
                   <div className="mt-5 flex flex-wrap gap-2">
-                    <Link to={walletHref(tx)} className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90">
-                      Open wallet <ArrowRight className="size-4" />
-                    </Link>
-                    <Link to={newTransactionHref(tx)} className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium text-secondary-foreground hover:bg-secondary/80">
-                      <Plus className="size-4" /> New
-                    </Link>
+                    <Button asChild size="sm" className="flex-1">
+                      <Link to={walletHref(tx)}>
+                        Open wallet <ArrowRight className="size-4" />
+                      </Link>
+                    </Button>
+                    <Button asChild size="sm" variant="secondary" className="flex-1">
+                      <Link to={newTransactionHref(tx)}>
+                        <Plus className="size-4" /> New
+                      </Link>
+                    </Button>
                   </div>
                 </article>
               );

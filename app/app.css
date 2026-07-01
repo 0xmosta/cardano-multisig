@@ -63,16 +63,22 @@ button {
 .bg-background { background-color: var(--background); }
 .bg-card { background: var(--card); }
 .text-card-foreground { color: var(--card-foreground); }
+.bg-popover { background-color: var(--popover); }
+.text-popover-foreground { color: var(--popover-foreground); }
 .bg-primary { background-color: var(--primary); }
+.text-foreground { color: var(--foreground); }
 .text-primary { color: var(--primary); }
 .text-primary-foreground { color: var(--primary-foreground); }
 .bg-secondary { background-color: var(--secondary); }
 .text-secondary-foreground { color: var(--secondary-foreground); }
+.text-secondary { color: var(--secondary); }
 .bg-muted { background-color: var(--muted); }
 .text-muted-foreground { color: var(--muted-foreground); }
 .bg-accent { background-color: var(--accent); }
 .text-accent-foreground { color: var(--accent-foreground); }
 .bg-destructive { background-color: var(--destructive); }
+.text-destructive { color: var(--destructive); }
+.border-destructive { border-color: var(--destructive); }
 .border-border { border-color: var(--border); }
 .border-input { border-color: var(--input); }
 .border-ring { border-color: var(--ring); }
@@ -91,6 +97,8 @@ button {
 .hover\:bg-accent:hover { background-color: var(--accent); }
 .hover\:text-accent-foreground:hover { color: var(--accent-foreground); }
 .hover\:bg-destructive\/90:hover { background-color: #ef4444; }
+.focus\:bg-accent:focus { background-color: var(--accent); }
+.focus\:text-accent-foreground:focus { color: var(--accent-foreground); }
 
 /* Charcoal panel — the primary surface across the app */
 .glass-panel {
@@ -105,10 +113,6 @@ button {
 }
 
 .wallet-popover {
-  position: absolute;
-  right: 0;
-  top: 3rem;
-  z-index: 30;
   width: min(22rem, calc(100vw - 2rem));
   max-height: calc(100vh - 7rem);
   overflow: auto;
@@ -116,11 +120,7 @@ button {
 
 @media (max-width: 639px) {
   .wallet-popover {
-    position: fixed;
-    left: 1rem;
-    right: 1rem;
-    top: 8.5rem;
-    width: auto;
+    width: calc(100vw - 2rem);
   }
 }
 

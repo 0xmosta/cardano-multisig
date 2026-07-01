@@ -1,5 +1,6 @@
 import { Link, useNavigate, useParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -21,8 +22,10 @@ import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Textarea } from "../components/ui/textarea";
 import {
   type AssetLine,
   type MultisigWallet as Wallet,
@@ -420,6 +423,9 @@ export default function NewTransaction() {
     setBuildInfo(
       `Built from ${body.inputCount} UTxO${body.inputCount === 1 ? "" : "s"}; fee ${formatRawQuantity(String(body.fee || "0"), "lovelace", 6)}.${minAdaNote}`,
     );
+    toast.success("Transaction built", {
+      description: `${body.inputCount} UTxO${body.inputCount === 1 ? "" : "s"} selected.`,
+    });
     return { cbor: String(body.unsignedTxCbor || ""), assets: Array.isArray(body.assets) ? body.assets : txAssets };
   }
 
@@ -427,6 +433,7 @@ export default function NewTransaction() {
     if (!wallet) return;
     if (!wallet.paymentScript) {
       setStatus("This wallet was imported from an address or ADA Handle. Import the native script or wallet export before creating transactions.");
+      toast.error("Native script required");
       return;
     }
 
@@ -446,12 +453,16 @@ export default function NewTransaction() {
       builtAssets = built.assets;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not build transaction.");
+      toast.error("Could not build transaction", {
+        description: error instanceof Error ? error.message : "The server could not balance the transaction.",
+      });
       return;
     }
 
     if (connected) {
       if (walletNetworkWarning) {
         setStatus(walletNetworkWarning);
+        toast.warning("Wrong wallet network", { description: walletNetworkWarning });
         return;
       }
 
@@ -472,12 +483,21 @@ export default function NewTransaction() {
             ? "Transaction built and signed by the connected wallet. The coordinator can share invite links immediately."
             : "Transaction built and signed, but the signer key hash could not be verified. The coordinator may need to confirm the signer manually.",
         );
+        toast.success("Transaction signed", {
+          description: connected.keyHash ? "The first witness is saved in the room." : "Signer key hash could not be verified.",
+        });
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Wallet refused to sign.");
+        toast.error("Wallet refused to sign", {
+          description: error instanceof Error ? error.message : "The signing request was cancelled or rejected.",
+        });
         return;
       }
     } else {
       setStatus("Transaction built as pending. Next step: open the wallet page and copy the signer invite link.");
+      toast("Transaction room created", {
+        description: "Open the wallet page to copy the signer invite link.",
+      });
     }
 
     const tx: TxDraft = {
@@ -506,6 +526,9 @@ export default function NewTransaction() {
 
     const next = [tx, ...readArray<TxDraft>(TX_STORAGE_KEY)];
     writeArray(TX_STORAGE_KEY, next);
+    toast.success("Transaction saved", {
+      description: "The coordinator room is ready.",
+    });
     navigate(`/wallets/${encodeURIComponent(wallet.id)}?draft=${encodeURIComponent(tx.id)}`);
   }
 
@@ -536,12 +559,9 @@ export default function NewTransaction() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link
-              to="/"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90"
-            >
-              Import script or wallet export
-            </Link>
+            <Button asChild>
+              <Link to="/">Import script or wallet export</Link>
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -637,9 +657,10 @@ export default function NewTransaction() {
                   <div key={asset.id} className="min-w-0 rounded-lg border border-white/8 bg-[#111113] p-3 transition focus-within:border-white/15 hover:border-white/12">
                     <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_180px_36px]">
                       <div className="relative min-w-0">
-                      <button
+                      <Button
                         type="button"
-                        className="flex min-h-16 w-full min-w-0 items-center justify-between gap-3 rounded-md border border-input bg-[#18181b] px-3 py-2 text-left shadow-xs outline-none transition hover:border-white/18 hover:bg-white/[0.04] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        variant="outline"
+                        className="flex min-h-16 w-full min-w-0 justify-between gap-3 bg-[#18181b] px-3 py-2 text-left hover:border-white/18 hover:bg-white/[0.04]"
                         onClick={() => {
                           setOpenAssetPickerId(pickerOpen ? null : asset.id);
                           setAssetSearch("");
@@ -657,18 +678,18 @@ export default function NewTransaction() {
                           </span>
                         </span>
                         <ChevronDown className="size-4 shrink-0 text-slate-500" />
-                      </button>
+                      </Button>
 
                       {pickerOpen ? (
                         <div className="relative z-40 mt-2 max-w-full overflow-hidden rounded-lg border border-border bg-[#18181b] shadow-2xl shadow-black/50 sm:absolute sm:left-0 sm:right-0 sm:top-[calc(100%+0.5rem)] sm:mt-0">
                           <div className="border-b border-border p-2.5">
                             <div className="flex items-center gap-2 rounded-md border border-input bg-black/20 px-3">
                               <Search className="size-4 shrink-0 text-slate-500" />
-                              <input
+                              <Input
                                 value={assetSearch}
                                 onChange={(event) => setAssetSearch(event.target.value)}
                                 placeholder="Search asset, fingerprint, policy..."
-                                className="h-10 min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm text-slate-100 shadow-none"
                                 autoFocus
                               />
                             </div>
@@ -677,9 +698,10 @@ export default function NewTransaction() {
                           <div className="max-h-80 overflow-y-auto p-2">
                             {choices.length ? (
                               choices.map((choice) => (
-                                <button
+                                <Button
                                   key={choice.unit}
                                   type="button"
+                                  variant="ghost"
                                   className="flex w-full min-w-0 items-center gap-3 rounded-md p-2 text-left transition hover:bg-white/[0.05]"
                                   onClick={() => applyAsset(asset.id, choice.unit)}
                                 >
@@ -693,7 +715,7 @@ export default function NewTransaction() {
                                     </span>
                                     <span className="mt-1 block truncate text-xs text-slate-500">{assetSubtitle(choice)}</span>
                                   </span>
-                                </button>
+                                </Button>
                               ))
                             ) : (
                               <div className="p-4 text-sm text-slate-500">No matching asset in this multisig wallet.</div>
@@ -707,11 +729,11 @@ export default function NewTransaction() {
                           <span>Amount</span>
                           <span className="min-w-0 truncate text-right">{asset.unit === "lovelace" ? "ADA" : selected.label}</span>
                         </div>
-                        <input
+                        <Input
                           value={asset.quantity}
                           onChange={(event) => updateAsset(asset.id, { quantity: event.target.value })}
                           placeholder="0"
-                          className="h-9 w-full bg-transparent text-right text-lg font-semibold text-slate-50 outline-none placeholder:text-slate-600"
+                          className="h-9 w-full border-0 bg-transparent px-0 text-right text-lg font-semibold text-slate-50 shadow-none"
                         />
                       </div>
                       <Button variant="ghost" className="h-10 w-full rounded-md lg:h-16" onClick={() => removeAsset(asset.id)} disabled={assets.length === 1} aria-label="Remove asset">
@@ -741,23 +763,25 @@ export default function NewTransaction() {
             <Input value={note} onChange={(event) => setNote(event.target.value)} placeholder="What signers should check before approving" className="h-11" />
           </div>
 
-          <details className="group min-w-0 rounded-lg border border-white/8 bg-black/20">
-            <summary className="flex min-w-0 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium text-slate-300 [&::-webkit-details-marker]:hidden">
+          <Collapsible className="min-w-0 rounded-lg border border-white/8 bg-black/20">
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" className="flex h-auto w-full min-w-0 justify-between gap-3 px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/[0.03]">
               <span className="inline-flex min-w-0 items-center gap-2 truncate">
                 <FileCode2 className="size-4 text-slate-500" /> Advanced unsigned transaction CBOR
               </span>
-              <ChevronDown className="size-4 text-slate-500 transition group-open:rotate-180" />
-            </summary>
-            <div className="border-t border-white/8 p-3">
-              <textarea
-                className="min-h-32 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm text-slate-100 shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              <ChevronDown className="size-4 text-slate-500" />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="border-t border-white/8 p-3">
+              <Textarea
+                className="min-h-32 font-mono text-sm text-slate-100"
                 value={unsignedTxCbor}
                 onChange={(event) => setUnsignedTxCbor(event.target.value)}
                 placeholder="The server will fill this after Build transaction."
               />
               {buildInfo ? <div className="text-xs text-slate-400">{buildInfo}</div> : null}
-            </div>
-          </details>
+            </CollapsibleContent>
+          </Collapsible>
         </AppWindow>
 
         <div className="min-w-0 space-y-4 xl:sticky xl:top-6">

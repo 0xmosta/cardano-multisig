@@ -122,7 +122,7 @@ export const TX_STORAGE_KEY = "cardano-multisig.transactions.v1";
 export const LEGACY_STORAGE_KEY = "cardano-multisig.wallets.v1";
 export const NETWORKS: Network[] = ["mainnet", "preprod", "preview"];
 export const DEFAULT_NETWORK: Network =
-  import.meta.env.VITE_CARDANO_NETWORK === "mainnet" || import.meta.env.VITE_CARDANO_NETWORK === "preview"
+  import.meta.env?.VITE_CARDANO_NETWORK === "mainnet" || import.meta.env?.VITE_CARDANO_NETWORK === "preview"
     ? import.meta.env.VITE_CARDANO_NETWORK
     : "preprod";
 

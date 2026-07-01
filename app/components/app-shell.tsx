@@ -260,7 +260,6 @@ export function AppShell() {
   const [accountSyncState, setAccountSyncState] = useState<AppShellContext["accountSyncState"]>("idle");
   const [migrationCounts, setMigrationCounts] = useState({ wallets: 0, transactions: 0, available: false });
   const skipNextSyncRef = useRef(false);
-  const syncTimerRef = useRef<number | null>(null);
 
   function refreshCounts() {
     if (account.authenticated && accountState) {
@@ -353,44 +352,6 @@ export function AppShell() {
     return body.snapshot;
   }
 
-  function scheduleServerSync(source: "storage" | "manual" = "storage") {
-    if (!account.authenticated || !account.session) return;
-    if (skipNextSyncRef.current) {
-      skipNextSyncRef.current = false;
-      return;
-    }
-    const local = readLocalSnapshot();
-    if (!local.wallets.length && !local.transactions.length && ((account.session.walletCount || 0) > 0 || (account.session.transactionCount || 0) > 0)) {
-      void hydrateFromServer().catch(() => undefined);
-      return;
-    }
-    if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = window.setTimeout(async () => {
-      try {
-        setAccountSyncState("syncing");
-        const response = await fetch("/api/account/state", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-cardano-multisig-csrf": account.session?.csrfToken || "",
-          },
-          body: JSON.stringify({ intent: "replace", ...local }),
-        });
-        const body = (await response.json()) as AccountStateResponse;
-        if (!response.ok || !body.ok) {
-          throw new Error(body.error || `Could not sync authenticated account state from ${source}.`);
-        }
-        setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
-        setAccountState(body.snapshot || null);
-        refreshCounts();
-        setAccountSyncState("synced");
-      } catch (error) {
-        setAccountSyncState("error");
-        toast.error("Could not sync account state", { description: errorMessage(error, "The server copy was not updated.") });
-      }
-    }, 300);
-  }
-
   useEffect(() => {
     refreshCounts();
     const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
@@ -402,7 +363,6 @@ export function AppShell() {
 
     const onStorageChange = () => {
       refreshCounts();
-      scheduleServerSync("storage");
     };
 
     window.addEventListener("storage", onStorageChange);
@@ -411,7 +371,6 @@ export function AppShell() {
 
     return () => {
       stopWatchingWallets();
-      if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
       window.removeEventListener("storage", onStorageChange);
       window.removeEventListener(STORAGE_EVENT, onStorageChange);
       window.removeEventListener("focus", onStorageChange);

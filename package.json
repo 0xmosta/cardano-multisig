@@ -5,7 +5,10 @@
   "scripts": {
     "build": "react-router build",
     "dev": "react-router dev",
+    "db:migrate": "node scripts/postgres-migrate.mjs",
+    "db:import-file-store": "node scripts/import-file-store.mjs",
     "smoke:app": "node scripts/smoke-app.mjs",
+    "smoke:postgres": "tsx scripts/smoke-postgres-persistence.ts",
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc"
   },
@@ -29,6 +32,7 @@
     "clsx": "^2.1.1",
     "isbot": "^5.1.36",
     "lucide-react": "^1.21.0",
+    "pg": "^8.22.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router": "8.0.1",
@@ -39,9 +43,11 @@
     "@react-router/dev": "8.0.1",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^22",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "tailwindcss": "^4.2.2",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "vite": "^8.0.3"
   }

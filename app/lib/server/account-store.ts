@@ -1,7 +1,17 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { PoolClient } from "pg";
 import type { MultisigWallet, Network, SignatureRecord, TxDraft } from "../multisig";
+import {
+  assertPersistenceMode,
+  configuredNetwork,
+  json,
+  parseJson,
+  postgresEnabled,
+  withClient,
+  withTransaction,
+} from "./postgres";
 
 type AccountIdentityKind = "payment" | "stake";
 
@@ -115,11 +125,6 @@ function auditEvent(type: string, details?: Record<string, unknown>): AuditEvent
   };
 }
 
-function networkFromEnv(): Network {
-  const raw = (process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod").trim().toLowerCase();
-  return raw === "mainnet" || raw === "preview" ? raw : "preprod";
-}
-
 function sessionSecret() {
   const value = (process.env.CARDANO_MULTISIG_SESSION_SECRET || process.env.CARDANO_MULTISIG_ACCOUNT_SECRET || "").trim();
   if (!value) {
@@ -138,11 +143,11 @@ function signCookie(value: string) {
 
 function serializeCookie(sessionId: string, expiresAt: string) {
   const value = `${sessionId}.${signCookie(sessionId)}`;
-  return `${ACCOUNT_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Expires=${new Date(expiresAt).toUTCString()}`;
+  return `${ACCOUNT_COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=${new Date(expiresAt).toUTCString()}`;
 }
 
 export function clearSessionCookie() {
-  return `${ACCOUNT_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+  return `${ACCOUNT_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 }
 
 function parseCookieHeader(cookieHeader: string | null) {
@@ -156,12 +161,11 @@ function parseCookieHeader(cookieHeader: string | null) {
   const [sessionId, signature] = raw.split(".");
   if (!sessionId || !signature) return null;
   const expected = signCookie(sessionId);
-  if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(actualBuffer, expectedBuffer)) return null;
   return sessionId;
-}
-
-function nonce() {
-  return randomBytes(16).toString("hex");
 }
 
 function sessionId() {
@@ -172,14 +176,9 @@ function subjectId(identity: AccountIdentity) {
   return `${identity.kind}:${identity.keyHash}`;
 }
 
-function normalizeNetwork(value: string | null | undefined): Network {
-  const normalized = (value || "").trim().toLowerCase();
-  return normalized === "mainnet" || normalized === "preview" ? normalized : "preprod";
-}
-
 function ensureExpectedNetwork(network: string) {
   const requested = normalizeNetwork(network);
-  const configured = networkFromEnv();
+  const configured = configuredNetwork();
   if (requested !== configured) {
     throw new Error(`Authenticated account state targets ${requested}, but this deployment is configured for ${configured}.`);
   }
@@ -281,12 +280,337 @@ function mergeIdentities(current: AccountIdentity[], identity: AccountIdentity) 
   return [...existing, identity];
 }
 
+function accountFromRows(args: {
+  network: Network;
+  subject: string;
+  accountRow: { created_at: Date | string; updated_at: Date | string };
+  identityRows: Array<{ kind: string; key_hash: string; address_hex: string; created_at: Date | string; last_authenticated_at: Date | string }>;
+  walletRows: Array<{ wallet_json: unknown }>;
+  transactionRows: Array<{ tx_json: unknown }>;
+  auditRows: Array<{ id: string; event_type: string; created_at: Date | string; details_json: unknown }>;
+}): StoredAccount {
+  return {
+    subject: args.subject,
+    network: args.network,
+    identities: args.identityRows.map((row) => ({
+      kind: row.kind as AccountIdentityKind,
+      keyHash: row.key_hash,
+      addressHex: row.address_hex,
+      createdAt: new Date(row.created_at).toISOString(),
+      lastAuthenticatedAt: new Date(row.last_authenticated_at).toISOString(),
+    })),
+    wallets: args.walletRows.map((row) => parseJson<MultisigWallet>(row.wallet_json, {} as MultisigWallet)),
+    transactions: args.transactionRows.map((row) => parseJson<StoredTxDraft>(row.tx_json, {} as StoredTxDraft)),
+    auditEvents: args.auditRows.map((row) => ({
+      id: row.id,
+      type: row.event_type,
+      createdAt: new Date(row.created_at).toISOString(),
+      details: parseJson<Record<string, unknown> | undefined>(row.details_json, undefined),
+    })),
+    createdAt: new Date(args.accountRow.created_at).toISOString(),
+    updatedAt: new Date(args.accountRow.updated_at).toISOString(),
+  };
+}
+
+async function readAccountPostgres(network: Network, subject: string) {
+  return withClient(async (client) => {
+    const account = await client.query<{ created_at: Date | string; updated_at: Date | string }>(
+      `select created_at, updated_at from cm_accounts where network = $1 and subject = $2`,
+      [network, subject],
+    );
+    if (!account.rowCount) return null;
+    const identities = await client.query<{ kind: string; key_hash: string; address_hex: string; created_at: Date | string; last_authenticated_at: Date | string }>(
+      `select kind, key_hash, address_hex, created_at, last_authenticated_at
+       from cm_account_identities where network = $1 and subject = $2
+       order by created_at asc`,
+      [network, subject],
+    );
+    const wallets = await client.query<{ wallet_json: unknown }>(
+      `select wallet_json from cm_account_wallets where network = $1 and subject = $2 order by updated_at asc`,
+      [network, subject],
+    );
+    const transactions = await client.query<{ tx_json: unknown }>(
+      `select tx_json from cm_account_transactions where network = $1 and subject = $2 order by updated_at asc`,
+      [network, subject],
+    );
+    const auditEvents = await client.query<{ id: string; event_type: string; created_at: Date | string; details_json: unknown }>(
+      `select id, event_type, created_at, details_json from cm_account_audit_events
+       where network = $1 and subject = $2 order by created_at asc`,
+      [network, subject],
+    );
+    return accountFromRows({
+      network,
+      subject,
+      accountRow: account.rows[0],
+      identityRows: identities.rows,
+      walletRows: wallets.rows,
+      transactionRows: transactions.rows,
+      auditRows: auditEvents.rows,
+    });
+  });
+}
+
+async function writeAccountPostgres(account: StoredAccount) {
+  await withTransaction(async (client) => {
+    await client.query(
+      `insert into cm_accounts (network, subject, created_at, updated_at)
+       values ($1, $2, $3::timestamptz, $4::timestamptz)
+       on conflict (network, subject)
+       do update set created_at = excluded.created_at, updated_at = excluded.updated_at`,
+      [account.network, account.subject, account.createdAt, account.updatedAt],
+    );
+
+    await client.query(`delete from cm_account_identities where network = $1 and subject = $2`, [account.network, account.subject]);
+    for (const identity of account.identities) {
+      await client.query(
+        `insert into cm_account_identities (
+          network, subject, kind, key_hash, address_hex, created_at, last_authenticated_at
+        ) values ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz)`,
+        [
+          account.network,
+          account.subject,
+          identity.kind,
+          identity.keyHash,
+          identity.addressHex,
+          identity.createdAt,
+          identity.lastAuthenticatedAt,
+        ],
+      );
+    }
+
+    await client.query(`delete from cm_account_wallets where network = $1 and subject = $2`, [account.network, account.subject]);
+    for (const wallet of account.wallets) {
+      await client.query(
+        `insert into cm_account_wallets (network, subject, wallet_id, wallet_json, updated_at)
+         values ($1, $2, $3, $4::jsonb, $5::timestamptz)`,
+        [account.network, account.subject, wallet.id, json(wallet), account.updatedAt],
+      );
+    }
+
+    await client.query(`delete from cm_account_transactions where network = $1 and subject = $2`, [account.network, account.subject]);
+    for (const tx of account.transactions) {
+      const updatedAt = typeof tx.updatedAt === "string" && tx.updatedAt.trim() ? tx.updatedAt : account.updatedAt;
+      await client.query(
+        `insert into cm_account_transactions (network, subject, tx_id, tx_json, status, tx_hash, updated_at)
+         values ($1, $2, $3, $4::jsonb, $5, $6, $7::timestamptz)`,
+        [account.network, account.subject, tx.id, json(tx), tx.status || null, tx.txHash || null, updatedAt],
+      );
+    }
+
+    await client.query(`delete from cm_account_audit_events where network = $1 and subject = $2`, [account.network, account.subject]);
+    for (const event of account.auditEvents.slice(-MAX_AUDIT_EVENTS)) {
+      await client.query(
+        `insert into cm_account_audit_events (network, subject, id, event_type, created_at, details_json)
+         values ($1, $2, $3, $4, $5::timestamptz, $6::jsonb)`,
+        [account.network, account.subject, event.id, event.type, event.createdAt, json(event.details || null)],
+      );
+    }
+  });
+}
+
 async function readAccount(network: Network, subject: string) {
+  if (postgresEnabled()) return readAccountPostgres(network, subject);
   return readJson<StoredAccount>(accountPath(network, subject));
 }
 
 async function writeAccount(account: StoredAccount) {
+  assertPersistenceMode("Authenticated account persistence");
+  if (postgresEnabled()) {
+    await writeAccountPostgres(account);
+    return;
+  }
   await writeJson(accountPath(account.network, account.subject), account);
+}
+
+async function writeSessionFile(session: AccountSession) {
+  await writeJson(sessionPath(session.id), session);
+}
+
+async function readSessionFile(id: string) {
+  return readJson<AccountSession>(sessionPath(id));
+}
+
+async function deleteSessionFile(id: string) {
+  await unlink(sessionPath(id)).catch(() => undefined);
+}
+
+async function writeSessionPostgres(session: AccountSession) {
+  await withTransaction(async (client) => {
+    await client.query(
+      `insert into cm_account_sessions (
+        id, network, subject, csrf_token, identity_kind, identity_key_hash, identity_address_hex,
+        created_at, last_authenticated_at, expires_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::timestamptz)
+      on conflict (id) do update set
+        network = excluded.network,
+        subject = excluded.subject,
+        csrf_token = excluded.csrf_token,
+        identity_kind = excluded.identity_kind,
+        identity_key_hash = excluded.identity_key_hash,
+        identity_address_hex = excluded.identity_address_hex,
+        created_at = excluded.created_at,
+        last_authenticated_at = excluded.last_authenticated_at,
+        expires_at = excluded.expires_at`,
+      [
+        session.id,
+        session.network,
+        session.subject,
+        session.csrfToken,
+        session.identity.kind,
+        session.identity.keyHash,
+        session.identity.addressHex,
+        session.createdAt,
+        session.lastAuthenticatedAt,
+        session.expiresAt,
+      ],
+    );
+  });
+}
+
+async function readSessionPostgres(id: string) {
+  const result = await withClient((client) =>
+    client.query<{
+      id: string;
+      network: string;
+      subject: string;
+      csrf_token: string;
+      identity_kind: AccountIdentityKind;
+      identity_key_hash: string;
+      identity_address_hex: string;
+      created_at: Date | string;
+      last_authenticated_at: Date | string;
+      expires_at: Date | string;
+    }>(
+      `select id, network, subject, csrf_token, identity_kind, identity_key_hash, identity_address_hex,
+              created_at, last_authenticated_at, expires_at
+       from cm_account_sessions where id = $1`,
+      [id],
+    ),
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    subject: row.subject,
+    network: normalizeNetwork(row.network),
+    csrfToken: row.csrf_token,
+    identity: {
+      kind: row.identity_kind,
+      keyHash: row.identity_key_hash,
+      addressHex: row.identity_address_hex,
+      createdAt: new Date(row.created_at).toISOString(),
+      lastAuthenticatedAt: new Date(row.last_authenticated_at).toISOString(),
+    },
+    createdAt: new Date(row.created_at).toISOString(),
+    lastAuthenticatedAt: new Date(row.last_authenticated_at).toISOString(),
+    expiresAt: new Date(row.expires_at).toISOString(),
+  } satisfies AccountSession;
+}
+
+async function deleteSessionPostgres(id: string) {
+  await withClient((client) => client.query(`delete from cm_account_sessions where id = $1`, [id]));
+}
+
+async function writeChallengeFile(challenge: StoredChallenge) {
+  await writeJson(challengePath(challenge.id), challenge);
+}
+
+async function readChallengeFile(id: string) {
+  return readJson<StoredChallenge>(challengePath(id));
+}
+
+async function deleteChallengeFile(id: string) {
+  await unlink(challengePath(id)).catch(() => undefined);
+}
+
+async function writeChallengePostgres(challenge: StoredChallenge) {
+  await withClient((client) =>
+    client.query(
+      `insert into cm_account_challenges (
+        id, network, origin, subject, identity_kind, identity_key_hash, identity_address_hex,
+        identity_created_at, identity_last_authenticated_at, payload_hex, nonce, created_at, expires_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10, $11, $12::timestamptz, $13::timestamptz)
+      on conflict (id) do update set
+        network = excluded.network,
+        origin = excluded.origin,
+        subject = excluded.subject,
+        identity_kind = excluded.identity_kind,
+        identity_key_hash = excluded.identity_key_hash,
+        identity_address_hex = excluded.identity_address_hex,
+        identity_created_at = excluded.identity_created_at,
+        identity_last_authenticated_at = excluded.identity_last_authenticated_at,
+        payload_hex = excluded.payload_hex,
+        nonce = excluded.nonce,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at`,
+      [
+        challenge.id,
+        challenge.network,
+        challenge.origin,
+        challenge.subject,
+        challenge.identity.kind,
+        challenge.identity.keyHash,
+        challenge.identity.addressHex,
+        challenge.identity.createdAt,
+        challenge.identity.lastAuthenticatedAt,
+        challenge.payloadHex,
+        challenge.nonce,
+        challenge.createdAt,
+        challenge.expiresAt,
+      ],
+    ),
+  );
+}
+
+async function readChallengePostgres(id: string) {
+  const result = await withClient((client) =>
+    client.query<{
+      id: string;
+      network: string;
+      origin: string;
+      subject: string;
+      identity_kind: AccountIdentityKind;
+      identity_key_hash: string;
+      identity_address_hex: string;
+      identity_created_at: Date | string;
+      identity_last_authenticated_at: Date | string;
+      payload_hex: string;
+      nonce: string;
+      created_at: Date | string;
+      expires_at: Date | string;
+    }>(
+      `select * from cm_account_challenges where id = $1`,
+      [id],
+    ),
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    network: normalizeNetwork(row.network),
+    origin: row.origin,
+    subject: row.subject,
+    identity: {
+      kind: row.identity_kind,
+      keyHash: row.identity_key_hash,
+      addressHex: row.identity_address_hex,
+      createdAt: new Date(row.identity_created_at).toISOString(),
+      lastAuthenticatedAt: new Date(row.identity_last_authenticated_at).toISOString(),
+    },
+    payloadHex: row.payload_hex,
+    nonce: row.nonce,
+    createdAt: new Date(row.created_at).toISOString(),
+    expiresAt: new Date(row.expires_at).toISOString(),
+  } satisfies StoredChallenge;
+}
+
+async function deleteChallengePostgres(id: string) {
+  await withClient((client) => client.query(`delete from cm_account_challenges where id = $1`, [id]));
+}
+
+async function cleanupExpiredRows(client: PoolClient) {
+  await client.query(`delete from cm_account_sessions where expires_at < now()`);
+  await client.query(`delete from cm_account_challenges where expires_at < now()`);
 }
 
 export async function getOrCreateAccount(identity: AccountIdentity, network: Network) {
@@ -301,6 +625,7 @@ export async function getOrCreateAccount(identity: AccountIdentity, network: Net
     await writeAccount(next);
     return next;
   }
+  const createdAt = nowIso();
   const created: StoredAccount = {
     subject,
     network,
@@ -308,8 +633,8 @@ export async function getOrCreateAccount(identity: AccountIdentity, network: Net
     wallets: [],
     transactions: [],
     auditEvents: [auditEvent("account.created", { identityKind: identity.kind, keyHash: identity.keyHash })],
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
+    createdAt,
+    updatedAt: createdAt,
   };
   await writeAccount(created);
   return created;
@@ -328,14 +653,23 @@ export async function storeChallenge(input: { network: string; origin: string; i
     createdAt: nowIso(),
     expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
   };
-  await writeJson(challengePath(challenge.id), challenge);
+  assertPersistenceMode("Authenticated account challenge persistence");
+  if (postgresEnabled()) {
+    await writeChallengePostgres(challenge);
+  } else {
+    await writeChallengeFile(challenge);
+  }
   return challenge;
 }
 
 export async function consumeChallenge(id: string) {
-  const challenge = await readJson<StoredChallenge>(challengePath(id));
+  const challenge = postgresEnabled() ? await readChallengePostgres(id) : await readChallengeFile(id);
   if (!challenge) return null;
-  await unlink(challengePath(id)).catch(() => undefined);
+  if (postgresEnabled()) {
+    await deleteChallengePostgres(id);
+  } else {
+    await deleteChallengeFile(id);
+  }
   if (Date.parse(challenge.expiresAt) < Date.now()) {
     throw new Error("Wallet auth challenge expired. Request a fresh challenge and sign again.");
   }
@@ -355,7 +689,15 @@ export async function createSession(identity: AccountIdentity, network: string) 
     lastAuthenticatedAt: identity.lastAuthenticatedAt,
     expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
   };
-  await writeJson(sessionPath(session.id), session);
+  assertPersistenceMode("Authenticated account session persistence");
+  if (postgresEnabled()) {
+    await withTransaction(async (client) => {
+      await cleanupExpiredRows(client);
+      await writeSessionPostgres(session);
+    });
+  } else {
+    await writeSessionFile(session);
+  }
   const updatedAccount: StoredAccount = {
     ...account,
     identities: mergeIdentities(account.identities, identity),
@@ -372,21 +714,25 @@ export async function createSession(identity: AccountIdentity, network: string) 
 export async function loadSession(request: Request) {
   const id = parseCookieHeader(request.headers.get("cookie"));
   if (!id) return null;
-  const session = await readJson<AccountSession>(sessionPath(id));
+  const session = postgresEnabled() ? await readSessionPostgres(id) : await readSessionFile(id);
   if (!session) return null;
   if (Date.parse(session.expiresAt) < Date.now()) {
-    await unlink(sessionPath(id)).catch(() => undefined);
+    if (postgresEnabled()) await deleteSessionPostgres(id);
+    else await deleteSessionFile(id);
     return null;
   }
-  if (session.network !== networkFromEnv()) {
-    throw new Error(`Authenticated session network ${session.network} does not match configured ${networkFromEnv()}.`);
+  if (session.network !== configuredNetwork()) {
+    throw new Error(`Authenticated session network ${session.network} does not match configured ${configuredNetwork()}.`);
   }
   return session;
 }
 
 export async function destroySession(request: Request) {
   const id = parseCookieHeader(request.headers.get("cookie"));
-  if (id) await unlink(sessionPath(id)).catch(() => undefined);
+  if (id) {
+    if (postgresEnabled()) await deleteSessionPostgres(id);
+    else await deleteSessionFile(id);
+  }
   return clearSessionCookie();
 }
 
@@ -442,6 +788,10 @@ export async function importIntoAccount(session: AccountSession, snapshot: Accou
 }
 
 export async function listAccountFiles() {
+  if (postgresEnabled()) {
+    const result = await withClient((client) => client.query<{ network: string }>(`select distinct network from cm_accounts order by network asc`));
+    return result.rows.map((row) => row.network);
+  }
   const root = accountsDir();
   try {
     const networks = await readdir(root, { withFileTypes: true });
@@ -455,7 +805,7 @@ export async function listAccountFiles() {
 export function accountSessionResponse(session: AccountSession | null, snapshot?: AccountSnapshot) {
   return {
     authenticated: Boolean(session),
-    network: networkFromEnv(),
+    network: configuredNetwork(),
     session: session
       ? {
           subject: session.subject,
@@ -494,4 +844,9 @@ export function challengePayload(input: { origin: string; network: string; ident
     issuedAt: nowIso(),
     expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
   };
+}
+
+function normalizeNetwork(value: string | null | undefined): Network {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized === "mainnet" || normalized === "preview" ? normalized : "preprod";
 }

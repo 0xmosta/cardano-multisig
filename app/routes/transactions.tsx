@@ -6,6 +6,8 @@ import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/ui/input-group";
 import { Progress } from "../components/ui/progress";
 import {
   type TxDraft,
@@ -84,15 +86,16 @@ export default function TransactionsRoute() {
 
       <AppWindow title="Transaction rooms" contentClassName="p-0">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
-          <div className="flex min-w-full flex-1 items-center gap-2 rounded-md border border-input bg-black/20 px-3 sm:min-w-0">
-            <Search className="size-4 shrink-0 text-zinc-500" />
-            <input
+          <InputGroup className="min-w-full flex-1 sm:min-w-0">
+            <InputGroupAddon>
+              <Search />
+            </InputGroupAddon>
+            <InputGroupInput
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search transaction, wallet, recipient, signer..."
-              className="h-10 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
             />
-          </div>
+          </InputGroup>
           <Badge variant="secondary" className="max-sm:w-full max-sm:justify-center">{visibleTransactions.length} shown</Badge>
         </div>
 
@@ -152,9 +155,14 @@ export default function TransactionsRoute() {
             })}
           </div>
         ) : (
-          <div className="m-5 rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
-            {transactions.length ? "No transaction matches the current search." : "No transaction rooms saved yet. Open a wallet and create a transaction."}
-          </div>
+          <Empty className="m-5">
+            <EmptyHeader>
+              <EmptyTitle>{transactions.length ? "No transaction matches" : "No transaction rooms yet"}</EmptyTitle>
+              <EmptyDescription>
+                {transactions.length ? "Try another wallet, recipient, or signer query." : "Open a wallet and create a transaction."}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </AppWindow>
     </div>

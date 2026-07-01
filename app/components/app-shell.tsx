@@ -4,6 +4,8 @@ import { Home, ListChecks, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { AppHeader, type AppHeaderProviderStatus } from "./app-header";
 import { Badge } from "./ui/badge";
+import { Sidebar, SidebarContent, SidebarMenu, SidebarMenuBadge, SidebarMenuButton } from "./ui/sidebar";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import { STORAGE_KEY, TX_STORAGE_KEY, networkLabel } from "../lib/multisig";
 import { cn } from "../lib/utils";
@@ -124,39 +126,50 @@ function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount
   ];
 
   return (
-    <nav aria-label="Primary" className="fixed bottom-4 left-1/2 z-40 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 rounded-xl border border-white/10 bg-[#18181b]/95 p-1 shadow-2xl shadow-black/50 backdrop-blur md:bottom-auto md:left-4 md:top-1/2 md:w-16 md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:p-2 xl:left-6">
-      <div className="grid grid-cols-3 gap-1 md:flex md:flex-col">
+    <TooltipProvider>
+      <Sidebar aria-label="Primary" className="fixed bottom-4 left-1/2 z-40 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 md:bottom-auto md:left-4 md:top-1/2 md:w-16 md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:p-2 xl:left-6">
+        <SidebarContent>
+          <SidebarMenu className="grid-cols-3 md:flex md:flex-col">
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <Link
-              key={item.href}
-              to={item.href}
-              title={item.label}
-              aria-current={item.active ? "page" : undefined}
-              className={cn(
-                "group relative flex h-12 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-medium text-zinc-400 transition hover:bg-white/8 hover:text-zinc-50 md:w-12 md:px-0",
-                item.active ? "bg-zinc-50 text-zinc-950 shadow-sm hover:bg-zinc-50 hover:text-zinc-950" : "",
-              )}
-            >
-              <Icon className="size-5 shrink-0" />
-              <span className="truncate md:sr-only">{item.label}</span>
-              {typeof item.count === "number" ? (
-                <Badge
-                  variant={item.active ? "secondary" : "outline"}
+            <Tooltip key={item.href}>
+              <TooltipTrigger asChild>
+                <SidebarMenuButton
+                  asChild
+                  aria-current={item.active ? "page" : undefined}
                   className={cn(
-                    "h-5 min-w-5 px-1 text-[10px] md:absolute md:-right-1 md:-top-1",
-                    item.active ? "bg-zinc-900 text-zinc-50" : "border-white/10 bg-[#202124] text-zinc-300",
+                    "md:w-12 md:px-0",
+                    item.active ? "bg-zinc-50 text-zinc-950 shadow-sm hover:bg-zinc-50 hover:text-zinc-950" : "",
                   )}
                 >
-                  {item.count}
-                </Badge>
-              ) : null}
-            </Link>
+                  <Link to={item.href}>
+                    <Icon className="size-5 shrink-0" />
+                    <span className="truncate md:sr-only">{item.label}</span>
+                    {typeof item.count === "number" ? (
+                      <SidebarMenuBadge>
+                        <Badge
+                          variant={item.active ? "secondary" : "outline"}
+                          className={cn(
+                            "h-5 min-w-5 px-1 text-[10px]",
+                            item.active ? "bg-zinc-900 text-zinc-50" : "border-white/10 bg-[#202124] text-zinc-300",
+                          )}
+                        >
+                          {item.count}
+                        </Badge>
+                      </SidebarMenuBadge>
+                    ) : null}
+                  </Link>
+                </SidebarMenuButton>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="hidden md:block">{item.label}</TooltipContent>
+            </Tooltip>
           );
         })}
-      </div>
-    </nav>
+          </SidebarMenu>
+        </SidebarContent>
+      </Sidebar>
+    </TooltipProvider>
   );
 }
 

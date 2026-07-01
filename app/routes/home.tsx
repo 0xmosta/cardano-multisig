@@ -22,6 +22,7 @@ import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
 import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
+import { Alert, AlertDescription } from "../components/ui/alert";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -32,6 +33,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Progress } from "../components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Textarea } from "../components/ui/textarea";
 import {
   type MultisigWallet,
@@ -1560,30 +1562,34 @@ export default function Home() {
               <h2 className="text-xl font-semibold text-zinc-50">Wallet workspace</h2>
               <p className="mt-1 text-sm text-zinc-400">Keep the first step simple: import something real, or create a fresh M-of-N policy.</p>
             </div>
-            <div className="grid grid-cols-2 rounded-lg border border-border bg-slate-950/70 p-1">
-              {(["import", "create"] as Mode[]).map((item) => (
-                <Button key={item} variant={mode === item ? "default" : "ghost"} size="sm" onClick={() => setMode(item)}>
-                  {item === "import" ? <Import className="size-4" /> : <Plus className="size-4" />}
-                  {item}
-                </Button>
-              ))}
-            </div>
+            <Tabs value={mode} onValueChange={(value) => setMode(value as Mode)}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="import">
+                  <Import className="size-4" /> import
+                </TabsTrigger>
+                <TabsTrigger value="create">
+                  <Plus className="size-4" /> create
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
 
           {mode === "import" ? (
             <>
-              <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-slate-950/70 p-1">
-                {([
-                  { id: "export", label: "Script", icon: FileJson },
-                  { id: "address", label: "Address", icon: Search },
-                  { id: "signer", label: "Signer", icon: WalletCards },
-                ] as { id: ImportMode; label: string; icon: typeof FileJson }[]).map((item) => (
-                  <Button key={item.id} type="button" variant={importMode === item.id ? "default" : "ghost"} size="sm" className="min-w-0 px-2" onClick={() => setImportMode(item.id)}>
-                    <item.icon className="size-3.5 shrink-0" />
-                    {item.label}
-                  </Button>
-                ))}
-              </div>
+              <Tabs value={importMode} onValueChange={(value) => setImportMode(value as ImportMode)}>
+                <TabsList className="grid w-full grid-cols-3">
+                  {([
+                    { id: "export", label: "Script", icon: FileJson },
+                    { id: "address", label: "Address", icon: Search },
+                    { id: "signer", label: "Signer", icon: WalletCards },
+                  ] as { id: ImportMode; label: string; icon: typeof FileJson }[]).map((item) => (
+                    <TabsTrigger key={item.id} value={item.id} className="min-w-0 px-2">
+                      <item.icon className="size-3.5 shrink-0" />
+                      {item.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
 
               {importMode === "export" ? (
                 <>
@@ -1653,7 +1659,11 @@ export default function Home() {
                   <Button variant="secondary" onClick={() => void lookupAddressImport()} disabled={discoveringAddress}>
                     <Search className="size-4" /> {discoveringAddress ? "Checking address..." : "Inspect address"}
                   </Button>
-                  {addressDiscoveryError ? <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{addressDiscoveryError}</div> : null}
+                  {addressDiscoveryError ? (
+                    <Alert variant="warning">
+                      <AlertDescription>{addressDiscoveryError}</AlertDescription>
+                    </Alert>
+                  ) : null}
                   {addressDiscovery ? (
                     <div className="space-y-3 rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
                       <div>
@@ -1669,14 +1679,18 @@ export default function Home() {
                         ))}
                       </div>
                       {addressDiscovery.recoveredScript ? (
-                        <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                        <Alert variant="success">
+                          <AlertDescription>
                           Native script recovered from a historical transaction witness. This can be imported as a full multisig wallet without pasting script JSON.
                           <div className="mt-1 break-all font-mono text-xs text-emerald-200/80">tx {addressDiscovery.recoveredScript.txHash}</div>
-                        </div>
+                          </AlertDescription>
+                        </Alert>
                       ) : (
-                        <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
+                        <Alert variant="warning">
+                          <AlertDescription>
                           No historical native-script witness was found for this address yet. Save it as watch-only now, or import a wallet export/native script later to create transactions.
-                        </div>
+                          </AlertDescription>
+                        </Alert>
                       )}
                       <Button onClick={saveAddressDiscovery} disabled={!addressDiscovery.address}>
                         <Plus className="size-4" /> {addressDiscovery.recoveredScript ? "Import recovered multisig" : "Save watch-only wallet"}
@@ -1716,14 +1730,16 @@ export default function Home() {
                       </div>
                     ) : null}
                     {signerSearchError ? (
-                      <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{signerSearchError}</div>
+                      <Alert variant="warning" className="mt-3">
+                        <AlertDescription>{signerSearchError}</AlertDescription>
+                      </Alert>
                     ) : null}
                   </div>
 
                   {activeSignerKeyHash && !signerWalletMatches.length ? (
-                    <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                      No saved multisigs in this browser match this signer yet. Import by address/ADA Handle or wallet export first, then rerun the signer search.
-                    </div>
+                    <Alert variant="warning">
+                      <AlertDescription>No saved multisigs in this browser match this signer yet. Import by address/ADA Handle or wallet export first, then rerun the signer search.</AlertDescription>
+                    </Alert>
                   ) : null}
                 </div>
               ) : null}

@@ -6,7 +6,9 @@ import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { Input } from "../components/ui/input";
+import { InputGroup, InputGroupAddon } from "../components/ui/input-group";
 import {
   type MultisigWallet,
   LEGACY_STORAGE_KEY,
@@ -84,15 +86,17 @@ export default function WalletsRoute() {
 
       <AppWindow title="Wallets" contentClassName="p-0">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
-          <div className="flex min-w-full flex-1 items-center gap-2 rounded-md border border-input bg-black/20 px-3 sm:min-w-0">
-            <Search className="size-4 shrink-0 text-zinc-500" />
+          <InputGroup className="min-w-full flex-1 sm:min-w-0">
+            <InputGroupAddon>
+              <Search />
+            </InputGroupAddon>
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search wallet, handle, signer, status..."
-              className="border-0 bg-transparent px-0 shadow-none"
+              className="h-full border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             />
-          </div>
+          </InputGroup>
           <Badge variant="secondary" className="max-sm:w-full max-sm:justify-center">
             {visibleWallets.length} shown
           </Badge>
@@ -142,9 +146,14 @@ export default function WalletsRoute() {
             })}
           </div>
         ) : (
-          <div className="m-5 rounded-lg border border-dashed border-white/10 bg-black/20 p-8 text-center text-zinc-400">
-            {wallets.length ? "No wallet matches the current search." : "No wallets saved yet. Import or create one from Home."}
-          </div>
+          <Empty className="m-5">
+            <EmptyHeader>
+              <EmptyTitle>{wallets.length ? "No wallet matches" : "No wallets saved yet"}</EmptyTitle>
+              <EmptyDescription>
+                {wallets.length ? "Try a different handle, signer, or status." : "Import or create one from Home."}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </AppWindow>
     </div>

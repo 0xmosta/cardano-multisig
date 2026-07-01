@@ -18,6 +18,7 @@ import {
 import { cn } from "../lib/utils";
 import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -957,17 +958,22 @@ export default function WalletDetail() {
       </section>
 
       {connectWarning ? (
-        <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-          <AlertTriangle className="mr-2 inline size-4" /> {connectWarning}
-        </div>
+        <Alert variant="warning">
+          <AlertTriangle />
+          <AlertDescription>{connectWarning}</AlertDescription>
+        </Alert>
       ) : null}
       {isWatchOnly ? (
-        <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-          <AlertTriangle className="mr-2 inline size-4" />
-          This wallet was imported from an address or ADA Handle. It can show visible assets, but transaction creation and signing need the native script or wallet export.
-        </div>
+        <Alert variant="warning">
+          <AlertTriangle />
+          <AlertDescription>This wallet was imported from an address or ADA Handle. It can show visible assets, but transaction creation and signing need the native script or wallet export.</AlertDescription>
+        </Alert>
       ) : null}
-      {signStatus ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">{signStatus}</div> : null}
+      {signStatus ? (
+        <Alert variant="info">
+          <AlertDescription>{signStatus}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-6">
@@ -1149,32 +1155,32 @@ export default function WalletDetail() {
                           </div>
 
                           {phase === "ready" && providerStatus?.services.submit ? (
-                            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-                              <div className="font-semibold">Ready to submit</div>
-                              <div className="mt-1">The required threshold is met. The relay will submit automatically; keep this page open or use manual submit if it does not complete.</div>
-                            </div>
+                            <Alert variant="success">
+                              <AlertTitle>Ready to submit</AlertTitle>
+                              <AlertDescription>The required threshold is met. The relay will submit automatically; keep this page open or use manual submit if it does not complete.</AlertDescription>
+                            </Alert>
                           ) : null}
 
                           {unmatched ? (
-                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                              <span>
-                                {unmatched} signature{unmatched === 1 ? " was" : "s were"} captured but did not match a policy signer key hash and will not count toward submit.
-                              </span>
-                              <Button size="sm" variant="secondary" onClick={() => discardUnmatchedSignatures(tx.id)}>
-                                <Trash2 className="size-4" /> Remove unmatched
-                              </Button>
-                            </div>
+                            <Alert variant="warning">
+                              <AlertDescription className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                                <span>{unmatched} signature{unmatched === 1 ? " was" : "s were"} captured but did not match a policy signer key hash and will not count toward submit.</span>
+                                <Button size="sm" variant="secondary" onClick={() => discardUnmatchedSignatures(tx.id)}>
+                                  <Trash2 className="size-4" /> Remove unmatched
+                                </Button>
+                              </AlertDescription>
+                            </Alert>
                           ) : null}
 
                           {tx.failureReason && !tx.txHash ? (
-                            <div className="rounded-lg border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-100">
-                              Last submit attempt failed: {tx.failureReason}
-                            </div>
+                            <Alert variant="destructive">
+                              <AlertDescription>Last submit attempt failed: {tx.failureReason}</AlertDescription>
+                            </Alert>
                           ) : null}
 
                           {tx.txHash ? (
-                            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-                              <div className="font-semibold">Transaction submitted</div>
+                            <Alert variant="success">
+                              <AlertTitle>Transaction submitted</AlertTitle>
                               <div className="mt-1 break-all font-mono text-xs text-emerald-200">{tx.txHash}</div>
                               <div className="mt-3 flex flex-wrap gap-2">
                                 <Button size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(tx.txHash || "")}>Copy tx hash</Button>
@@ -1184,13 +1190,13 @@ export default function WalletDetail() {
                                   </a>
                                 </Button>
                               </div>
-                            </div>
+                            </Alert>
                           ) : null}
 
                           {!canSign ? (
-                            <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                              Missing unsigned tx CBOR — rebuild or recreate the transaction before asking signers to approve it.
-                            </div>
+                            <Alert variant="warning">
+                              <AlertDescription>Missing unsigned tx CBOR — rebuild or recreate the transaction before asking signers to approve it.</AlertDescription>
+                            </Alert>
                           ) : null}
                         </div>
 

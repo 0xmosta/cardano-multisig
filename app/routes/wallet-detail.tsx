@@ -1,4 +1,5 @@
 import { Link, useSearchParams, useParams } from "react-router";
+import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -18,15 +19,14 @@ import {
 import { cn } from "../lib/utils";
 import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
-import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { DataTable } from "../components/ui/data-table";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { Textarea } from "../components/ui/textarea";
 import {
   type MultisigWallet as Wallet,
@@ -894,6 +894,59 @@ export default function WalletDetail() {
   const pending = walletTxs.filter((tx) => txPhase(tx) === "pending").length;
   const ready = walletTxs.filter((tx) => txPhase(tx) === "ready").length;
   const submitted = walletTxs.filter((tx) => txPhase(tx) === "submitted").length;
+  const assetColumns: ColumnDef<AssetOption>[] = [
+    {
+      header: "Asset",
+      cell: ({ row }) => {
+        const asset = row.original;
+        const isAda = asset.unit === "lovelace";
+        return (
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-xs font-semibold text-muted-foreground">
+              {asset.label.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <div className="truncate font-medium text-foreground" title={asset.label}>{asset.label}</div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                <Badge variant={isAda ? "secondary" : "outline"} className="max-w-32 truncate text-[10px]">
+                  {isAda ? "ADA" : "native asset"}
+                </Badge>
+                {asset.outputCount ? (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                    {asset.outputCount} UTxO{asset.outputCount === 1 ? "" : "s"}
+                  </Badge>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      id: "balance",
+      header: () => <div className="text-right">Balance</div>,
+      cell: ({ row }) => {
+        const asset = row.original;
+        const quantity = formatRawQuantity(asset.quantity, asset.unit, asset.decimals);
+        return (
+          <div className="truncate text-right font-mono text-sm font-semibold tabular-nums text-foreground" title={quantity}>
+            {quantity}
+          </div>
+        );
+      },
+    },
+    {
+      id: "unit",
+      header: () => <div className="text-right">Unit</div>,
+      cell: ({ row }) => (
+        <div className="flex justify-end">
+          <Button type="button" variant="ghost" size="icon-sm" title={row.original.unit} onClick={() => void copyAssetUnit(row.original)} aria-label={`Copy ${row.original.label} unit`}>
+            <Copy className="size-3.5" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-6">
@@ -958,21 +1011,25 @@ export default function WalletDetail() {
       </section>
 
       {connectWarning ? (
-        <Alert variant="warning">
+        <Card>
+          <CardContent className="flex gap-3 p-4 text-sm text-muted-foreground">
           <AlertTriangle />
-          <AlertDescription>{connectWarning}</AlertDescription>
-        </Alert>
+          <span>{connectWarning}</span>
+          </CardContent>
+        </Card>
       ) : null}
       {isWatchOnly ? (
-        <Alert variant="warning">
-          <AlertTriangle />
-          <AlertDescription>This wallet was imported from an address or ADA Handle. It can show visible assets, but transaction creation and signing need the native script or wallet export.</AlertDescription>
-        </Alert>
+        <Card>
+          <CardContent className="flex gap-3 p-4 text-sm text-muted-foreground">
+            <AlertTriangle className="size-4 shrink-0" />
+            <span>This wallet was imported from an address or ADA Handle. It can show visible assets, but transaction creation and signing need the native script or wallet export.</span>
+          </CardContent>
+        </Card>
       ) : null}
       {signStatus ? (
-        <Alert variant="info">
-          <AlertDescription>{signStatus}</AlertDescription>
-        </Alert>
+        <Card>
+          <CardContent className="p-4 text-sm text-muted-foreground">{signStatus}</CardContent>
+        </Card>
       ) : null}
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -1155,34 +1212,36 @@ export default function WalletDetail() {
                           </div>
 
                           {phase === "ready" && providerStatus?.services.submit ? (
-                            <Alert variant="success">
-                              <AlertTitle>Ready to submit</AlertTitle>
-                              <AlertDescription>The required threshold is met. The relay will submit automatically; keep this page open or use manual submit if it does not complete.</AlertDescription>
-                            </Alert>
+                            <Card>
+                              <CardContent className="p-4">
+                                <div className="font-medium text-foreground">Ready to submit</div>
+                                <div className="mt-1 text-sm text-muted-foreground">The required threshold is met. The relay will submit automatically; keep this page open or use manual submit if it does not complete.</div>
+                              </CardContent>
+                            </Card>
                           ) : null}
 
                           {unmatched ? (
-                            <Alert variant="warning">
-                              <AlertDescription className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                            <Card>
+                              <CardContent className="flex min-w-0 flex-wrap items-center justify-between gap-3 p-4 text-sm text-muted-foreground">
                                 <span>{unmatched} signature{unmatched === 1 ? " was" : "s were"} captured but did not match a policy signer key hash and will not count toward submit.</span>
                                 <Button size="sm" variant="secondary" onClick={() => discardUnmatchedSignatures(tx.id)}>
                                   <Trash2 className="size-4" /> Remove unmatched
                                 </Button>
-                              </AlertDescription>
-                            </Alert>
+                              </CardContent>
+                            </Card>
                           ) : null}
 
                           {tx.failureReason && !tx.txHash ? (
-                            <Alert variant="destructive">
-                              <AlertDescription>Last submit attempt failed: {tx.failureReason}</AlertDescription>
-                            </Alert>
+                            <Card className="border-destructive/50">
+                              <CardContent className="p-4 text-sm text-destructive">Last submit attempt failed: {tx.failureReason}</CardContent>
+                            </Card>
                           ) : null}
 
                           {tx.txHash ? (
-                            <Alert variant="success">
-                              <AlertTitle>Transaction submitted</AlertTitle>
-                              <AlertDescription className="mt-2 w-full gap-3">
-                                <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+                            <Card>
+                              <CardContent className="p-4">
+                                <div className="font-medium text-foreground">Transaction submitted</div>
+                                <div className="mt-3 flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
                                   <code className="block min-w-0 flex-1 truncate rounded-md border border-border bg-muted px-2.5 py-1.5 font-mono text-xs text-foreground" title={tx.txHash}>
                                     {tx.txHash}
                                   </code>
@@ -1197,14 +1256,14 @@ export default function WalletDetail() {
                                     </Button>
                                   </div>
                                 </div>
-                              </AlertDescription>
-                            </Alert>
+                              </CardContent>
+                            </Card>
                           ) : null}
 
                           {!canSign ? (
-                            <Alert variant="warning">
-                              <AlertDescription>Missing unsigned tx CBOR — rebuild or recreate the transaction before asking signers to approve it.</AlertDescription>
-                            </Alert>
+                            <Card>
+                              <CardContent className="p-4 text-sm text-muted-foreground">Missing unsigned tx CBOR — rebuild or recreate the transaction before asking signers to approve it.</CardContent>
+                            </Card>
                           ) : null}
                         </div>
 
@@ -1301,71 +1360,15 @@ export default function WalletDetail() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="p-5">
               {walletAssets.length === 0 ? (
-                <div className="m-5 rounded-lg border border-border bg-black/20 p-4 text-sm text-slate-400">
+                <div className="rounded-lg border p-4 text-sm text-muted-foreground">
                   <Database className="mr-2 inline size-4 text-sky-300" /> {assetStatus}
                 </div>
               ) : (
-                <Table className="table-fixed">
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="w-[56%]">Asset</TableHead>
-                      <TableHead className="w-[34%] text-right">Balance</TableHead>
-                      <TableHead className="w-12 text-right">Unit</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {walletAssets.map((asset) => {
-                      const quantity = formatRawQuantity(asset.quantity, asset.unit, asset.decimals);
-                      const isAda = asset.unit === "lovelace";
-                      return (
-                        <TableRow key={asset.unit}>
-                          <TableCell className="min-w-0">
-                            <div className="flex min-w-0 items-center gap-3">
-                              <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs font-semibold text-muted-foreground">
-                                {asset.label.slice(0, 2).toUpperCase()}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="truncate font-medium text-foreground" title={asset.label}>{asset.label}</div>
-                                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-                                  <Badge variant={isAda ? "secondary" : "outline"} className="max-w-32 truncate text-[10px]">
-                                    {isAda ? "ADA" : "native asset"}
-                                  </Badge>
-                                  {asset.outputCount ? (
-                                    <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                                      {asset.outputCount} UTxO{asset.outputCount === 1 ? "" : "s"}
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="min-w-0 text-right align-middle">
-                            <div className="truncate font-mono text-sm font-semibold tabular-nums text-foreground" title={quantity}>
-                              {quantity}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right align-middle">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="ml-auto"
-                              title={asset.unit}
-                              onClick={() => void copyAssetUnit(asset)}
-                              aria-label={`Copy ${asset.label} unit`}
-                            >
-                              <Copy className="size-3.5" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <DataTable columns={assetColumns} data={walletAssets} emptyLabel={assetStatus} />
               )}
-              <div className="border-t border-border px-5 py-3 text-xs text-slate-500">{assetStatus}</div>
+              <div className="mt-3 text-xs text-muted-foreground">{assetStatus}</div>
             </CardContent>
           </Card>
         </div>

@@ -8,6 +8,9 @@ import {
   type RelayRoomWitnessRecord,
   relayInviteUrl,
 } from "../lib/relay-room";
+import { submitErrorMessage, submitSignedTransaction } from "../lib/server/cardano-submit";
+import { buildSignedRelayTransactionCbor } from "../lib/server/relay-submit";
+import type { RelayRoomRecord } from "../lib/server/relay-room-store";
 import { verifiedWitnessKeyHashes } from "../lib/witness-verification";
 
 async function relayStore() {
@@ -139,6 +142,48 @@ function initialWitnessRecords(
   return initial;
 }
 
+async function autoSubmitRelayRoomIfReady(room: RelayRoomRecord) {
+  const { relayProgress, replaceRelayRoomFile } = await relayStore();
+  let submitError = "";
+  const nextRoom = await replaceRelayRoomFile(room, async (current) => {
+    if (current.status !== "open" || current.submission?.txHash) return current;
+    const progress = relayProgress(current);
+    if (progress.matchedCount < progress.requiredSignatures) return current;
+    const recentFailureAt = Date.parse(current.submissionFailure?.failedAt || "");
+    if (Number.isFinite(recentFailureAt) && Date.now() - recentFailureAt < 45_000) {
+      submitError = current.submissionFailure?.error || "Automatic submit is cooling down after a failed attempt.";
+      return current;
+    }
+
+    try {
+      const signedTxCbor = buildSignedRelayTransactionCbor(current);
+      const submitted = await submitSignedTransaction(signedTxCbor, current.network);
+      return {
+        ...current,
+        status: "submitted" as const,
+        updatedAt: new Date().toISOString(),
+        submission: {
+          txHash: submitted.txHash,
+          submittedAt: new Date().toISOString(),
+        },
+        submissionFailure: undefined,
+      };
+    } catch (error) {
+      submitError = submitErrorMessage(error);
+      console.error(`relay auto submit failed for room ${current.id}: ${submitError}`);
+      return {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        submissionFailure: {
+          error: submitError,
+          failedAt: new Date().toISOString(),
+        },
+      };
+    }
+  });
+  return { room: nextRoom, submitError };
+}
+
 async function handleCreate(request: Request, raw: Record<string, unknown>) {
   const { assertRelayCreatePayload, createRelayRoom } = await relayStore();
   const payload = assertRelayCreatePayload(raw as unknown as RelayRoomCreateRequest);
@@ -197,17 +242,18 @@ async function handleSession(raw: Record<string, unknown>) {
     };
   });
   const synced = await syncEquivalentRelayRoomWitnesses(current);
+  const autoSubmitted = await autoSubmitRelayRoomIfReady(synced);
 
   if (session.role === "coordinator") {
-    return Response.json({ ok: true, role: "coordinator", room: coordinatorRoomView(synced) });
+    return Response.json({ ok: true, role: "coordinator", room: coordinatorRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
   }
   if (session.role === "shared-signer") {
-    return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(synced) });
+    return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
   }
 
-  const signer = synced.signers.find((item) => item.keyHash === session.signer.keyHash);
+  const signer = autoSubmitted.room.signers.find((item) => item.keyHash === session.signer.keyHash);
   if (!signer) throw new Error("Relay signer is no longer available for this room.");
-  return Response.json({ ok: true, role: "signer", room: signerRoomView(synced, signer) });
+  return Response.json({ ok: true, role: "signer", room: signerRoomView(autoSubmitted.room, signer), autoSubmitError: autoSubmitted.submitError || undefined });
 }
 
 async function handleSign(raw: Record<string, unknown>) {
@@ -264,13 +310,16 @@ async function handleSign(raw: Record<string, unknown>) {
     };
   });
   const synced = await syncEquivalentRelayRoomWitnesses(room);
+  const autoSubmitted = await autoSubmitRelayRoomIfReady(synced);
 
   return Response.json({
     ok: true,
     delivered: true,
     matchStatus: matchedSignerKeyHash ? "matched" : "unmatched",
     matchedSignerKeyHash,
-    thresholdReached: relayProgress(synced).matchedCount >= Math.max(synced.tx.requiredSignatures || 1, 1),
+    thresholdReached: relayProgress(autoSubmitted.room).matchedCount >= Math.max(autoSubmitted.room.tx.requiredSignatures || 1, 1),
+    submission: autoSubmitted.room.submission,
+    autoSubmitError: autoSubmitted.submitError || undefined,
   });
 }
 
@@ -301,7 +350,8 @@ async function handleView(raw: Record<string, unknown>) {
   const room = await readRelayRoom(roomId);
   await configuredNetworkGuard(room.network);
   const synced = await syncEquivalentRelayRoomWitnesses(room);
-  return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(synced) });
+  const autoSubmitted = await autoSubmitRelayRoomIfReady(synced);
+  return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
 }
 
 export async function action({ request }: { request: Request }) {

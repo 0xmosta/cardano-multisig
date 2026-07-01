@@ -589,6 +589,8 @@ export default function WalletDetail() {
           unsignedTxCbor: tx.unsignedTxCbor,
           requiredSignatures: tx.requiredSignatures,
           signerKeyHashes: tx.signerKeyHashes,
+          paymentScript: wallet.paymentScript,
+          stakeScript: wallet.stakeScript ?? null,
         },
         signers: tx.signerKeyHashes.map((keyHash) => ({
           keyHash,
@@ -1096,12 +1098,12 @@ export default function WalletDetail() {
                               <div className="mt-2 text-sm text-zinc-200">
                                 {phase === "submitted"
                                   ? "Submission already recorded for this transaction."
-                                  : missing.length
-                                    ? tx.relayRoom
-                                      ? "Copy one shared signer link and send it to every signer. Returned witnesses merge into this room automatically; the manual package import remains available as a fallback."
-                                      : "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
+                                    : missing.length
+                                      ? tx.relayRoom
+                                        ? "Copy one shared signer link and send it to every signer. Returned witnesses merge into this room automatically; the manual package import remains available as a fallback."
+                                        : "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
                                     : providerStatus?.services.submit
-                                      ? `All required witnesses are present. Submit to ${providerStatus.network} from this wallet page.`
+                                      ? `All required witnesses are present. Relay submit runs automatically; use manual submit here only as a fallback.`
                                       : "All required witnesses are present, but this deployment still has submit disabled."}
                               </div>
                           </div>
@@ -1109,7 +1111,7 @@ export default function WalletDetail() {
                           {phase === "ready" && providerStatus?.services.submit ? (
                             <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
                               <div className="font-semibold">Ready to submit</div>
-                              <div className="mt-1">The required threshold is met. Review the recipient and assets, then submit the signed transaction.</div>
+                              <div className="mt-1">The required threshold is met. The relay will submit automatically; keep this page open or use manual submit if it does not complete.</div>
                             </div>
                           ) : null}
 

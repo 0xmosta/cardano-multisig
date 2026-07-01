@@ -1,4 +1,4 @@
-import type { AssetLine, Network, RelayRoomRef, SignatureRecord, TxDraft } from "./multisig";
+import type { AssetLine, NativeScript, Network, RelayRoomRef, SignatureRecord, TxDraft } from "./multisig";
 import { mergeSignatures, nowIso } from "./multisig";
 
 export type RelayRoomStatus = "open" | "submitted" | "cancelled" | "expired";
@@ -17,6 +17,8 @@ export type RelayRoomTx = {
   unsignedTxCbor: string;
   requiredSignatures: number;
   signerKeyHashes: string[];
+  paymentScript?: NativeScript;
+  stakeScript?: NativeScript | null;
 };
 
 export type RelayRoomSignerInvite = {
@@ -109,8 +111,8 @@ export type RelayRoomSessionRequest = {
 };
 
 export type RelayRoomSessionResponse =
-  | { ok: true; role: "coordinator"; room: RelayRoomCoordinatorView }
-  | { ok: true; role: "signer"; room: RelayRoomSignerView };
+  | { ok: true; role: "coordinator"; room: RelayRoomCoordinatorView; autoSubmitError?: string }
+  | { ok: true; role: "signer"; room: RelayRoomSignerView; autoSubmitError?: string };
 
 export type RelayRoomSignRequest = {
   intent: "sign";
@@ -127,6 +129,8 @@ export type RelayRoomSignResponse = {
   matchStatus: RelayWitnessMatchStatus;
   matchedSignerKeyHash?: string;
   thresholdReached: boolean;
+  submission?: RelayRoomSubmission;
+  autoSubmitError?: string;
 };
 
 export type RelayRoomSubmitRequest = {

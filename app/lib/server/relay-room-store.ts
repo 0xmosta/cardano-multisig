@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import path from "node:path";
 import {
   type Network,
+  type NativeScript,
   isKeyHash,
   isRecord,
   normalizeKeyHash,
@@ -48,6 +49,10 @@ export type RelayRoomRecord = {
   signers: RelayRoomStoredSigner[];
   witnesses: RelayRoomWitnessRecord[];
   submission?: RelayRoomSubmission;
+  submissionFailure?: {
+    error: string;
+    failedAt: string;
+  };
 };
 
 export type RelayRoomTokenSession =
@@ -109,6 +114,21 @@ function assertOptionalString(value: unknown) {
   return next || undefined;
 }
 
+function assertOptionalNativeScript(value: unknown): NativeScript | undefined {
+  if (!isRecord(value)) return undefined;
+  const type = assertString(value.type, "script.type");
+  const script: NativeScript = { type };
+  if (typeof value.keyHash === "string" && value.keyHash.trim()) script.keyHash = normalizeKeyHash(value.keyHash);
+  if (typeof value.required === "number") script.required = value.required;
+  if (typeof value.slot === "number") script.slot = value.slot;
+  if (Array.isArray(value.scripts)) script.scripts = value.scripts.map(assertOptionalNativeScript).filter(Boolean) as NativeScript[];
+  for (const [key, raw] of Object.entries(value)) {
+    if (key in script || key === "scripts") continue;
+    script[key] = raw;
+  }
+  return script;
+}
+
 function assertAssetLine(raw: unknown) {
   if (!isRecord(raw)) throw new Error("Invalid relay room asset.");
   return {
@@ -155,6 +175,8 @@ function assertRelayRoomTx(raw: unknown): RelayRoomTx {
     unsignedTxCbor,
     requiredSignatures,
     signerKeyHashes,
+    paymentScript: assertOptionalNativeScript(raw.paymentScript),
+    stakeScript: assertOptionalNativeScript(raw.stakeScript) ?? null,
   };
 }
 
@@ -238,6 +260,12 @@ function assertRelayRoomRecord(raw: unknown): RelayRoomRecord {
       ? {
           txHash: assertString(raw.submission.txHash, "submission.txHash"),
           submittedAt: assertString(raw.submission.submittedAt, "submission.submittedAt"),
+        }
+      : undefined,
+    submissionFailure: isRecord(raw.submissionFailure)
+      ? {
+          error: assertString(raw.submissionFailure.error, "submissionFailure.error"),
+          failedAt: assertString(raw.submissionFailure.failedAt, "submissionFailure.failedAt"),
         }
       : undefined,
   };

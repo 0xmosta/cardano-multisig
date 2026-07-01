@@ -1089,6 +1089,8 @@ export default function Home() {
           unsignedTxCbor: draft.unsignedTxCbor,
           requiredSignatures: draft.requiredSignatures,
           signerKeyHashes: draft.signerKeyHashes,
+          paymentScript: wallet?.paymentScript,
+          stakeScript: wallet?.stakeScript ?? null,
         },
         signers: draft.signerKeyHashes.map((keyHash) => ({
           keyHash,
@@ -1165,7 +1167,7 @@ export default function Home() {
           }),
         });
         const body = (await response.json()) as
-          | { ok: true; thresholdReached: boolean; matchStatus: "matched" | "unmatched" }
+          | { ok: true; thresholdReached: boolean; matchStatus: "matched" | "unmatched"; submission?: { txHash: string }; autoSubmitError?: string }
           | { ok: false; error?: string };
         if (!response.ok || !body.ok) {
           throw new Error(("error" in body && body.error) || "Could not deliver the signature to the coordinator.");
@@ -1178,9 +1180,17 @@ export default function Home() {
           );
           return;
         }
+        if (body.submission?.txHash || refreshed.status === "submitted") {
+          setStatus(`Signature delivered. Transaction submitted${body.submission?.txHash ? `: ${body.submission.txHash}` : "."}`);
+          return;
+        }
+        if (body.autoSubmitError) {
+          setStatus(`Signature delivered, but automatic submit failed: ${body.autoSubmitError}`);
+          return;
+        }
         setStatus(
           body.thresholdReached || refreshed.progress.matchedCount >= refreshed.progress.requiredSignatures
-            ? "Threshold already reached — your signature was delivered as optional. You can close this page."
+            ? "Threshold reached. The coordinator can submit manually if automatic relay submit has not completed yet."
             : "Signature delivered to the coordinator. You can close this page.",
         );
         return;

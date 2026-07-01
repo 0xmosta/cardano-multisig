@@ -1181,15 +1181,23 @@ export default function WalletDetail() {
                           {tx.txHash ? (
                             <Alert variant="success">
                               <AlertTitle>Transaction submitted</AlertTitle>
-                              <div className="mt-1 break-all font-mono text-xs text-emerald-200">{tx.txHash}</div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                <Button size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(tx.txHash || "")}>Copy tx hash</Button>
-                                <Button asChild size="sm" variant="secondary">
-                                  <a href={explorerTxUrl(tx.network, tx.txHash)} target="_blank" rel="noreferrer">
-                                    Open explorer
-                                  </a>
-                                </Button>
-                              </div>
+                              <AlertDescription className="mt-2 w-full gap-3">
+                                <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+                                  <code className="block min-w-0 flex-1 truncate rounded-md border border-border bg-muted px-2.5 py-1.5 font-mono text-xs text-foreground" title={tx.txHash}>
+                                    {tx.txHash}
+                                  </code>
+                                  <div className="flex shrink-0 flex-wrap gap-2">
+                                    <Button size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(tx.txHash || "")}>
+                                      <Copy className="size-4" /> Copy
+                                    </Button>
+                                    <Button asChild size="sm" variant="outline">
+                                      <a href={explorerTxUrl(tx.network, tx.txHash)} target="_blank" rel="noreferrer">
+                                        Open explorer
+                                      </a>
+                                    </Button>
+                                  </div>
+                                </div>
+                              </AlertDescription>
                             </Alert>
                           ) : null}
 
@@ -1299,12 +1307,12 @@ export default function WalletDetail() {
                   <Database className="mr-2 inline size-4 text-sky-300" /> {assetStatus}
                 </div>
               ) : (
-                <Table>
+                <Table className="table-fixed">
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead className="w-[48%]">Asset</TableHead>
-                      <TableHead className="text-right">Balance</TableHead>
-                      <TableHead className="w-10 text-right">Unit</TableHead>
+                      <TableHead className="w-[56%]">Asset</TableHead>
+                      <TableHead className="w-[34%] text-right">Balance</TableHead>
+                      <TableHead className="w-12 text-right">Unit</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1315,17 +1323,17 @@ export default function WalletDetail() {
                         <TableRow key={asset.unit}>
                           <TableCell className="min-w-0">
                             <div className="flex min-w-0 items-center gap-3">
-                              <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.03] text-xs font-semibold text-emerald-200">
+                              <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs font-semibold text-muted-foreground">
                                 {asset.label.slice(0, 2).toUpperCase()}
                               </div>
                               <div className="min-w-0">
-                                <div className="truncate font-medium text-zinc-100">{asset.label}</div>
+                                <div className="truncate font-medium text-foreground" title={asset.label}>{asset.label}</div>
                                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-                                  <Badge variant={isAda ? "secondary" : "outline"} className="max-w-32 truncate border-white/10 text-[10px]">
+                                  <Badge variant={isAda ? "secondary" : "outline"} className="max-w-32 truncate text-[10px]">
                                     {isAda ? "ADA" : "native asset"}
                                   </Badge>
                                   {asset.outputCount ? (
-                                    <Badge variant="outline" className="border-white/10 text-[10px] text-zinc-500">
+                                    <Badge variant="outline" className="text-[10px] text-muted-foreground">
                                       {asset.outputCount} UTxO{asset.outputCount === 1 ? "" : "s"}
                                     </Badge>
                                   ) : null}
@@ -1333,8 +1341,8 @@ export default function WalletDetail() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="max-w-40 text-right align-middle">
-                            <div className="truncate font-mono text-sm font-semibold text-zinc-50" title={quantity}>
+                          <TableCell className="min-w-0 text-right align-middle">
+                            <div className="truncate font-mono text-sm font-semibold tabular-nums text-foreground" title={quantity}>
                               {quantity}
                             </div>
                           </TableCell>
@@ -1342,13 +1350,13 @@ export default function WalletDetail() {
                             <Button
                               type="button"
                               variant="ghost"
-                              size="sm"
-                              className="ml-auto h-8 max-w-28 justify-end px-2 font-mono text-xs text-zinc-400"
+                              size="icon-sm"
+                              className="ml-auto"
                               title={asset.unit}
                               onClick={() => void copyAssetUnit(asset)}
+                              aria-label={`Copy ${asset.label} unit`}
                             >
                               <Copy className="size-3.5" />
-                              <span className="hidden sm:inline">{compactMiddle(asset.unit, 6, 4)}</span>
                             </Button>
                           </TableCell>
                         </TableRow>

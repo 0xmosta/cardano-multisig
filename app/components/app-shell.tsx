@@ -140,7 +140,7 @@ function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount
                   aria-current={item.active ? "page" : undefined}
                   className={cn(
                     "md:w-12 md:px-0",
-                    item.active ? "bg-zinc-50 text-zinc-950 shadow-sm hover:bg-zinc-50 hover:text-zinc-950" : "",
+                    item.active ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm hover:bg-sidebar-primary hover:text-sidebar-primary-foreground" : "",
                   )}
                 >
                   <Link to={item.href}>
@@ -152,7 +152,7 @@ function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount
                           variant={item.active ? "secondary" : "outline"}
                           className={cn(
                             "h-5 min-w-5 px-1 text-[10px]",
-                            item.active ? "bg-zinc-900 text-zinc-50" : "border-white/10 bg-[#202124] text-zinc-300",
+                            item.active ? "bg-secondary text-secondary-foreground" : "bg-sidebar text-sidebar-foreground",
                           )}
                         >
                           {item.count}
@@ -262,7 +262,7 @@ export function AppShell() {
   };
 
   return (
-    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 pb-24 pt-6 text-zinc-100 sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
+    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 pb-24 pt-6 text-foreground sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
       <AppSidebar walletCount={walletCount} roomCount={roomCount} />
       <AppHeader
         providers={providers}

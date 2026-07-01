@@ -6,7 +6,7 @@ export function Sidebar({ className, ...props }: React.ComponentProps<"nav">) {
   return (
     <nav
       data-slot="sidebar"
-      className={cn("rounded-xl border border-white/10 bg-[#18181b]/95 p-1 shadow-2xl shadow-black/50 backdrop-blur", className)}
+      className={cn("rounded-xl border border-sidebar-border bg-sidebar/95 p-1 text-sidebar-foreground shadow-lg backdrop-blur", className)}
       {...props}
     />
   );
@@ -29,7 +29,7 @@ export function SidebarMenuButton({
   return (
     <Comp
       data-slot="sidebar-menu-button"
-      className={cn("group relative flex h-12 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-medium text-zinc-400 transition hover:bg-white/8 hover:text-zinc-50", className)}
+      className={cn("group relative flex h-12 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-medium text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", className)}
       {...props}
     />
   );

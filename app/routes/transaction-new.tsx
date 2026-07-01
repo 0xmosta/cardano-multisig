@@ -12,7 +12,6 @@ import {
   ImageIcon,
   Loader2,
   RefreshCw,
-  Search,
   Send,
   ShieldCheck,
   WalletCards,
@@ -25,6 +24,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "../components/ui/select";
 import { Textarea } from "../components/ui/textarea";
 import {
   type AssetLine,
@@ -156,10 +161,23 @@ function AssetThumb({
   asset: Pick<AssetOption, "label" | "unit" | "image">;
   className?: string;
 }) {
-  if (asset.image) {
+  const [failedSrc, setFailedSrc] = useState("");
+
+  useEffect(() => {
+    setFailedSrc("");
+  }, [asset.image]);
+
+  if (asset.image && failedSrc !== asset.image) {
     return (
       <div className={`${className} overflow-hidden rounded-md border border-white/10 bg-black/30`}>
-        <img src={asset.image} alt="" className="h-full w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
+        <img
+          src={asset.image}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedSrc(asset.image || "")}
+        />
       </div>
     );
   }
@@ -266,8 +284,6 @@ export default function NewTransaction() {
   const [buildInfo, setBuildInfo] = useState("");
   const [note, setNote] = useState("");
   const [status, setStatus] = useState("");
-  const [openAssetPickerId, setOpenAssetPickerId] = useState<string | null>(null);
-  const [assetSearch, setAssetSearch] = useState("");
 
   useEffect(() => {
     setWallets(readArray<Wallet>(WALLET_KEY));
@@ -349,8 +365,6 @@ export default function NewTransaction() {
           : asset,
       ),
     );
-    setOpenAssetPickerId(null);
-    setAssetSearch("");
   }
 
   function updateAsset(id: string, patch: Partial<SelectedAsset>) {
@@ -380,24 +394,6 @@ export default function NewTransaction() {
 
   function removeAsset(id: string) {
     setAssets((current) => (current.length > 1 ? current.filter((item) => item.id !== id) : current));
-  }
-
-  function filteredAssetOptions(currentUnit: string) {
-    const query = assetSearch.trim().toLowerCase();
-    return assetOptions
-      .filter((option) => {
-        if (!query) return true;
-        return [option.label, option.unit, option.fingerprint, option.policyId, option.assetName]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(query));
-      })
-      .sort((left, right) => {
-        if (left.unit === currentUnit) return -1;
-        if (right.unit === currentUnit) return 1;
-        if (left.unit === "lovelace") return -1;
-        if (right.unit === "lovelace") return 1;
-        return left.label.localeCompare(right.label);
-      });
   }
 
   async function buildUnsignedTx(txAssets: AssetLine[]) {
@@ -651,78 +647,41 @@ export default function NewTransaction() {
             {assets.map((asset) => {
                 const option = assetOptions.find((item) => item.unit === asset.unit);
                 const selected = option || ({ ...asset, source: "treasury", outputCount: 0 } satisfies AssetOption);
-                const pickerOpen = openAssetPickerId === asset.id;
-                const choices = filteredAssetOptions(asset.unit);
                 return (
                   <div key={asset.id} className="min-w-0 rounded-lg border border-white/8 bg-[#111113] p-3 transition focus-within:border-white/15 hover:border-white/12">
                     <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_180px_36px]">
-                      <div className="relative min-w-0">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="flex min-h-16 w-full min-w-0 justify-between gap-3 bg-[#18181b] px-3 py-2 text-left hover:border-white/18 hover:bg-white/[0.04]"
-                        onClick={() => {
-                          setOpenAssetPickerId(pickerOpen ? null : asset.id);
-                          setAssetSearch("");
-                        }}
-                      >
-                        <span className="flex min-w-0 flex-1 items-center gap-3">
-                          <AssetThumb asset={selected} />
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-semibold text-slate-100">
-                              {selected.label}
+                      <div className="min-w-0">
+                        <Select value={asset.unit} onValueChange={(unit) => applyAsset(asset.id, unit)}>
+                          <SelectTrigger className="h-auto min-h-16 w-full min-w-0 border-white/10 bg-[#18181b] px-3 py-2 text-left hover:border-white/18 hover:bg-white/[0.04] [&>svg]:ml-auto">
+                            <span className="flex min-w-0 flex-1 items-center gap-3">
+                              <AssetThumb asset={selected} />
+                              <span className="min-w-0">
+                                <span className="block truncate text-sm font-semibold text-slate-100">
+                                  {selected.label}
+                                </span>
+                                <span className="mt-0.5 block truncate text-xs text-slate-500">
+                                  {assetSubtitle(selected)}
+                                </span>
+                              </span>
                             </span>
-                            <span className="mt-0.5 block truncate text-xs text-slate-500">
-                              {assetSubtitle(selected)}
-                            </span>
-                          </span>
-                        </span>
-                        <ChevronDown className="size-4 shrink-0 text-slate-500" />
-                      </Button>
-
-                      {pickerOpen ? (
-                        <div className="relative z-40 mt-2 max-w-full overflow-hidden rounded-lg border border-border bg-[#18181b] shadow-2xl shadow-black/50 sm:absolute sm:left-0 sm:right-0 sm:top-[calc(100%+0.5rem)] sm:mt-0">
-                          <div className="border-b border-border p-2.5">
-                            <div className="flex items-center gap-2 rounded-md border border-input bg-black/20 px-3">
-                              <Search className="size-4 shrink-0 text-slate-500" />
-                              <Input
-                                value={assetSearch}
-                                onChange={(event) => setAssetSearch(event.target.value)}
-                                placeholder="Search asset, fingerprint, policy..."
-                                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm text-slate-100 shadow-none"
-                                autoFocus
-                              />
-                            </div>
-                            <div className="mt-2 text-xs text-slate-500">{choices.length} matching asset{choices.length === 1 ? "" : "s"}</div>
-                          </div>
-                          <div className="max-h-80 overflow-y-auto p-2">
-                            {choices.length ? (
-                              choices.map((choice) => (
-                                <Button
-                                  key={choice.unit}
-                                  type="button"
-                                  variant="ghost"
-                                  className="flex w-full min-w-0 items-center gap-3 rounded-md p-2 text-left transition hover:bg-white/[0.05]"
-                                  onClick={() => applyAsset(asset.id, choice.unit)}
-                                >
-                                  <AssetThumb asset={choice} className="size-12" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-96">
+                            {assetOptions.map((choice) => (
+                              <SelectItem key={choice.unit} value={choice.unit} className="py-2">
+                                <span className="flex min-w-0 items-center gap-3">
+                                  <AssetThumb asset={choice} className="size-10" />
                                   <span className="min-w-0 flex-1">
-                                    <span className="flex min-w-0 items-center justify-between gap-3">
-                                      <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{choice.label}</span>
-                                      <span className="max-w-28 shrink-0 truncate rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-xs text-slate-400 sm:max-w-none">
-                                        {formatRawQuantity(choice.quantity, choice.unit, choice.decimals)}
-                                      </span>
-                                    </span>
-                                    <span className="mt-1 block truncate text-xs text-slate-500">{assetSubtitle(choice)}</span>
+                                    <span className="block truncate text-sm font-semibold">{choice.label}</span>
+                                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">{assetSubtitle(choice)}</span>
                                   </span>
-                                </Button>
-                              ))
-                            ) : (
-                              <div className="p-4 text-sm text-slate-500">No matching asset in this multisig wallet.</div>
-                            )}
-                          </div>
-                        </div>
-                      ) : null}
+                                  <span className="ml-3 shrink-0 rounded-md border border-border bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
+                                    {formatRawQuantity(choice.quantity, choice.unit, choice.decimals)}
+                                  </span>
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="min-w-0 rounded-md border border-input bg-[#18181b] px-3 py-2">
                         <div className="mb-1 flex min-w-0 items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">

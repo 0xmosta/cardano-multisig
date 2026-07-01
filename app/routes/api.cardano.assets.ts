@@ -98,10 +98,10 @@ function joinMetadataValue(value: unknown): string | undefined {
 function normalizeImageUrl(value: unknown): string | undefined {
   const raw = joinMetadataValue(value)?.trim();
   if (!raw) return undefined;
-  if (/^ipfs:\/\//i.test(raw)) return `https://ipfs.io/ipfs/${raw.replace(/^ipfs:\/\//i, "").replace(/^ipfs\//i, "")}`;
-  if (/^ipfs\//i.test(raw)) return `https://ipfs.io/ipfs/${raw.replace(/^ipfs\//i, "")}`;
+  if (/^ipfs:\/\//i.test(raw)) return `https://dweb.link/ipfs/${raw.replace(/^ipfs:\/\//i, "").replace(/^ipfs\//i, "")}`;
+  if (/^ipfs\//i.test(raw)) return `https://dweb.link/ipfs/${raw.replace(/^ipfs\//i, "")}`;
   if (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw)) return raw;
-  if (/^[a-z0-9]{46,}|^bafy[a-z0-9]+/i.test(raw)) return `https://ipfs.io/ipfs/${raw}`;
+  if (/^[a-z0-9]{46,}|^bafy[a-z0-9]+/i.test(raw)) return `https://dweb.link/ipfs/${raw}`;
   return undefined;
 }
 function metadataName(value: unknown): string | undefined {

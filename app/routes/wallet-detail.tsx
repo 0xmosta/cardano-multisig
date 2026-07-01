@@ -8,9 +8,11 @@ import {
   Check,
   CheckCircle2,
   Clock3,
+  Coins,
   Copy,
   Database,
   FileUp,
+  ImageIcon,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -64,7 +66,18 @@ import {
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
 type AssetLine = { id: string; unit: string; label: string; quantity: string; decimals?: number };
-type AssetOption = { unit: string; label: string; quantity: string; outputCount?: number; decimals?: number };
+type AssetOption = {
+  unit: string;
+  label: string;
+  quantity: string;
+  outputCount?: number;
+  decimals?: number;
+  fingerprint?: string;
+  image?: string;
+  mediaType?: string;
+  policyId?: string;
+  assetName?: string;
+};
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
 type AssetFetch = { assets: AssetOption[]; handle?: HandleInfo | null; source?: string; address?: string; outputs?: number };
 type TxPhase = "pending" | "ready" | "submitted";
@@ -146,6 +159,48 @@ function formatRawQuantity(quantity: string, unit: string, decimals = unit === "
 function compactMiddle(value: string, start = 10, end = 8) {
   if (value.length <= start + end + 3) return value;
   return `${value.slice(0, start)}...${value.slice(-end)}`;
+}
+
+function assetSubtitle(asset: Pick<AssetOption, "unit" | "fingerprint" | "policyId" | "assetName">) {
+  if (asset.unit === "lovelace") return "Cardano native currency";
+  if (asset.fingerprint) return asset.fingerprint;
+  if (asset.policyId) return `${compactMiddle(asset.policyId, 12, 8)}${asset.assetName ? `.${compactMiddle(asset.assetName, 8, 4)}` : ""}`;
+  return compactMiddle(asset.unit, 18, 10);
+}
+
+function AssetThumb({
+  asset,
+  className = "size-10",
+}: {
+  asset: Pick<AssetOption, "label" | "unit" | "image">;
+  className?: string;
+}) {
+  const [failedSrc, setFailedSrc] = useState("");
+
+  useEffect(() => {
+    setFailedSrc("");
+  }, [asset.image]);
+
+  if (asset.image && failedSrc !== asset.image) {
+    return (
+      <div className={cn(className, "overflow-hidden rounded-md border bg-muted")}>
+        <img
+          src={asset.image}
+          alt=""
+          className="size-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedSrc(asset.image || "")}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn(className, "flex shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground")}>
+      {asset.unit === "lovelace" ? <Coins className="size-4 text-sky-300" /> : <ImageIcon className="size-4" />}
+    </div>
+  );
 }
 
 function txPhase(tx: TxDraft): TxPhase {
@@ -902,11 +957,10 @@ export default function WalletDetail() {
         const isAda = asset.unit === "lovelace";
         return (
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-xs font-semibold text-muted-foreground">
-              {asset.label.slice(0, 2).toUpperCase()}
-            </div>
+            <AssetThumb asset={asset} className="size-10" />
             <div className="min-w-0">
               <div className="truncate font-medium text-foreground" title={asset.label}>{asset.label}</div>
+              <div className="mt-0.5 truncate text-xs text-muted-foreground">{assetSubtitle(asset)}</div>
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
                 <Badge variant={isAda ? "secondary" : "outline"} className="max-w-32 truncate text-[10px]">
                   {isAda ? "ADA" : "native asset"}

@@ -1,6 +1,7 @@
 node_modules
 build
 .git
+.worktrees
 .gitignore
 README.md
 npm-debug.log*

@@ -2,7 +2,9 @@ export type BrowserWalletApi = {
   getUsedAddresses(): Promise<string[]>;
   getUnusedAddresses(): Promise<string[]>;
   getChangeAddress(): Promise<string>;
+  getRewardAddresses?(): Promise<string[]>;
   getNetworkId(): Promise<number>;
+  signData?(addressHex: string, payloadHex: string): Promise<{ signature: string; key: string }>;
   signTx(txCbor: string, partialSign?: boolean): Promise<string>;
   submitTx?(txCbor: string): Promise<string>;
 };

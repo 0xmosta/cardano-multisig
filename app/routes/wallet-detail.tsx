@@ -525,11 +525,12 @@ export default function WalletDetail() {
       const updates = await Promise.all(
         relayDrafts.map(async (tx) => {
           const token = tx.relayRoom!.coordinatorToken || relayTokenFromInviteUrl(tx.relayRoom!.sharedInviteUrl || "");
-          const room = token ? await fetchRelayRoom(token) : await fetchRelayRoomView(tx.relayRoom!.roomId);
+          if (!token) return null;
+          const room = await fetchRelayRoom(token);
           return { txId: tx.id, room };
         }),
       );
-      const byId = new Map(updates.map((entry) => [entry.txId, entry.room]));
+      const byId = new Map(updates.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)).map((entry) => [entry.txId, entry.room]));
       let changed = false;
       setTxs((current) => {
         const next = current.map((tx) => {
@@ -590,19 +591,6 @@ export default function WalletDetail() {
     });
     const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
     if (!response.ok || !body.ok || body.role !== "coordinator") {
-      throw new Error(("error" in body && body.error) || "Could not load relay room state.");
-    }
-    return body.room;
-  }
-
-  async function fetchRelayRoomView(roomId: string): Promise<RelayRoomSignerView> {
-    const response = await fetch("/api/cardano/relay-room", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ intent: "view", roomId }),
-    });
-    const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
-    if (!response.ok || !body.ok || body.role !== "signer") {
       throw new Error(("error" in body && body.error) || "Could not load relay room state.");
     }
     return body.room;

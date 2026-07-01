@@ -1,13 +1,16 @@
-import { ArrowRight, CheckCircle2, Clock, Plus, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock, Cloud, Loader2, Plus, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { Route } from "./+types/transactions";
+import { AccountSyncPanel } from "../components/account-sync-panel";
+import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { DataTable } from "../components/ui/data-table";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { Input } from "../components/ui/input";
 import { Progress } from "../components/ui/progress";
 import {
@@ -59,9 +62,12 @@ function newTransactionHref(tx: TxDraft) {
 }
 
 export default function TransactionsRoute() {
+  const { account, accountState, refreshServerState, saveServerState } = useAppShell();
   const [transactions, setTransactions] = useState<TxDraft[]>([]);
   const [query, setQuery] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   async function refreshRelayRooms(source = readTransactions()) {
     const relayTransactions = source.filter((tx) => tx.relayRoom?.roomId);
@@ -90,7 +96,11 @@ export default function TransactionsRoute() {
             return room ? applyRelayRoomToDraft(tx, room) : tx;
           }),
         );
-        writeTransactions(next);
+        if (accountState) {
+          void saveServerState({ wallets: accountState.wallets, transactions: next });
+        } else {
+          writeTransactions(next);
+        }
         return next;
       });
     } finally {
@@ -99,6 +109,32 @@ export default function TransactionsRoute() {
   }
 
   useEffect(() => {
+    if (account.authenticated) {
+      if (accountState) {
+        setTransactions(accountState.transactions);
+        void refreshRelayRooms(accountState.transactions).catch(() => undefined);
+        return;
+      }
+      let cancelled = false;
+      setLoading(true);
+      setLoadError("");
+      refreshServerState()
+        .then((state) => {
+          if (!cancelled && state) {
+            setTransactions(state.transactions);
+            void refreshRelayRooms(state.transactions).catch(() => undefined);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) setLoadError(error instanceof Error ? error.message : "Could not load server transactions.");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
     const stored = readTransactions();
     setTransactions(stored);
     void refreshRelayRooms(stored).catch(() => undefined);
@@ -113,7 +149,7 @@ export default function TransactionsRoute() {
       window.removeEventListener("storage", refreshFromStorage);
       window.removeEventListener("focus", refreshFromStorage);
     };
-  }, []);
+  }, [account.authenticated, accountState]);
 
   const visibleTransactions = useMemo(() => {
     const value = query.trim().toLowerCase();
@@ -219,7 +255,7 @@ export default function TransactionsRoute() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-zinc-50">Transactions</h1>
-          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Track pending signature rooms, open wallet coordinators, and continue transaction work.</p>
+          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Track pending signature rooms, open wallet coordinators, and continue transaction work from {account ? "server-synced account state" : "this browser"}.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary">
@@ -232,6 +268,8 @@ export default function TransactionsRoute() {
           </Button>
         </div>
       </div>
+
+      <AccountSyncPanel />
 
       <AppWindow title="Transaction rooms" contentClassName="p-0">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
@@ -250,7 +288,37 @@ export default function TransactionsRoute() {
           </Badge>
         </div>
         <div className="p-5">
-          <DataTable columns={columns} data={visibleTransactions} emptyLabel={transactions.length ? "No transaction matches." : "No transaction rooms yet."} />
+          {loading ? (
+            <Empty>
+              <EmptyHeader>
+                <Loader2 className="size-5 animate-spin text-sky-200" />
+                <EmptyTitle>Loading server transactions</EmptyTitle>
+                <EmptyDescription>Fetching transaction rooms for your authenticated account.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : loadError ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>Could not load transactions</EmptyTitle>
+                <EmptyDescription>{loadError}</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button type="button" variant="secondary" onClick={() => void refreshServerState()}>
+                  Retry
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ) : transactions.length ? (
+            <DataTable columns={columns} data={visibleTransactions} emptyLabel="No transaction matches." />
+          ) : (
+            <Empty>
+              <EmptyHeader>
+                {account ? <Cloud className="size-5 text-sky-200" /> : <Clock className="size-5 text-muted-foreground" />}
+                <EmptyTitle>{account ? "No server transaction rooms yet" : "No local transaction rooms yet"}</EmptyTitle>
+                <EmptyDescription>{account ? "Import a local browser copy above or create a new transaction from a synced wallet." : "Create a transaction from a wallet, then sign in to make rooms available across browsers."}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
         </div>
       </AppWindow>
     </div>

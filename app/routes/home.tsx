@@ -534,7 +534,7 @@ function clearRelayInviteSession() {
 }
 
 export default function Home() {
-  const { connected, refreshConnectedWallet } = useAppShell();
+  const { account, accountSyncState, connected, importLocalState, migrationCounts, refreshConnectedWallet, signInConnectedWallet } = useAppShell();
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -790,15 +790,15 @@ export default function Home() {
 
     const rooms = await Promise.all(
       relayDrafts.map(async (draft) => {
-        const roomId = draft.relayRoom?.roomId;
-        if (!roomId) return null;
+        const token = draft.relayRoom?.coordinatorToken || relayTokenFromInviteUrl(draft.relayRoom?.sharedInviteUrl || "");
+        if (!token) return null;
         const response = await fetch("/api/cardano/relay-room", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ intent: "view", roomId }),
+          body: JSON.stringify({ intent: "session", token }),
         });
         const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
-        if (!response.ok || !body.ok || body.role !== "signer") return null;
+        if (!response.ok || !body.ok || body.role !== "coordinator") return null;
         return { draftId: draft.id, room: body.room };
       }),
     );
@@ -1328,6 +1328,34 @@ export default function Home() {
 
   return (
     <div id="home" className="flex scroll-mt-24 flex-col gap-6">
+      {!visibleDraft && (account.authenticated || migrationCounts.available) ? (
+        <AppWindow title="Authenticated account state">
+          <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm text-zinc-300">
+                {account.authenticated && account.session
+                  ? `Server-backed ${account.session.identity.kind} account active for ${account.network}.`
+                  : "This browser still has local-only wallets or transactions."}
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">
+                Sync state: {accountSyncState}. Local cache currently holds {migrationCounts.wallets} wallets and {migrationCounts.transactions} transactions.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {!account.authenticated ? (
+                <Button type="button" onClick={() => void signInConnectedWallet()} disabled={!connected}>
+                  {connected ? "Sign challenge for server sync" : "Connect a wallet to enable sync"}
+                </Button>
+              ) : migrationCounts.available ? (
+                <Button type="button" onClick={() => void importLocalState()}>
+                  Import local cache into account
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </AppWindow>
+      ) : null}
+
       {visibleDraft ? (
         <div ref={signaturePanelRef}>
         <AppWindow title="Pending signature request" className="border-emerald-400/25">

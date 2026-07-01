@@ -1,13 +1,16 @@
-import { ArrowRight, Plus, Search, WalletCards } from "lucide-react";
+import { ArrowRight, Cloud, Loader2, Plus, Search, WalletCards } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { Route } from "./+types/wallets";
+import { AccountSyncPanel } from "../components/account-sync-panel";
+import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { DataTable } from "../components/ui/data-table";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { Input } from "../components/ui/input";
 import {
   type MultisigWallet,
@@ -42,12 +45,38 @@ function walletHref(wallet: MultisigWallet) {
 }
 
 export default function WalletsRoute() {
+  const { account, accountState, refreshServerState } = useAppShell();
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    setWallets(readWallets());
-  }, []);
+    if (!account.authenticated) {
+      setWallets(readWallets());
+      return;
+    }
+    if (accountState) {
+      setWallets(accountState.wallets);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError("");
+    refreshServerState()
+      .then((state) => {
+        if (!cancelled && state) setWallets(state.wallets);
+      })
+      .catch((error) => {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Could not load server wallets.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account.authenticated, accountState]);
 
   const visibleWallets = useMemo(() => {
     const value = query.trim().replace(/^\$/, "").toLowerCase();
@@ -159,7 +188,7 @@ export default function WalletsRoute() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-zinc-50">Wallets</h1>
-          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open saved multisig policies, review signer rules, and continue treasury work.</p>
+          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open saved multisig policies, review signer rules, and continue treasury work from {account ? "your signed-in server account" : "this browser"}.</p>
         </div>
         <Button asChild>
           <Link to="/">
@@ -167,6 +196,8 @@ export default function WalletsRoute() {
           </Link>
         </Button>
       </div>
+
+      <AccountSyncPanel />
 
       <AppWindow title="Wallets" contentClassName="p-0">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
@@ -185,7 +216,44 @@ export default function WalletsRoute() {
           </Badge>
         </div>
         <div className="p-5">
-          <DataTable columns={columns} data={visibleWallets} emptyLabel={wallets.length ? "No wallet matches." : "No wallets saved yet."} />
+          {loading ? (
+            <Empty>
+              <EmptyHeader>
+                <Loader2 className="size-5 animate-spin text-sky-200" />
+                <EmptyTitle>Loading server wallets</EmptyTitle>
+                <EmptyDescription>Fetching the wallet list for your authenticated account.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : loadError ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>Could not load wallets</EmptyTitle>
+                <EmptyDescription>{loadError}</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button type="button" variant="secondary" onClick={() => void refreshServerState()}>
+                  Retry
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ) : wallets.length ? (
+            <DataTable columns={columns} data={visibleWallets} emptyLabel="No wallet matches." />
+          ) : (
+            <Empty>
+              <EmptyHeader>
+                {account ? <Cloud className="size-5 text-sky-200" /> : <WalletCards className="size-5 text-muted-foreground" />}
+                <EmptyTitle>{account ? "No server wallets yet" : "No local wallets saved yet"}</EmptyTitle>
+                <EmptyDescription>{account ? "Import a local browser copy above or create/import a policy to save it for this account." : "Create or import a multisig wallet from Home, then sign in to sync it across browsers."}</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button asChild>
+                  <Link to="/">
+                    <Plus className="size-4" /> Import or create
+                  </Link>
+                </Button>
+              </EmptyContent>
+            </Empty>
+          )}
         </div>
       </AppWindow>
     </div>

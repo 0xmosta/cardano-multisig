@@ -504,6 +504,7 @@ export function sharedSignerRoomView(room: RelayRoomRecord): RelayRoomSignerView
     expiresAt: room.expiresAt,
     tx: room.tx,
     witnesses: room.witnesses,
+    submission: room.submission,
     signer: {
       keyHash: "",
       label: "Shared signer link",
@@ -523,6 +524,7 @@ export function signerRoomView(room: RelayRoomRecord, signer: RelayRoomStoredSig
     expiresAt: room.expiresAt,
     tx: room.tx,
     witnesses: room.witnesses,
+    submission: room.submission,
     signer: {
       keyHash: signer.keyHash,
       label: signer.label,

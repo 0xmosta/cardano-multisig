@@ -1,4 +1,4 @@
-import { ArrowRight, Clock, Plus, Search, ShieldCheck, Users } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock, Plus, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
@@ -17,6 +17,8 @@ import {
   pendingSignatureCount,
   signatureCount,
 } from "../lib/multisig";
+import { applyRelayRoomToDraft, type RelayRoomSessionResponse } from "../lib/relay-room";
+import { cn } from "../lib/utils";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Transactions · Cardano Multisig" }];
@@ -32,6 +34,22 @@ function readTransactions() {
   }
 }
 
+function writeTransactions(transactions: TxDraft[]) {
+  window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(transactions, null, 2));
+}
+
+function transactionState(tx: TxDraft) {
+  if (tx.txHash || tx.relayRoom?.status === "submitted" || tx.status === "succeeded") return "submitted";
+  if (pendingSignatureCount(tx) <= 0) return "ready";
+  return "pending";
+}
+
+function statusBadgeVariant(state: ReturnType<typeof transactionState>) {
+  if (state === "submitted") return "default" as const;
+  if (state === "ready") return "secondary" as const;
+  return "outline" as const;
+}
+
 function walletHref(tx: TxDraft) {
   return tx.walletId ? `/wallets/${encodeURIComponent(tx.walletId)}` : "/";
 }
@@ -43,18 +61,56 @@ function newTransactionHref(tx: TxDraft) {
 export default function TransactionsRoute() {
   const [transactions, setTransactions] = useState<TxDraft[]>([]);
   const [query, setQuery] = useState("");
+  const [syncing, setSyncing] = useState(false);
+
+  async function refreshRelayRooms(source = readTransactions()) {
+    const relayTransactions = source.filter((tx) => tx.relayRoom?.roomId);
+    if (!relayTransactions.length) return;
+    setSyncing(true);
+    try {
+      const updates = await Promise.all(
+        relayTransactions.map(async (tx) => {
+          const response = await fetch("/api/cardano/relay-room", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ intent: "view", roomId: tx.relayRoom!.roomId }),
+          });
+          const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
+          if (!response.ok || !body.ok) return null;
+          return { txId: tx.id, room: body.room };
+        }),
+      );
+      const byId = new Map(updates.filter((item): item is NonNullable<typeof item> => Boolean(item)).map((item) => [item.txId, item.room]));
+      if (!byId.size) return;
+      setTransactions((current) => {
+        const next = mergeTransactionDrafts(
+          current,
+          source.map((tx) => {
+            const room = byId.get(tx.id);
+            return room ? applyRelayRoomToDraft(tx, room) : tx;
+          }),
+        );
+        writeTransactions(next);
+        return next;
+      });
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   useEffect(() => {
-    setTransactions(readTransactions());
+    const stored = readTransactions();
+    setTransactions(stored);
+    void refreshRelayRooms(stored).catch(() => undefined);
     const refreshFromStorage = () => {
-      setTransactions((current) => mergeTransactionDrafts(current, readTransactions()));
+      const stored = readTransactions();
+      setTransactions((current) => mergeTransactionDrafts(current, stored));
+      void refreshRelayRooms(stored).catch(() => undefined);
     };
     window.addEventListener("storage", refreshFromStorage);
-    window.addEventListener("cardano-multisig:storage", refreshFromStorage);
     window.addEventListener("focus", refreshFromStorage);
     return () => {
       window.removeEventListener("storage", refreshFromStorage);
-      window.removeEventListener("cardano-multisig:storage", refreshFromStorage);
       window.removeEventListener("focus", refreshFromStorage);
     };
   }, []);
@@ -68,7 +124,7 @@ export default function TransactionsRoute() {
         tx.walletName,
         tx.recipient,
         tx.network,
-        tx.status || "pending",
+        transactionState(tx),
         tx.txHash,
         ...(tx.signerKeyHashes || []),
       ]
@@ -79,7 +135,8 @@ export default function TransactionsRoute() {
     );
   }, [query, transactions]);
 
-  const readyCount = transactions.filter((tx) => pendingSignatureCount(tx) <= 0).length;
+  const readyCount = transactions.filter((tx) => transactionState(tx) === "ready").length;
+  const submittedCount = transactions.filter((tx) => transactionState(tx) === "submitted").length;
   const columns = useMemo<ColumnDef<TxDraft>[]>(
     () => [
       {
@@ -104,15 +161,16 @@ export default function TransactionsRoute() {
           const tx = row.original;
           const signed = signatureCount(tx);
           const missing = pendingSignatureCount(tx);
+          const state = transactionState(tx);
           return (
             <div className="min-w-36 space-y-2">
-              <Badge variant={missing ? "secondary" : "default"}>
+              <Badge variant={state === "submitted" ? "default" : missing ? "secondary" : "outline"}>
                 <Users className="size-3" /> {signed}/{tx.requiredSignatures}
               </Badge>
               <Progress value={signed} max={tx.requiredSignatures} />
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                {missing ? <Clock className="size-3" /> : <ShieldCheck className="size-3" />}
-                {missing ? `${missing} more` : "ready"}
+                {state === "submitted" ? <CheckCircle2 className="size-3" /> : missing ? <Clock className="size-3" /> : <ShieldCheck className="size-3" />}
+                {state === "submitted" ? "submitted" : missing ? `${missing} more` : "ready"}
               </div>
             </div>
           );
@@ -120,7 +178,16 @@ export default function TransactionsRoute() {
       },
       {
         header: "Status",
-        cell: ({ row }) => <Badge variant={pendingSignatureCount(row.original) ? "secondary" : "default"}>{row.original.status || "pending"}</Badge>,
+        cell: ({ row }) => {
+          const tx = row.original;
+          const state = transactionState(tx);
+          return (
+            <div className="space-y-1">
+              <Badge variant={statusBadgeVariant(state)}>{state}</Badge>
+              {tx.txHash ? <div className="max-w-40 truncate font-mono text-xs text-muted-foreground">{tx.txHash}</div> : null}
+            </div>
+          );
+        },
       },
       {
         id: "actions",
@@ -159,6 +226,10 @@ export default function TransactionsRoute() {
             {transactions.length} room{transactions.length === 1 ? "" : "s"}
           </Badge>
           {readyCount ? <Badge className="bg-emerald-300 text-emerald-950">{readyCount} ready</Badge> : null}
+          {submittedCount ? <Badge variant="secondary">{submittedCount} submitted</Badge> : null}
+          <Button type="button" size="sm" variant="secondary" onClick={() => void refreshRelayRooms(transactions)} disabled={syncing}>
+            <RefreshCw className={cn("size-4", syncing ? "animate-spin" : "")} /> Sync
+          </Button>
         </div>
       </div>
 

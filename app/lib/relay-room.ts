@@ -79,6 +79,7 @@ export type RelayRoomSignerView = {
   expiresAt: string;
   tx: RelayRoomTx;
   witnesses: RelayRoomWitnessRecord[];
+  submission?: RelayRoomSubmission;
   signer: {
     keyHash: string;
     label?: string;
@@ -185,6 +186,7 @@ export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorVie
     signatures: mergeSignatures(tx.signatures || [], relayWitnessesToSignatures(room.witnesses)),
     updatedAt: nowIso(),
     txHash: "submission" in room ? room.submission?.txHash || tx.txHash : tx.txHash,
+    status: "submission" in room && room.submission?.txHash ? "succeeded" : room.status === "submitted" ? "succeeded" : tx.status,
     relayRoom,
   };
 }
@@ -205,6 +207,8 @@ export function draftFromRelaySignerView(room: RelayRoomSignerView): TxDraft {
     signatures: relayWitnessesToSignatures(room.witnesses || []),
     createdAt: nowIso(),
     assets: room.tx.assets,
+    txHash: room.submission?.txHash,
+    status: room.submission?.txHash || room.status === "submitted" ? "succeeded" : "pending",
     updatedAt: nowIso(),
   };
 }

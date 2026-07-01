@@ -401,12 +401,14 @@ export function mergeTransactionDraft(existing: TxDraft, incoming: TxDraft): TxD
   const incomingIsNewer = txTime(incoming) >= txTime(existing);
   const base = incomingIsNewer ? existing : incoming;
   const latest = incomingIsNewer ? incoming : existing;
+  const txHash = latest.txHash || base.txHash;
   return {
     ...base,
     ...latest,
     signatures: mergeSignatures(base.signatures || [], latest.signatures || []),
     relayRoom: base.relayRoom || latest.relayRoom ? { ...base.relayRoom, ...latest.relayRoom } as RelayRoomRef : undefined,
-    txHash: latest.txHash || base.txHash,
+    txHash,
+    status: txHash ? "succeeded" : latest.status || base.status,
     failureReason: latest.failureReason || base.failureReason,
   };
 }

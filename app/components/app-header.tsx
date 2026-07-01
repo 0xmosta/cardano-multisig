@@ -10,7 +10,6 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import type { BrowserWalletApi, BrowserWalletProvider } from "../lib/browser-wallets";
-import { DEFAULT_NETWORK } from "../lib/multisig";
 
 export type AppHeaderProviderStatus = {
   mode: "server";
@@ -59,7 +58,7 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="mr-2 text-xl font-semibold leading-tight text-zinc-50 sm:text-2xl">Cardano multisig</h1>
           <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
-            {DEFAULT_NETWORK}
+            {providerStatus?.network || "provider"}
           </Badge>
           <Badge variant="secondary" className="max-w-full truncate">{providerReadyLabel(providerStatus)}</Badge>
         </div>

@@ -29,11 +29,20 @@ npm install
 npm run dev
 ```
 
+PostgreSQL-backed server persistence is optional for local development but required for production-like preprod/mainnet deploys. See `docs/postgresql-server-state-migration.md` for schema apply, file-store import, and smoke-test steps.
+
 ## Verification
 
 ```bash
 npm run typecheck
 npm run build
+```
+
+PostgreSQL persistence verification:
+
+```bash
+npm run db:migrate
+npm run smoke:postgres
 ```
 
 ## Deployment

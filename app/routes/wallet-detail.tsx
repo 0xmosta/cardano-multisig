@@ -1,6 +1,6 @@
 import { Link, useSearchParams, useParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -146,6 +146,10 @@ function stripRelayRoomSecrets(tx: TxDraft): TxDraft {
 function writeTransactions(value: TxDraft[]) {
   const stored = readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession);
   writeArray(TX_KEY, mergeTransactionDrafts(stored, value).map(stripRelayRoomSecrets));
+}
+
+function stateSnapshotKey(wallets: Wallet[], txs: TxDraft[]) {
+  return JSON.stringify({ wallets, txs });
 }
 
 function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {
@@ -434,10 +438,12 @@ async function buildSignedTxCbor(wallet: Wallet, tx: TxDraft) {
 export default function WalletDetail() {
   const { walletId } = useParams();
   const [searchParams] = useSearchParams();
-  const { providers, connected, providerStatus } = useAppShell();
+  const { account, accountState, connected, providerStatus, providers, refreshServerState, saveServerState } = useAppShell();
 
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [txs, setTxs] = useState<TxDraft[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+  const pendingServerSaveKeyRef = useRef<string | null>(null);
   const [signStatus, setSignStatus] = useState("");
   const [walletAssets, setWalletAssets] = useState<AssetOption[]>([]);
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
@@ -448,24 +454,73 @@ export default function WalletDetail() {
   const [relaySync, setRelaySync] = useState<RelaySyncState>({ status: "idle" });
 
   useEffect(() => {
-    setWallets(readArray<Wallet>(WALLET_KEY));
-    setTxs(readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession));
-  }, []);
+    let cancelled = false;
+    if (account.authenticated) {
+      if (accountState) {
+        setWallets(accountState.wallets);
+        setTxs(accountState.transactions.map(hydrateRelayRoomSession));
+        setHydrated(true);
+        return;
+      }
+      setHydrated(false);
+      void refreshServerState()
+        .then((state) => {
+          if (cancelled || !state) return;
+          setWallets(state.wallets);
+          setTxs(state.transactions.map(hydrateRelayRoomSession));
+          setHydrated(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setSignStatus(error instanceof Error ? error.message : "Could not load the authenticated account state.");
+          setHydrated(true);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
 
-  useEffect(() => {
     const refreshFromStorage = () => {
+      if (cancelled) return;
       setWallets(readArray<Wallet>(WALLET_KEY));
-      setTxs((current) => mergeTransactionDrafts(current, readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession)));
+      setTxs(readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession));
     };
+    refreshFromStorage();
+    setHydrated(true);
     window.addEventListener("storage", refreshFromStorage);
     window.addEventListener("cardano-multisig:storage", refreshFromStorage);
     window.addEventListener("focus", refreshFromStorage);
     return () => {
+      cancelled = true;
       window.removeEventListener("storage", refreshFromStorage);
       window.removeEventListener("cardano-multisig:storage", refreshFromStorage);
       window.removeEventListener("focus", refreshFromStorage);
     };
-  }, []);
+  }, [account.authenticated, accountState, refreshServerState]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (account.authenticated) {
+      if (!accountState) return;
+      const nextKey = stateSnapshotKey(wallets, txs);
+      const currentServerKey = stateSnapshotKey(accountState.wallets, accountState.transactions);
+      if (nextKey === currentServerKey || pendingServerSaveKeyRef.current === nextKey) return;
+      pendingServerSaveKeyRef.current = nextKey;
+      void saveServerState({ wallets, transactions: txs })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : "Could not sync the authenticated account state.";
+          setSignStatus(message);
+          toast.error("Could not sync account state", { description: message });
+        })
+        .finally(() => {
+          if (pendingServerSaveKeyRef.current === nextKey) pendingServerSaveKeyRef.current = null;
+        });
+      return;
+    }
+    pendingServerSaveKeyRef.current = null;
+    writeArray(WALLET_KEY, wallets);
+    writeTransactions(txs);
+  }, [account.authenticated, accountState, hydrated, saveServerState, txs, wallets]);
 
   const wallet = wallets.find((item) => item.id === walletId);
   const draftIdFromQuery = searchParams.get("draft");
@@ -525,11 +580,12 @@ export default function WalletDetail() {
       const updates = await Promise.all(
         relayDrafts.map(async (tx) => {
           const token = tx.relayRoom!.coordinatorToken || relayTokenFromInviteUrl(tx.relayRoom!.sharedInviteUrl || "");
-          const room = token ? await fetchRelayRoom(token) : await fetchRelayRoomView(tx.relayRoom!.roomId);
+          if (!token) return null;
+          const room = await fetchRelayRoom(token);
           return { txId: tx.id, room };
         }),
       );
-      const byId = new Map(updates.map((entry) => [entry.txId, entry.room]));
+      const byId = new Map(updates.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)).map((entry) => [entry.txId, entry.room]));
       let changed = false;
       setTxs((current) => {
         const next = current.map((tx) => {
@@ -546,7 +602,6 @@ export default function WalletDetail() {
           if (txChanged) changed = true;
           return txChanged ? updated : tx;
         });
-        if (changed) writeTransactions(next);
         return changed ? next : current;
       });
       setRelaySync({ status: "synced", at: nowIso() });
@@ -590,19 +645,6 @@ export default function WalletDetail() {
     });
     const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
     if (!response.ok || !body.ok || body.role !== "coordinator") {
-      throw new Error(("error" in body && body.error) || "Could not load relay room state.");
-    }
-    return body.room;
-  }
-
-  async function fetchRelayRoomView(roomId: string): Promise<RelayRoomSignerView> {
-    const response = await fetch("/api/cardano/relay-room", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ intent: "view", roomId }),
-    });
-    const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
-    if (!response.ok || !body.ok || body.role !== "signer") {
       throw new Error(("error" in body && body.error) || "Could not load relay room state.");
     }
     return body.room;
@@ -697,7 +739,6 @@ export default function WalletDetail() {
     const next = txs.map((item) => (item.id === tx.id ? { ...item, assets: relayAssets, relayRoom, updatedAt: nowIso() } : item));
     writeRelaySessionRoom(tx.id, relayRoom);
     setTxs(next);
-    writeTransactions(next);
     return relayRoom;
   }
 
@@ -741,7 +782,6 @@ export default function WalletDetail() {
           : item,
       );
       setTxs(next);
-      writeTransactions(next);
       setSignStatus(
         connected.keyHash
           ? "Signature captured. Copy the witness package for the coordinator or keep collecting signatures here."
@@ -835,7 +875,6 @@ export default function WalletDetail() {
           : item,
       );
       setTxs(next);
-      writeTransactions(next);
       let relayNote = "";
       if (tx.relayRoom?.coordinatorToken) {
         const relayResponse = await fetch("/api/cardano/relay-room", {
@@ -865,7 +904,6 @@ export default function WalletDetail() {
           : item,
       );
       setTxs(next);
-      writeTransactions(next);
       setSignStatus(message);
       toast.error("Submit failed", {
         description: message,
@@ -886,7 +924,6 @@ export default function WalletDetail() {
       });
       if (!found) throw new Error("This signature package belongs to a different transaction room.");
       setTxs(next);
-      writeTransactions(next);
       setSignaturePackageInput("");
       setSignStatus(`Imported ${signatures.length} signature${signatures.length === 1 ? "" : "s"} into the coordinator view.`);
       toast.success("Witness package imported", {
@@ -905,7 +942,6 @@ export default function WalletDetail() {
       tx.id === txId ? { ...tx, signatures: removeUnmatchedSignatures(tx), updatedAt: nowIso() } : tx,
     );
     setTxs(next);
-    writeTransactions(next);
     setSignStatus("Unmatched witness packages removed from this transaction.");
     toast("Unmatched witnesses removed");
   }
@@ -916,7 +952,6 @@ export default function WalletDetail() {
     const label = nameInput.trim() || wallet.name || (clean ? `$${clean}` : "Imported wallet");
     const next = wallets.map((item) => (item.id === wallet.id ? { ...item, name: label, handle: clean || undefined } : item));
     setWallets(next);
-    writeArray(WALLET_KEY, next);
     void refreshAssets({ ...wallet, name: label, handle: clean || undefined });
   }
 
@@ -937,7 +972,6 @@ export default function WalletDetail() {
       if (result.handle && !target.handle) {
         const next = wallets.map((item) => (item.id === target.id ? { ...item, handle: result.handle!.name } : item));
         setWallets(next);
-        writeArray(WALLET_KEY, next);
         setHandleInput(result.handle.name);
       }
       const prefix = result.handle ? `Resolved ${handleLabel(result.handle)} · ` : "";

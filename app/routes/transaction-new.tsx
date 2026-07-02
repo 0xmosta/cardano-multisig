@@ -17,6 +17,7 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
+import { AccountSyncPanel } from "../components/account-sync-panel";
 import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Button } from "../components/ui/button";
@@ -270,7 +271,7 @@ async function fetchMultisigAssets(wallet: Wallet): Promise<AssetFetch> {
 export default function NewTransaction() {
   const { walletId } = useParams();
   const navigate = useNavigate();
-  const { connected } = useAppShell();
+  const { account, accountState, connected, saveServerState } = useAppShell();
 
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [multisigAssets, setMultisigAssets] = useState<AssetOption[]>([]);
@@ -287,8 +288,12 @@ export default function NewTransaction() {
   const [status, setStatus] = useState("");
 
   useEffect(() => {
+    if (account.authenticated && accountState) {
+      setWallets(accountState.wallets as Wallet[]);
+      return;
+    }
     setWallets(readArray<Wallet>(WALLET_KEY));
-  }, []);
+  }, [account.authenticated, accountState]);
 
   const wallet = wallets.find((item) => item.id === walletId);
   const isWatchOnly = wallet ? !wallet.paymentScript && Boolean(wallet.discovery?.address) : false;
@@ -521,10 +526,15 @@ export default function NewTransaction() {
       updatedAt: now,
     };
 
-    const next = mergeTransactionDrafts(readArray<TxDraft>(TX_STORAGE_KEY), [tx]);
-    writeArray(TX_STORAGE_KEY, next);
+    if (account.authenticated && accountState) {
+      const nextTransactions = mergeTransactionDrafts(accountState.transactions, [tx]);
+      void saveServerState({ wallets: accountState.wallets, transactions: nextTransactions });
+    } else {
+      const next = mergeTransactionDrafts(readArray<TxDraft>(TX_STORAGE_KEY), [tx]);
+      writeArray(TX_STORAGE_KEY, next);
+    }
     toast.success("Transaction saved", {
-      description: "The coordinator room is ready.",
+      description: account.authenticated ? "Saved to the signed-in server account. Open the wallet coordinator to share signer invites." : "Open the wallet coordinator to share signer invites.",
     });
     navigate(`/wallets/${encodeURIComponent(wallet.id)}?draft=${encodeURIComponent(tx.id)}`);
   }
@@ -567,6 +577,7 @@ export default function NewTransaction() {
 
   return (
     <div className="flex min-w-0 flex-col gap-5 overflow-x-hidden">
+      <AccountSyncPanel compact />
       <div className="flex min-w-0 flex-wrap items-end justify-between gap-4">
         <div className="min-w-0 space-y-3">
           <Link to={`/wallets/${encodeURIComponent(wallet.id)}`} className="inline-flex items-center gap-2 text-sm text-sky-300 transition hover:text-sky-200">

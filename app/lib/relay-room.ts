@@ -1,5 +1,5 @@
 import type { AssetLine, NativeScript, Network, RelayRoomRef, SignatureRecord, TxDraft } from "./multisig";
-import { mergeSignatures, nowIso } from "./multisig";
+import { mergeSignatures, normalizeKeyHash, nowIso } from "./multisig";
 
 export type RelayRoomStatus = "open" | "submitted" | "cancelled" | "expired";
 export type RelayWitnessMatchStatus = "matched" | "unmatched";
@@ -20,6 +20,10 @@ export type RelayRoomTx = {
   paymentScript?: NativeScript;
   stakeScript?: NativeScript | null;
 };
+
+export type RelayRoomSignerTx = Omit<RelayRoomTx, "paymentScript" | "stakeScript">;
+
+export type RelayRoomPublicTx = Pick<RelayRoomSignerTx, "draftId" | "walletId" | "walletName" | "title" | "requiredSignatures" | "signerKeyHashes">;
 
 export type RelayRoomSignerInvite = {
   keyHash: string;
@@ -77,8 +81,7 @@ export type RelayRoomSignerView = {
   status: RelayRoomStatus;
   network: Network;
   expiresAt: string;
-  tx: RelayRoomTx;
-  witnesses: RelayRoomWitnessRecord[];
+  tx: RelayRoomSignerTx;
   submission?: RelayRoomSubmission;
   signer: {
     keyHash: string;
@@ -86,6 +89,16 @@ export type RelayRoomSignerView = {
     alreadyDelivered: boolean;
     thresholdReached: boolean;
   };
+  progress: RelayRoomProgress;
+};
+
+export type RelayRoomPublicView = {
+  roomId: string;
+  status: RelayRoomStatus;
+  network: Network;
+  expiresAt: string;
+  tx: RelayRoomPublicTx;
+  submission?: RelayRoomSubmission;
   progress: RelayRoomProgress;
 };
 
@@ -114,6 +127,8 @@ export type RelayRoomSessionRequest = {
 export type RelayRoomSessionResponse =
   | { ok: true; role: "coordinator"; room: RelayRoomCoordinatorView; autoSubmitError?: string }
   | { ok: true; role: "signer"; room: RelayRoomSignerView; autoSubmitError?: string };
+
+export type RelayRoomViewResponse = { ok: true; role: "viewer"; room: RelayRoomPublicView; autoSubmitError?: string };
 
 export type RelayRoomSignRequest = {
   intent: "sign";
@@ -162,7 +177,31 @@ export function relayWitnessesToSignatures(witnesses: RelayRoomWitnessRecord[]) 
   return witnesses.map(relayWitnessToSignature);
 }
 
-export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorView | RelayRoomSignerView): TxDraft {
+function relayProgressToSignatures(room: Pick<RelayRoomSignerView | RelayRoomPublicView, "roomId" | "expiresAt" | "tx" | "progress">): SignatureRecord[] {
+  const unsignedKeyHashes = new Set(
+    [...room.progress.pendingRequiredKeyHashes, ...room.progress.optionalUnsignedKeyHashes].map((keyHash) => normalizeKeyHash(keyHash)),
+  );
+  return room.tx.signerKeyHashes
+    .map((keyHash) => normalizeKeyHash(keyHash))
+    .filter((keyHash) => !unsignedKeyHashes.has(keyHash))
+    .map((keyHash) => ({
+      signerKeyHash: keyHash,
+      matchedSignerKeyHash: keyHash,
+      signerName: keyHash,
+      walletName: "Relay signer",
+      witnessCbor: "",
+      signedAt: room.expiresAt,
+      source: "relay" as const,
+      matchStatus: "matched" as const,
+      relayWitnessId: `relay-progress:${room.roomId}:${keyHash}`,
+    }));
+}
+
+function relayRoomSignatures(room: RelayRoomCoordinatorView | RelayRoomSignerView | RelayRoomPublicView) {
+  return "witnesses" in room ? relayWitnessesToSignatures(room.witnesses) : relayProgressToSignatures(room);
+}
+
+function nextTxFromRelayRoom(tx: TxDraft, room: RelayRoomCoordinatorView | RelayRoomSignerView | RelayRoomPublicView): TxDraft {
   const relayRoom: RelayRoomRef | undefined = tx.relayRoom
     ? {
         ...tx.relayRoom,
@@ -173,42 +212,47 @@ export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorVie
 
   return {
     ...tx,
-    walletId: tx.walletId || room.tx.walletId,
-    walletName: room.tx.walletName,
-    title: room.tx.title,
-    note: room.tx.note,
-    recipient: room.tx.recipient,
-    lovelace: room.tx.lovelace,
-    assets: room.tx.assets,
-    unsignedTxCbor: room.tx.unsignedTxCbor,
+    walletId: room.tx.walletId || tx.walletId,
+    walletName: room.tx.walletName || tx.walletName,
+    title: room.tx.title || tx.title,
+    note: "note" in room.tx ? room.tx.note : tx.note,
+    recipient: "recipient" in room.tx ? room.tx.recipient : tx.recipient,
+    lovelace: "lovelace" in room.tx ? room.tx.lovelace : tx.lovelace,
+    assets: "assets" in room.tx ? room.tx.assets : tx.assets,
+    unsignedTxCbor: "unsignedTxCbor" in room.tx ? room.tx.unsignedTxCbor : tx.unsignedTxCbor,
     requiredSignatures: room.tx.requiredSignatures,
     signerKeyHashes: room.tx.signerKeyHashes,
-    signatures: mergeSignatures(tx.signatures || [], relayWitnessesToSignatures(room.witnesses)),
+    signatures: mergeSignatures(tx.signatures || [], relayRoomSignatures(room)),
     updatedAt: nowIso(),
-    txHash: "submission" in room ? room.submission?.txHash || tx.txHash : tx.txHash,
-    status: "submission" in room && room.submission?.txHash ? "succeeded" : room.status === "submitted" ? "succeeded" : tx.status,
+    txHash: room.submission?.txHash || tx.txHash,
+    status: room.submission?.txHash || room.status === "submitted" ? "succeeded" : tx.status,
     relayRoom,
   };
 }
 
+export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorView | RelayRoomSignerView | RelayRoomPublicView): TxDraft {
+  return nextTxFromRelayRoom(tx, room);
+}
+
 export function draftFromRelaySignerView(room: RelayRoomSignerView): TxDraft {
-  return {
-    id: room.tx.draftId,
-    walletId: room.tx.walletId,
-    title: room.tx.title,
-    walletName: room.tx.walletName,
-    network: room.network,
-    recipient: room.tx.recipient,
-    lovelace: room.tx.lovelace,
-    note: room.tx.note,
-    unsignedTxCbor: room.tx.unsignedTxCbor,
-    requiredSignatures: room.tx.requiredSignatures,
-    signerKeyHashes: room.tx.signerKeyHashes,
-    signatures: relayWitnessesToSignatures(room.witnesses || []),
-    createdAt: nowIso(),
-    assets: room.tx.assets,
-    txHash: room.submission?.txHash,
-    status: room.submission?.txHash || room.status === "submitted" ? "succeeded" : "pending",
-    updatedAt: nowIso(),
-  };
+  return nextTxFromRelayRoom(
+    {
+      id: room.tx.draftId,
+      walletId: room.tx.walletId,
+      title: room.tx.title,
+      walletName: room.tx.walletName,
+      network: room.network,
+      recipient: room.tx.recipient,
+      lovelace: room.tx.lovelace,
+      note: room.tx.note,
+      unsignedTxCbor: room.tx.unsignedTxCbor,
+      requiredSignatures: room.tx.requiredSignatures,
+      signerKeyHashes: room.tx.signerKeyHashes,
+      signatures: [],
+      createdAt: nowIso(),
+      assets: room.tx.assets,
+      updatedAt: nowIso(),
+    },
+    room,
+  );
 }

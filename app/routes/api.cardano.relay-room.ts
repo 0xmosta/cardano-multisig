@@ -346,12 +346,12 @@ async function handleSubmit(raw: Record<string, unknown>) {
 async function handleView(raw: Record<string, unknown>) {
   const roomId = String(raw.roomId || "").trim();
   if (!roomId) throw new Error("roomId is required.");
-  const { readRelayRoom, sharedSignerRoomView, syncEquivalentRelayRoomWitnesses } = await relayStore();
+  const { publicRelayRoomView, readRelayRoom, syncEquivalentRelayRoomWitnesses } = await relayStore();
   const room = await readRelayRoom(roomId);
   await configuredNetworkGuard(room.network);
   const synced = await syncEquivalentRelayRoomWitnesses(room);
   const autoSubmitted = await autoSubmitRelayRoomIfReady(synced);
-  return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
+  return Response.json({ ok: true, role: "viewer", room: publicRelayRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
 }
 
 export async function action({ request }: { request: Request }) {

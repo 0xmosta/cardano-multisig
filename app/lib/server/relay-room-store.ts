@@ -11,13 +11,24 @@ import {
 import {
   type RelayRoomCoordinatorView,
   type RelayRoomProgress,
+  type RelayRoomPublicView,
   type RelayRoomSignerRecord,
+  type RelayRoomSignerTx,
   type RelayRoomSignerView,
   type RelayRoomStatus,
   type RelayRoomSubmission,
   type RelayRoomTx,
   type RelayRoomWitnessRecord,
 } from "../relay-room";
+import { assertPersistenceMode, configuredNetwork as configuredPersistenceNetwork, postgresEnabled } from "./postgres";
+import {
+  cleanupExpiredRelayRoomsPostgres,
+  listRelayRoomsPostgres,
+  readRelayRoomPostgres,
+  removeRelayRoomPostgres,
+  resolveRelayTokenSessionPostgres,
+  writeRelayRoomPostgres,
+} from "./relay-room-postgres";
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const roomLocks = new Map<string, Promise<void>>();
@@ -95,7 +106,7 @@ function normalizeNetwork(value: string | null | undefined): Network {
 }
 
 export function configuredNetwork() {
-  return normalizeNetwork(process.env.CARDANO_NETWORK || process.env.VITE_CARDANO_NETWORK || "preprod");
+  return configuredPersistenceNetwork();
 }
 
 function relayTtlMs() {
@@ -273,6 +284,8 @@ function assertRelayRoomRecord(raw: unknown): RelayRoomRecord {
 }
 
 async function ensureStore() {
+  assertPersistenceMode("Relay room persistence");
+  if (postgresEnabled()) return;
   await mkdir(roomsDir(), { recursive: true, mode: 0o700 });
 }
 
@@ -304,11 +317,17 @@ async function withRoomLock<T>(roomIdValue: string, action: () => Promise<T>) {
 }
 
 export async function readRelayRoom(roomIdValue: string) {
+  if (postgresEnabled()) return readRelayRoomPostgres(roomIdValue);
   const raw = await readFile(roomPath(roomIdValue), "utf8");
   return assertRelayRoomRecord(JSON.parse(raw) as unknown);
 }
 
 export async function writeRelayRoom(room: RelayRoomRecord) {
+  assertPersistenceMode("Relay room persistence");
+  if (postgresEnabled()) {
+    await writeRelayRoomPostgres(room);
+    return;
+  }
   await atomicWriteJson(roomPath(room.id), room);
 }
 
@@ -372,6 +391,7 @@ async function relayRoomFiles() {
 }
 
 async function listRelayRooms() {
+  if (postgresEnabled()) return listRelayRoomsPostgres();
   const files = await relayRoomFiles();
   const rooms: RelayRoomRecord[] = [];
   for (const file of files) {
@@ -382,6 +402,10 @@ async function listRelayRooms() {
 }
 
 export async function cleanupExpiredRelayRooms() {
+  if (postgresEnabled()) {
+    await cleanupExpiredRelayRoomsPostgres();
+    return;
+  }
   const rooms = await listRelayRooms();
   const now = Date.now();
   for (const room of rooms) {
@@ -448,6 +472,7 @@ export async function createRelayRoom(input: {
 export async function resolveRelayTokenSession(token: string): Promise<RelayRoomTokenSession | null> {
   await cleanupExpiredRelayRooms();
   const tokenHash = hashRelayToken(token);
+  if (postgresEnabled()) return resolveRelayTokenSessionPostgres(tokenHash);
   const rooms = await listRelayRooms();
   for (const room of rooms) {
     if (room.coordinator.tokenHash === tokenHash) {
@@ -495,6 +520,32 @@ export function coordinatorRoomView(room: RelayRoomRecord): RelayRoomCoordinator
   };
 }
 
+// Signer-facing relay sessions still need the unsigned tx payload to sign, but they should not
+// inherit coordinator-only scripts or stored witness packages from the server record.
+function signerSafeTx(tx: RelayRoomTx): RelayRoomSignerTx {
+  const { paymentScript: _paymentScript, stakeScript: _stakeScript, ...safeTx } = tx;
+  return safeTx;
+}
+
+export function publicRelayRoomView(room: RelayRoomRecord): RelayRoomPublicView {
+  return {
+    roomId: room.id,
+    status: room.status,
+    network: room.network,
+    expiresAt: room.expiresAt,
+    tx: {
+      draftId: room.tx.draftId,
+      walletId: room.tx.walletId,
+      walletName: room.tx.walletName,
+      title: room.tx.title,
+      requiredSignatures: room.tx.requiredSignatures,
+      signerKeyHashes: room.tx.signerKeyHashes,
+    },
+    submission: room.submission,
+    progress: relayProgress(room),
+  };
+}
+
 export function sharedSignerRoomView(room: RelayRoomRecord): RelayRoomSignerView {
   const progress = relayProgress(room);
   return {
@@ -502,8 +553,7 @@ export function sharedSignerRoomView(room: RelayRoomRecord): RelayRoomSignerView
     status: room.status,
     network: room.network,
     expiresAt: room.expiresAt,
-    tx: room.tx,
-    witnesses: room.witnesses,
+    tx: signerSafeTx(room.tx),
     submission: room.submission,
     signer: {
       keyHash: "",
@@ -522,8 +572,7 @@ export function signerRoomView(room: RelayRoomRecord, signer: RelayRoomStoredSig
     status: room.status,
     network: room.network,
     expiresAt: room.expiresAt,
-    tx: room.tx,
-    witnesses: room.witnesses,
+    tx: signerSafeTx(room.tx),
     submission: room.submission,
     signer: {
       keyHash: signer.keyHash,
@@ -590,5 +639,9 @@ export async function syncEquivalentRelayRoomWitnesses(sourceRoom: RelayRoomReco
 }
 
 export async function removeRelayRoom(roomIdValue: string) {
+  if (postgresEnabled()) {
+    await removeRelayRoomPostgres(roomIdValue);
+    return;
+  }
   await rm(roomPath(roomIdValue), { force: true });
 }

@@ -405,13 +405,17 @@ function draftRelayFingerprint(draft: TxDraft) {
     signatures: draft.signatures
       .map((signature) => [
         normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || ""),
-        signature.matchStatus || "",
-        signature.relayWitnessId || "",
-        signature.witnessCbor,
+        signature.matchStatus,
+        signature.signedAt,
       ])
-      .sort(),
+      .sort((left, right) => (left[0] || "").localeCompare(right[0] || "")),
   });
 }
+
+function stateSnapshotKey(wallets: MultisigWallet[], drafts: TxDraft[]) {
+  return JSON.stringify({ wallets, drafts });
+}
+
 
 function downloadJson(name: string, value: unknown) {
   const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
@@ -534,10 +538,22 @@ function clearRelayInviteSession() {
 }
 
 export default function Home() {
-  const { connected, refreshConnectedWallet } = useAppShell();
+  const {
+    account,
+    accountState,
+    accountSyncState,
+    connected,
+    importLocalState,
+    migrationCounts,
+    refreshConnectedWallet,
+    refreshServerState,
+    saveServerState,
+    signInConnectedWallet,
+  } = useAppShell();
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const pendingServerSaveKeyRef = useRef<string | null>(null);
 
   const [mode, setMode] = useState<Mode>("import");
   const [importMode, setImportMode] = useState<ImportMode>("export");
@@ -610,11 +626,6 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const loadedWallets = loadWallets();
-    const loadedDrafts = loadDrafts();
-    setWallets(loadedWallets);
-    setDrafts(loadedDrafts);
-
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const relay = hashParams.get("r") || hashParams.get("relay");
     const invite = hashParams.get("invite");
@@ -654,7 +665,7 @@ export default function Home() {
         return;
       }
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-      setDrafts(loadedDrafts.some((item) => item.id === draft.id) ? loadedDrafts : [draft, ...loadedDrafts]);
+      setDrafts((current) => (current.some((item) => item.id === draft.id) ? current : [draft, ...current]));
       setActiveDraftId(draft.id);
       setStatus("Invite loaded. Review the transaction below, connect a signer wallet, then click Sign.");
     }
@@ -662,29 +673,72 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
-    saveWallets(wallets);
-    notifyAppStorageChanged();
-  }, [wallets, hydrated]);
-  useEffect(() => {
-    if (!hydrated) return;
-    saveDrafts(drafts);
-    notifyAppStorageChanged();
-  }, [drafts, hydrated]);
+    let cancelled = false;
+    if (account.authenticated) {
+      if (accountState) {
+        setWallets(accountState.wallets);
+        setDrafts((current) => mergeTransactionDrafts(accountState.transactions, current));
+        setHydrated(true);
+        return;
+      }
+      setHydrated(false);
+      void refreshServerState()
+        .then((state) => {
+          if (cancelled || !state) return;
+          setWallets(state.wallets);
+          setDrafts((current) => mergeTransactionDrafts(state.transactions, current));
+          setHydrated(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setStatus(error instanceof Error ? error.message : "Could not load the authenticated account state.");
+          setHydrated(true);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
 
-  useEffect(() => {
-    if (!hydrated) return;
     const refreshFromStorage = () => {
+      if (cancelled) return;
       setWallets(loadWallets());
-      setDrafts((current) => mergeTransactionDrafts(current, loadDrafts()));
+      setDrafts((current) => mergeTransactionDrafts(loadDrafts(), current));
     };
+    refreshFromStorage();
+    setHydrated(true);
     window.addEventListener("storage", refreshFromStorage);
     window.addEventListener("focus", refreshFromStorage);
     return () => {
+      cancelled = true;
       window.removeEventListener("storage", refreshFromStorage);
       window.removeEventListener("focus", refreshFromStorage);
     };
-  }, [hydrated]);
+  }, [account.authenticated, accountState, refreshServerState]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (account.authenticated) {
+      if (!accountState) return;
+      const nextKey = stateSnapshotKey(wallets, drafts);
+      const currentServerKey = stateSnapshotKey(accountState.wallets, accountState.transactions);
+      if (nextKey === currentServerKey || pendingServerSaveKeyRef.current === nextKey) return;
+      pendingServerSaveKeyRef.current = nextKey;
+      void saveServerState({ wallets, transactions: drafts })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : "Could not sync the authenticated account state.";
+          setStatus(message);
+          toast.error("Could not sync account state", { description: message });
+        })
+        .finally(() => {
+          if (pendingServerSaveKeyRef.current === nextKey) pendingServerSaveKeyRef.current = null;
+        });
+      return;
+    }
+    pendingServerSaveKeyRef.current = null;
+    saveWallets(wallets);
+    saveDrafts(drafts);
+    notifyAppStorageChanged();
+  }, [account.authenticated, accountState, drafts, hydrated, saveServerState, wallets]);
 
   useEffect(() => {
     if (!relayInviteToken) return;
@@ -790,15 +844,15 @@ export default function Home() {
 
     const rooms = await Promise.all(
       relayDrafts.map(async (draft) => {
-        const roomId = draft.relayRoom?.roomId;
-        if (!roomId) return null;
+        const token = draft.relayRoom?.coordinatorToken || relayTokenFromInviteUrl(draft.relayRoom?.sharedInviteUrl || "");
+        if (!token) return null;
         const response = await fetch("/api/cardano/relay-room", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ intent: "view", roomId }),
+          body: JSON.stringify({ intent: "session", token }),
         });
         const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
-        if (!response.ok || !body.ok || body.role !== "signer") return null;
+        if (!response.ok || !body.ok || body.role !== "coordinator") return null;
         return { draftId: draft.id, room: body.room };
       }),
     );
@@ -1328,6 +1382,34 @@ export default function Home() {
 
   return (
     <div id="home" className="flex scroll-mt-24 flex-col gap-6">
+      {!visibleDraft && (account.authenticated || migrationCounts.available) ? (
+        <AppWindow title="Authenticated account state">
+          <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm text-zinc-300">
+                {account.authenticated && account.session
+                  ? `Server-backed ${account.session.identity.kind} account active for ${account.network}.`
+                  : "This browser still has local-only wallets or transactions."}
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">
+                Sync state: {accountSyncState}. Local cache currently holds {migrationCounts.wallets} wallets and {migrationCounts.transactions} transactions.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {!account.authenticated ? (
+                <Button type="button" onClick={() => void signInConnectedWallet()} disabled={!connected}>
+                  {connected ? "Sign challenge for server sync" : "Connect a wallet to enable sync"}
+                </Button>
+              ) : migrationCounts.available ? (
+                <Button type="button" onClick={() => void importLocalState()}>
+                  Import local cache into account
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </AppWindow>
+      ) : null}
+
       {visibleDraft ? (
         <div ref={signaturePanelRef}>
         <AppWindow title="Pending signature request" className="border-emerald-400/25">
@@ -2053,9 +2135,7 @@ export default function Home() {
                     variant="destructive"
                     size="sm"
                     onClick={() => {
-                      deleteStoredDraft(draft.id);
                       setDrafts((current) => current.filter((item) => item.id !== draft.id));
-                      notifyAppStorageChanged();
                     }}
                   >
                     <Trash2 className="size-4" /> Delete

@@ -39,6 +39,11 @@ export function AccountSyncPanel({ compact = false }: { compact?: boolean }) {
   const localWallets = useMemo(readLocalWallets, [accountState]);
   const localTransactions = useMemo(readLocalTransactions, [accountState]);
   const localCount = localWallets.length + localTransactions.length;
+  const serverWalletIds = new Set((accountState?.wallets || []).map((wallet) => wallet.id));
+  const serverTransactionIds = new Set((accountState?.transactions || []).map((transaction) => transaction.id));
+  const unsyncedWallets = localWallets.filter((wallet) => !serverWalletIds.has(wallet.id));
+  const unsyncedTransactions = localTransactions.filter((transaction) => !serverTransactionIds.has(transaction.id));
+  const unsyncedCount = unsyncedWallets.length + unsyncedTransactions.length;
 
   if (!account.authenticated) {
     return (
@@ -63,8 +68,8 @@ export function AccountSyncPanel({ compact = false }: { compact?: boolean }) {
     setImporting(true);
     try {
       const next = await saveServerState({
-        wallets: mergeWallets(accountState.wallets, localWallets),
-        transactions: mergeTransactionDrafts(accountState.transactions, localTransactions),
+        wallets: mergeWallets(accountState.wallets, unsyncedWallets),
+        transactions: mergeTransactionDrafts(accountState.transactions, unsyncedTransactions),
       });
       if (!next) return;
       toast.success("Local data imported", { description: "The server copy is now the source for this signed-in account." });
@@ -86,6 +91,8 @@ export function AccountSyncPanel({ compact = false }: { compact?: boolean }) {
     }
   }
 
+  if (!accountState || !unsyncedCount) return null;
+
   return (
     <Card className="border-sky-400/20 bg-sky-400/5">
       <CardContent className={compact ? "p-4" : "p-5"}>
@@ -96,19 +103,17 @@ export function AccountSyncPanel({ compact = false }: { compact?: boolean }) {
               <Badge variant="outline" className="border-sky-400/30 text-sky-100">{accountState?.wallets.length ?? 0} wallets · {accountState?.transactions.length ?? 0} transactions</Badge>
             </div>
             <p className="mt-1 max-w-3xl text-sm text-sky-100/70">
-              This account loads wallets and transaction rooms from the server after wallet challenge sign-in. {localCount ? "Review the local browser copy, import it once, then clear it so this browser stops acting as the source." : "No legacy local copy is waiting to migrate."}
+              This browser has local-only wallets or transaction rooms that are not in the signed-in server account yet.
             </p>
           </div>
-          {localCount ? (
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" variant="secondary" onClick={() => void importLocal()} disabled={!accountState || importing}>
-                {importing ? "Importing..." : `Import ${localCount} local`}
-              </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={clearLocal} disabled={clearing}>
-                <Trash2 className="size-4" /> Clear local
-              </Button>
-            </div>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="secondary" onClick={() => void importLocal()} disabled={importing}>
+              {importing ? "Importing..." : `Import ${unsyncedCount} local`}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={clearLocal} disabled={clearing}>
+              <Trash2 className="size-4" /> Clear local
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

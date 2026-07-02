@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
+import { createPublicKey, verify as verifySignature } from "node:crypto";
 import * as CSL from "@emurgo/cardano-serialization-lib-browser";
 
 type CborScalar = number | bigint | string | Uint8Array | null | boolean;
@@ -189,7 +189,7 @@ function ed25519Spki(publicKey: Uint8Array) {
 }
 
 function keyHashFromPublicKey(publicKey: Uint8Array) {
-  return createHash("blake2b512").update(publicKey).digest("hex").slice(0, 56);
+  return CSL.PublicKey.from_bytes(publicKey).hash().to_hex();
 }
 
 export function keyHashFromAddressHex(addressHex: string) {

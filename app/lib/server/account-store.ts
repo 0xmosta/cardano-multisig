@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/pro
 import path from "node:path";
 import type { PoolClient } from "pg";
 import type { MultisigWallet, Network, SignatureRecord, TxDraft } from "../multisig";
+import { normalizeKeyHash } from "../multisig";
 import {
   assertPersistenceMode,
   configuredNetwork,
@@ -271,6 +272,43 @@ function sanitizeTransactions(transactions: TxDraft[], network: Network): Stored
         };
       }),
     }));
+}
+
+function recoveredWalletId(tx: TxDraft) {
+  return tx.walletId || `wallet_recovered_${normalizeKeyHash(tx.walletName || tx.id).replace(/[^0-9a-f]/g, "").slice(0, 16) || tx.id}`;
+}
+
+function recoverWalletsFromTransactions(wallets: MultisigWallet[], transactions: TxDraft[], network: Network) {
+  const walletById = new Map<string, MultisigWallet>();
+  for (const wallet of sanitizeWallets(wallets || [], network)) {
+    walletById.set(wallet.id, wallet);
+  }
+  for (const tx of transactions || []) {
+    if (tx.network !== network) continue;
+    const walletId = recoveredWalletId(tx);
+    if (walletById.has(walletId)) continue;
+    const signerKeyHashes = Array.from(new Set((tx.signerKeyHashes || []).map(normalizeKeyHash).filter(Boolean)));
+    if (!signerKeyHashes.length) continue;
+    walletById.set(walletId, {
+      id: walletId,
+      name: tx.walletName || "Recovered multisig wallet",
+      network,
+      threshold: Math.max(Number(tx.requiredSignatures || 1), 1),
+      signers: signerKeyHashes.map((keyHash, index) => ({
+        id: `recovered_signer_${index + 1}`,
+        label: `Payment signer ${index + 1}`,
+        keyHash,
+        source: "payment",
+      })),
+      createdAt: tx.createdAt || nowIso(),
+      imported: true,
+      discovery: {
+        kind: "address",
+        source: "transaction-room-recovery",
+      },
+    });
+  }
+  return [...walletById.values()].sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
 }
 
 function hydrateTransactions(transactions: StoredTxDraft[]): TxDraft[] {
@@ -749,20 +787,23 @@ export async function destroySession(request: Request) {
 export async function loadAccountSnapshot(session: AccountSession): Promise<AccountSnapshot> {
   const account = await readAccount(session.network, session.subject);
   if (!account) return { wallets: [], transactions: [] };
+  const transactions = hydrateTransactions(account.transactions || []);
   return {
-    wallets: sanitizeWallets(account.wallets || [], session.network),
-    transactions: hydrateTransactions(account.transactions || []),
+    wallets: recoverWalletsFromTransactions(account.wallets || [], transactions, session.network),
+    transactions,
     updatedAt: account.updatedAt,
   };
 }
 
 export async function replaceAccountSnapshot(session: AccountSession, snapshot: AccountSnapshot, reason = "state.replace") {
   const current = (await readAccount(session.network, session.subject)) || (await getOrCreateAccount(session.identity, session.network));
+  const transactions = sanitizeTransactions(snapshot.transactions || [], session.network);
+  const recoveredWallets = recoverWalletsFromTransactions(snapshot.wallets || [], hydrateTransactions(transactions), session.network);
   const next: StoredAccount = {
     ...current,
     identities: mergeIdentities(current.identities || [], session.identity),
-    wallets: sanitizeWallets(snapshot.wallets || [], session.network),
-    transactions: sanitizeTransactions(snapshot.transactions || [], session.network),
+    wallets: recoveredWallets,
+    transactions,
     updatedAt: nowIso(),
     auditEvents: [
       ...(current.auditEvents || []),

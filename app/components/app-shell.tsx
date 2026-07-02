@@ -7,7 +7,7 @@ import { Badge } from "./ui/badge";
 import { Sidebar, SidebarContent, SidebarMenu, SidebarMenuBadge, SidebarMenuButton } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
-import { STORAGE_KEY, TX_STORAGE_KEY, networkLabel, type MultisigWallet, type TxDraft } from "../lib/multisig";
+import { LEGACY_STORAGE_KEY, STORAGE_KEY, TX_STORAGE_KEY, mergeTransactionDrafts, networkLabel, type MultisigWallet, type TxDraft } from "../lib/multisig";
 import { cn } from "../lib/utils";
 
 type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
@@ -96,8 +96,9 @@ function readStoredCount(key: string) {
 }
 
 function readLocalSnapshot() {
+  const wallets = readStoredArray<MultisigWallet>(STORAGE_KEY);
   return {
-    wallets: readStoredArray<MultisigWallet>(STORAGE_KEY),
+    wallets: wallets.length ? wallets : readStoredArray<MultisigWallet>(LEGACY_STORAGE_KEY),
     transactions: readStoredArray<TxDraft>(TX_STORAGE_KEY),
   };
 }
@@ -286,7 +287,10 @@ export function AppShell() {
     const preserveLocal = options.preserveLocalIfServerEmpty && !serverHasState && (local.wallets.length || local.transactions.length);
     if (!preserveLocal) {
       skipNextSyncRef.current = true;
-      writeLocalSnapshot(body.snapshot);
+      writeLocalSnapshot({
+        wallets: body.snapshot.wallets.length ? body.snapshot.wallets : local.wallets,
+        transactions: body.snapshot.transactions.length ? mergeTransactionDrafts(local.transactions, body.snapshot.transactions) : local.transactions,
+      });
     }
   }
 

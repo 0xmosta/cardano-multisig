@@ -713,7 +713,7 @@ export default function Home() {
       window.removeEventListener("storage", refreshFromStorage);
       window.removeEventListener("focus", refreshFromStorage);
     };
-  }, [account.authenticated, accountState, refreshServerState]);
+  }, [account.authenticated, accountState]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -738,7 +738,7 @@ export default function Home() {
     saveWallets(wallets);
     saveDrafts(drafts);
     notifyAppStorageChanged();
-  }, [account.authenticated, accountState, drafts, hydrated, saveServerState, wallets]);
+  }, [account.authenticated, accountState, drafts, hydrated, wallets]);
 
   useEffect(() => {
     if (!relayInviteToken) return;

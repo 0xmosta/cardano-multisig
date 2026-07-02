@@ -277,6 +277,19 @@ export function AppShell() {
     });
   }
 
+  function applyServerSnapshot(body: AccountStateResponse, options: { preserveLocalIfServerEmpty?: boolean } = {}) {
+    if (!body.snapshot) return;
+    setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
+    setAccountState(body.snapshot);
+    const serverHasState = (body.snapshot.wallets.length || body.snapshot.transactions.length) > 0;
+    const local = readLocalSnapshot();
+    const preserveLocal = options.preserveLocalIfServerEmpty && !serverHasState && (local.wallets.length || local.transactions.length);
+    if (!preserveLocal) {
+      skipNextSyncRef.current = true;
+      writeLocalSnapshot(body.snapshot);
+    }
+  }
+
   async function hydrateFromServer(options: { preserveLocalIfServerEmpty?: boolean } = {}) {
     if (!account.authenticated) return;
     setAccountSyncState("hydrating");
@@ -286,15 +299,7 @@ export function AppShell() {
       setAccountSyncState("error");
       throw new Error(body.error || "Could not load authenticated account state.");
     }
-    setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
-    setAccountState(body.snapshot || null);
-    const serverHasState = (body.snapshot.wallets.length || body.snapshot.transactions.length) > 0;
-    const local = readLocalSnapshot();
-    const preserveLocal = options.preserveLocalIfServerEmpty && !serverHasState && (local.wallets.length || local.transactions.length);
-    if (!preserveLocal) {
-      skipNextSyncRef.current = true;
-      writeLocalSnapshot(body.snapshot);
-    }
+    applyServerSnapshot(body, options);
     refreshCounts();
     setAccountSyncState("synced");
   }
@@ -304,7 +309,15 @@ export function AppShell() {
     const body = (await response.json()) as AccountSessionResponse & { ok?: boolean; error?: string };
     setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
     if (body.authenticated) {
-      await hydrateFromServer({ preserveLocalIfServerEmpty: true });
+      setAccountSyncState("hydrating");
+      const stateResponse = await fetch("/api/account/state");
+      const stateBody = (await stateResponse.json()) as AccountStateResponse;
+      if (!stateResponse.ok || !stateBody.ok || !stateBody.snapshot) {
+        setAccountSyncState("error");
+        throw new Error(stateBody.error || "Could not load authenticated account state.");
+      }
+      applyServerSnapshot(stateBody, { preserveLocalIfServerEmpty: true });
+      setAccountSyncState("synced");
     } else {
       setAccountState(null);
       setAccountSyncState("idle");
@@ -375,7 +388,11 @@ export function AppShell() {
       window.removeEventListener(STORAGE_EVENT, onStorageChange);
       window.removeEventListener("focus", onStorageChange);
     };
-  }, [account.authenticated, account.session?.csrfToken, account.session?.walletCount, account.session?.transactionCount]);
+  }, []);
+
+  useEffect(() => {
+    refreshCounts();
+  }, [account.authenticated, accountState?.updatedAt, accountState?.wallets.length, accountState?.transactions.length]);
 
   async function connectWallet(provider: WalletProvider) {
     if (connectingId) return null;

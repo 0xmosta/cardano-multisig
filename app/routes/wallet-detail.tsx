@@ -496,7 +496,7 @@ export default function WalletDetail() {
       window.removeEventListener("cardano-multisig:storage", refreshFromStorage);
       window.removeEventListener("focus", refreshFromStorage);
     };
-  }, [account.authenticated, accountState, refreshServerState]);
+  }, [account.authenticated, accountState]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -520,7 +520,7 @@ export default function WalletDetail() {
     pendingServerSaveKeyRef.current = null;
     writeArray(WALLET_KEY, wallets);
     writeTransactions(txs);
-  }, [account.authenticated, accountState, hydrated, saveServerState, txs, wallets]);
+  }, [account.authenticated, accountState, hydrated, txs, wallets]);
 
   const wallet = wallets.find((item) => item.id === walletId);
   const draftIdFromQuery = searchParams.get("draft");

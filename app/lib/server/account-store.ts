@@ -205,13 +205,44 @@ async function readJson<T>(filePath: string): Promise<T | null> {
   }
 }
 
+function normalizedOrigin(value: string | null | undefined) {
+  const input = (value || "").trim();
+  if (!input) return null;
+  try {
+    return new URL(input).origin;
+  } catch {
+    return null;
+  }
+}
+
+function forwardedOrigin(request: Request) {
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  if (!forwardedHost) return null;
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
+  return normalizedOrigin(`${forwardedProto}://${forwardedHost}`);
+}
+
+function allowedAccountOrigins(request: Request) {
+  return new Set(
+    [
+      normalizedOrigin(request.url),
+      normalizedOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN),
+      forwardedOrigin(request),
+    ].filter((origin): origin is string => Boolean(origin)),
+  );
+}
+
 export function assertOrigin(request: Request) {
-  const origin = request.headers.get("origin");
-  const current = new URL(request.url).origin;
-  if (origin && origin !== current) {
+  const rawOrigin = request.headers.get("origin");
+  const origin = normalizedOrigin(rawOrigin);
+  if (rawOrigin && !origin) {
+    throw new Error("Cross-origin request blocked for authenticated account API (invalid origin).");
+  }
+  const current = normalizedOrigin(request.url);
+  if (origin && !allowedAccountOrigins(request).has(origin)) {
     throw new Error(`Cross-origin request blocked for authenticated account API (${origin}).`);
   }
-  return origin || current;
+  return origin || normalizedOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN) || forwardedOrigin(request) || current || "http://localhost";
 }
 
 export function assertSessionMutationRequest(request: Request, session: AccountSession, csrfToken: string | null | undefined) {

@@ -146,7 +146,7 @@ Request:
     "signerKeyHashes": ["..."]
   },
   "signers": [
-    { "keyHash": "...", "label": "Mosta" }
+    { "keyHash": "...", "label": "Signer A" }
   ],
   "network": "preprod"
 }
@@ -164,9 +164,9 @@ Response:
   "ok": true,
   "roomId": "...",
   "coordinatorToken": "...",
-  "sharedInviteUrl": "https://cardano-preprod.0xm.sh/#r=...",
+  "sharedInviteUrl": "https://your-domain.example/#r=...",
   "signerInvites": [
-    { "keyHash": "...", "label": "Mosta", "inviteUrl": "https://cardano-preprod.0xm.sh/#r=..." }
+    { "keyHash": "...", "label": "Signer A", "inviteUrl": "https://your-domain.example/#r=..." }
   ],
   "expiresAt": "..."
 }
@@ -214,7 +214,7 @@ Response for signer:
     "tx": { "...": "..." },
     "signer": {
       "keyHash": "...",
-      "label": "Mosta",
+      "label": "Signer A",
       "alreadyDelivered": false,
       "thresholdReached": false
     }

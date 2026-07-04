@@ -139,13 +139,20 @@ function signCookie(value: string) {
   return createHmac("sha256", sessionSecret()).update(value).digest("hex");
 }
 
+function secureCookieAttribute() {
+  if (process.env.CARDANO_MULTISIG_COOKIE_SECURE === "0") return "";
+  const publicOrigin = normalizedOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN);
+  if (publicOrigin) return publicOrigin.startsWith("https://") ? " Secure;" : "";
+  return process.env.NODE_ENV === "production" ? " Secure;" : "";
+}
+
 function serializeCookie(sessionId: string, expiresAt: string) {
   const value = `${sessionId}.${signCookie(sessionId)}`;
-  return `${ACCOUNT_COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=${new Date(expiresAt).toUTCString()}`;
+  return `${ACCOUNT_COOKIE}=${value}; Path=/; HttpOnly;${secureCookieAttribute()} SameSite=Lax; Expires=${new Date(expiresAt).toUTCString()}`;
 }
 
 export function clearSessionCookie() {
-  return `${ACCOUNT_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+  return `${ACCOUNT_COOKIE}=; Path=/; HttpOnly;${secureCookieAttribute()} SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 }
 
 function parseCookieHeader(cookieHeader: string | null) {

@@ -23,7 +23,7 @@ export async function loader() {
     blockfrost,
     kupo: hasAnyEnv(["CARDANO_KUPO_URL", "KUPO_URL"]),
     ogmios,
-    submit: Boolean(submitEnv || ogmios || (network !== "mainnet" && blockfrost)),
+    submit: Boolean(submitEnv || ogmios || blockfrost),
   };
 
   return Response.json({

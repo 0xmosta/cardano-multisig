@@ -1,98 +1,52 @@
-# Cardano Multisig Agent Notes
+# Contributor Notes
 
-## Operating Mode
+These notes are for maintainers and coding agents working on this repository.
 
-- Default branch for active work is `preprod`.
-- Default public target is `https://cardano-preprod.0xm.sh`.
-- Treat `https://cardano.0xm.sh` and branch `main` as mainnet/production. Do not modify, deploy, or point new tests at mainnet unless the task explicitly says so.
-- Default Cardano network is `preprod`; use `CARDANO_NETWORK=preprod` and `VITE_CARDANO_NETWORK=preprod`.
-- Use the existing Disco preprod Blockfrost secret only through environment configuration. Never paste API keys into source, Kanban comments, logs, screenshots, or summaries.
+## Project context
 
-## Repo Context
+- Stack: React Router framework mode, React, TypeScript, Tailwind CSS, PostgreSQL, and Docker.
+- Server routes live in `app/routes/api.*.ts`.
+- Browser wallet integration is CIP-30 style and must remain client-side.
+- Cardano provider credentials and database connection strings are server-side secrets.
+- Default local development network is `preprod`.
 
-- Stack: React Router app, React 19, TypeScript, Tailwind CSS v4, Dockerfile deploy.
-- Server routes live in `app/routes/api.cardano.*.ts`.
-- Browser wallet integration is CIP-30 style and must stay client-side.
-- Browser wallet discovery must tolerate delayed/non-enumerable `window.cardano` providers. Use the shared detector and verify Lace, Eternl, VESPR, and other CIP-30 wallets remain visible after page load/focus.
-- Wallet and transaction data are currently browser-local. Invite links and witness packages are sensitive and should be shared privately.
+## Safety rules
 
-## Safety Rules
+- Do not hardcode addresses, seed phrases, private keys, API keys, or provider tokens.
+- Do not silently fall back to mainnet providers. Network configuration must be explicit.
+- Keep mainnet relay and submit flows gated by environment flags.
+- Treat invite links and witness packages as sensitive coordination data.
+- Verify signer key hashes and witness matches before counting a signature toward threshold.
+- Distinguish required missing signatures from optional unsigned policy members once threshold is met.
 
-- Mainnet guardrail: any task touching `main`, `cardano.0xm.sh`, mainnet Blockfrost/Koios, real treasury addresses, submission endpoints, or DNS must stop for review unless explicitly authorized.
-- For non-mainnet transaction building, Blockfrost/Kupo/Ogmios config must be explicit. Do not silently fall back to mainnet providers.
-- Validate network assumptions in code and UI. Preprod addresses use `addr_test...`; mainnet uses `addr...`.
-- Do not invent policy IDs, script hashes, addresses, transaction CBOR, protocol parameters, or CIP behavior.
-- ADA Handle/address import should first try to recover the payment native script from historical transaction witnesses whose script hash matches the address payment credential. If no witness is found, save the address as watch-only until a wallet export or native script is imported.
-- Before changing UX around signing/submission, inspect the full flow: import wallet, create transaction, invite signer, connect signer wallet, sign, export/import witnesses, submit/confirm.
-- In M-of-N coordinator UI, distinguish signatures still required for threshold from optional unsigned policy members. Once threshold is met, never present remaining optional signers as blockers.
-- If an imported witness does not match the policy signer hashes, surface it as non-counting and provide a clear remove/discard action before submit.
+## Implementation guidance
 
-## UI Rules
-
-- Treat screenshots and design references as component and interaction specifications for real app flows. Do not paste them into the home page as static showcase/demo cards.
-- When an Open Design file or screenshot exists, implementation must match the referenced component treatment, not only the rough layout. Verify button content, icon usage, sizing, spacing, table density, empty states, and header placement against the design before marking UI work done.
-- UI work is not deploy-complete until a separate verifier/QA pass compares the live app or local screenshot against the current Open Design/screenshot reference and records any intentional differences. If the verifier was blocked, reclaimed, or manually closed, create a follow-up QA card instead of treating that as approval.
-- UI workers must inspect the relevant Open Design project/file before coding when one exists. If Open Design is unavailable, record that explicitly and use the latest user screenshots plus local/live screenshots as the reference.
-- For any shared app-shell/header/layout change, inspect at least home, wallet detail, new transaction, invite/signing, and mobile width before completion. Do not judge a shell change from the home page alone.
-- For signer/wallet controls, verify delayed and non-enumerable CIP-30 provider discovery. The supported wallet list in product UI is Lace, Eternl, and VESPR unless a task explicitly expands support.
-- Prefer functional, data-backed surfaces over decorative dashboard cards. If a metric/card does not drive a user action or clarify a signing/funding decision, remove or demote it.
-- Avoid hardcoded fake treasury names, balances, signer handles, addresses, or transaction history in product UI. If a screen needs examples, they must be isolated to tests, story fixtures, or screenshots generated outside the shipped app.
-- Reuse the shadcn dark visual vocabulary on real surfaces: saved wallets, transaction creation, signer invites, approval status, witness import/export, and coordinator transaction tracking.
-- For signer-friendly flows, make the current action obvious: connect wallet, verify network, sign, copy witness, import witness, or submit. Keep signer rows tied to actual policy key hashes and matched signatures.
-
-## Kanban Profile Routing
-
-- Use `ui` for visual/product polish, responsive layout, shadcn treatment, Open Design matching, and screenshot-driven UX work. UI cards must include the exact reference file/screenshot and the pages/viewports to inspect.
-- Use `fullstackjs` for React Router implementation, shared components, loaders/actions, local storage models, API wiring, and browser wallet integration that is not Cardano-protocol-specific.
-- Use `cardanodev` for Cardano transaction semantics, native scripts, key hashes, UTxO selection, witnesses, CIP behavior, Kupo/Ogmios/Blockfrost/Koios behavior, and preprod wallet test flows.
-- Use `serverops` for Docker, DNS, production/preprod deploys, service env, Kupo/Ogmios/Blockfrost runtime checks, and host-level processes.
-- Use `securityauditor` for invite-link sensitivity, witness/CBOR handling, localStorage risks, signing/submission guardrails, dependency/security review, and mainnet risk review.
-- Use `codexverifier` only as an independent verifier. Do not assign implementation work to it. Verifier cards must name the implementation commit or live URL state to inspect and must include concrete pass/fail evidence.
-- Every UI implementation card that changes shipped visuals should have a dependent or follow-up `codexverifier` visual gate before deploy is considered complete.
-
-## QA Wallets And Test Funds
-
-- QA wallet seed phrases/private keys live only in `/home/ultra/.secrets/cardano-multisig-preprod-wallets/` with `0600` files. Never copy them into the repo, Kanban comments, logs, screenshots, browser localStorage exports, or final summaries.
-- Public QA address reports may live under `/home/ultra/cardano-multisig-qa/`; those files must contain only public addresses, public key hashes, tx hashes, balances, and test notes.
-- Treat preprod tADA sent by Mosta as custodial QA funds. Use them only for the agreed multisig tests, keep a balance/tx-hash trail, and return all practical residual funds to Mosta's provided preprod refund address at the end.
-- Do not start refund work without an explicit `addr_test...` return address from Mosta. Never refund to mainnet or to an inferred address.
-- Distribution, test funding, multisig spends, and final refunds must each record tx hash, source, destination role, amount, and remaining known balance in Kanban or `/home/ultra/cardano-multisig-qa/`.
-
-## E2E Testing Rules
-
-- A headless shim or script-signed transaction is useful only as a technical smoke test. Mark it clearly as `shim` or `scripted`; do not call it a real CIP-30 wallet test.
-- A real signer UX pass requires an actual browser wallet extension or equivalent CIP-30 wallet session on preprod, with the user-facing invite/sign/return-witness flow exercised end to end.
-- Automated QA can use the local CDP CIP-30 harness:
-  - signer vault: `/home/ultra/.secrets/cardano-multisig-preprod-wallets/`
-  - helper scripts: `/home/ultra/.local/share/cardano-multisig-qa-tools/cip30-cdp-harness.mjs` and `cip30-shim-server.mjs`
-  - Node-side Cardano serialization helpers are installed under `/home/ultra/.local/share/cardano-multisig-qa-tools/node_modules/`; do not expect `@emurgo/cardano-serialization-lib-nodejs` inside the React app repo.
-  - user service: `cardano-multisig-cip30-shim.service`
-  - Chrome/Xvfb must inject providers before page load; expect `window.cardano.hermesQaSigner01` through `hermesQaSigner12`.
-  - Handoff must label these runs as `CDP QA harness`, not third-party wallet extension tests.
-- For scripted QA that needs chain access, prefer the live app APIs (`/api/cardano/build-tx`, `/api/cardano/submit`) so server-side preprod Blockfrost env is used. Only call Blockfrost directly from scripts when the preprod env has been explicitly injected from the running preprod service, and never print the token.
-- Relay-room QA payloads must use the same full `AssetLine` shape as the app (`id`, `unit`, `label`, `quantity`, optional `maxQuantity`, `decimals`). Do not send reduced asset objects that only contain `unit` and `quantity`.
-- If a funded QA run fails after submitting a funding transaction but before spend/submit, record that as a partial run and include the script address in the next balance check; the next spend may consume those UTxOs as script change.
-- Run E2E thresholds in order: `2-of-3`, then `4-of-7`, then `6-of-12`. Do not scale up until the smaller case has produced a tx hash or a concrete blocker.
-- Any local helper server, Playwright session, shim, or long-running process started for QA must be stopped or explicitly documented in the handoff.
+- Follow existing React Router route module patterns in `app/routes.ts`.
+- Keep server-only code under `app/lib/server/` or API route modules.
+- Use shared helpers from `app/lib/multisig.ts` and `app/lib/relay-room.ts` instead of duplicating threshold, key-hash, or URL logic.
+- Prefer PostgreSQL-backed persistence for deployed environments. File storage is for local development and one-off recovery work.
+- Keep UI copy factual and concise. Avoid fake balances, fake transaction history, or hardcoded organization-specific labels in shipped screens.
 
 ## Verification
 
-- Run `npm run typecheck` after TypeScript changes.
-- Run `npm run build` after route, Vite, or deployment changes.
-- For UX changes, verify desktop and mobile layout. Signing flows need a manual wallet smoke test on preprod before production use.
-- For UI/design changes, capture or inspect both the changed page and adjacent pages that share the app shell. Check the production/preprod URL after deploy, not only the local dev build, because stale assets and route-level chunks can hide mismatches.
-- For multisig threshold UX, include at least one test state where threshold is met but optional policy signers remain unsigned, plus one unmatched-witness state with cleanup.
-- Kanban workers must not leave `npm run dev`, Playwright, browser, shim, or other long-running QA processes in the foreground as their final action. Start them only when needed for verification, record the URL/screenshot evidence, then stop them before completing or blocking the task.
-- Verifiers must validate the current worktree before blocking on a stale error. If another agent/Codex has patched the files after an earlier failure, rerun `npm run typecheck` and inspect the latest diff before reporting the blocker.
-- Do not rely on `codex exec` or other external second-opinion CLIs inside Kanban verification unless authentication is already known to work. If auth fails, continue with direct code review, repo commands, and screenshot/browser evidence instead of stalling.
+Run these checks after TypeScript or route changes:
 
-## Kanban Handoff
+```bash
+npm run typecheck
+npm run build
+```
 
-Completion summaries must include:
-- branch and commit SHA if committed,
-- touched files,
-- commands run and results,
-- whether the test was real CIP-30 or shim/scripted,
-- any tx hashes, fund movements, and refund status,
-- remaining risks,
-- whether any secret/env/DNS/deploy step remains manual.
+For persistence changes:
+
+```bash
+npm run db:migrate
+npm run smoke:postgres
+```
+
+For deployed or locally served routes:
+
+```bash
+BASE_URL=http://localhost:5173 npm run smoke:app
+```
+
+Signing flows require a real CIP-30 wallet extension or a clearly documented wallet test harness.

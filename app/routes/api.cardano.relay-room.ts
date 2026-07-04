@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import * as CSL from "@emurgo/cardano-serialization-lib-browser";
 import { isKeyHash, normalizeKeyHash } from "../lib/multisig";
 import {
@@ -18,19 +19,36 @@ async function relayStore() {
 }
 
 function requestOrigin(request: Request) {
-  const configuredOrigin = (process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN || "").trim().replace(/\/$/, "");
+  const configuredOrigin = normalizedHttpOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN);
   if (configuredOrigin) return configuredOrigin;
 
-  const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
-  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const forwardedHost = (request.headers.get("x-forwarded-host") || request.headers.get("host") || "").split(",")[0]?.trim();
+  const forwardedProto = (request.headers.get("x-forwarded-proto") || "").split(",")[0]?.trim().toLowerCase();
   if (forwardedHost) {
     const hostname = forwardedHost.split(":")[0] || "";
     const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-    const proto = forwardedProto || (isLocalHost ? new URL(request.url).protocol.replace(/:$/, "") : "https");
-    return `${proto}://${forwardedHost}`;
+    const proto =
+      forwardedProto === "http" || forwardedProto === "https"
+        ? forwardedProto
+        : isLocalHost
+          ? new URL(request.url).protocol.replace(/:$/, "")
+          : "https";
+    const origin = normalizedHttpOrigin(`${proto}://${forwardedHost}`);
+    if (origin) return origin;
   }
 
   return new URL(request.url).origin;
+}
+
+function normalizedHttpOrigin(value: string | null | undefined) {
+  const input = (value || "").trim();
+  if (!input) return null;
+  try {
+    const origin = new URL(input).origin;
+    return origin.startsWith("http://") || origin.startsWith("https://") ? origin : null;
+  } catch {
+    return null;
+  }
 }
 
 function errorMessage(error: unknown) {
@@ -41,6 +59,10 @@ function errorMessage(error: unknown) {
   } catch {
     return "Relay room request failed.";
   }
+}
+
+function randomRecordId(prefix: string) {
+  return `${prefix}_${randomBytes(8).toString("hex")}`;
 }
 
 function assertObject(value: unknown) {
@@ -126,7 +148,7 @@ function initialWitnessRecords(
     seen.add(matchedSignerKeyHash);
 
     initial.push({
-      id: `initial_${Math.random().toString(36).slice(2, 10)}`,
+      id: randomRecordId("initial"),
       source: "manual",
       signerKeyHashClaim: normalizeKeyHash(String(raw.signerKeyHash || matchedSignerKeyHash)),
       matchedSignerKeyHash,
@@ -277,7 +299,7 @@ async function handleSign(raw: Record<string, unknown>) {
       throw new Error(`Relay room is ${current.status}; new witness uploads are disabled.`);
     }
     const nextWitness = {
-      id: `witness_${Math.random().toString(36).slice(2, 10)}`,
+      id: randomRecordId("witness"),
       source: "relay" as const,
       signerKeyHashClaim: session.role === "signer" ? session.signer.keyHash : matchedSignerKeyHash,
       matchedSignerKeyHash,

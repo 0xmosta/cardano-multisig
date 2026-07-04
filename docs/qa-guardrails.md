@@ -12,11 +12,10 @@ npm run start
 BASE_URL=http://localhost:<port> npm run smoke:app
 ```
 
-Run against production or preprod:
+Run against a deployed environment:
 
 ```bash
-BASE_URL=https://cardano.0xm.sh npm run smoke:app
-BASE_URL=https://cardano-preprod.0xm.sh npm run smoke:app
+BASE_URL=https://your-domain.example npm run smoke:app
 ```
 
 The smoke check confirms the home, wallet list, transaction list, favicon, and provider endpoint respond correctly.

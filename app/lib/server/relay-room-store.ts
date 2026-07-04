@@ -31,6 +31,11 @@ import {
 } from "./relay-room-postgres";
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_UNSIGNED_TX_CBOR_CHARS = 500_000;
+const MAX_TEXT_FIELD_CHARS = 500;
+const MAX_NOTE_CHARS = 2_000;
+const MAX_ASSETS = 200;
+const MAX_SIGNERS = 64;
 const roomLocks = new Map<string, Promise<void>>();
 
 type RelayRoomCoordinator = {
@@ -120,9 +125,22 @@ function assertString(value: unknown, field: string) {
   return next;
 }
 
+function assertBoundedString(value: unknown, field: string, maxLength: number) {
+  const next = assertString(value, field);
+  if (next.length > maxLength) throw new Error(`${field} is too long.`);
+  return next;
+}
+
 function assertOptionalString(value: unknown) {
   const next = String(value || "").trim();
   return next || undefined;
+}
+
+function assertOptionalBoundedString(value: unknown, field: string, maxLength: number) {
+  const next = String(value || "").trim();
+  if (!next) return undefined;
+  if (next.length > maxLength) throw new Error(`${field} is too long.`);
+  return next;
 }
 
 function assertOptionalNativeScript(value: unknown): NativeScript | undefined {
@@ -144,11 +162,11 @@ function assertAssetLine(raw: unknown, index = 0) {
   if (!isRecord(raw)) throw new Error("Invalid relay room asset.");
   const unit = assertString(raw.unit, "asset.unit");
   return {
-    id: typeof raw.id === "string" && raw.id.trim() ? raw.id : `${unit === "lovelace" ? "ada" : "asset"}-${index}`,
+    id: assertOptionalBoundedString(raw.id, "asset.id", MAX_TEXT_FIELD_CHARS) || `${unit === "lovelace" ? "ada" : "asset"}-${index}`,
     unit,
-    label: assertString(raw.label, "asset.label"),
+    label: assertBoundedString(raw.label, "asset.label", MAX_TEXT_FIELD_CHARS),
     quantity: assertString(raw.quantity, "asset.quantity"),
-    maxQuantity: assertOptionalString(raw.maxQuantity),
+    maxQuantity: assertOptionalBoundedString(raw.maxQuantity, "asset.maxQuantity", MAX_TEXT_FIELD_CHARS),
     decimals: typeof raw.decimals === "number" ? raw.decimals : undefined,
   };
 }
@@ -170,20 +188,24 @@ function assertRelayRoomTx(raw: unknown): RelayRoomTx {
   const signerKeyHashes = normalizeSignerKeyHashes(Array.isArray(raw.signerKeyHashes) ? raw.signerKeyHashes : []);
   const requiredSignatures = Math.max(1, Number(raw.requiredSignatures || 1));
   const unsignedTxCbor = assertString(raw.unsignedTxCbor, "draft.unsignedTxCbor").toLowerCase();
+  if (unsignedTxCbor.length > MAX_UNSIGNED_TX_CBOR_CHARS) throw new Error("draft.unsignedTxCbor is too large.");
   if (!/^[0-9a-f]+$/i.test(unsignedTxCbor) || unsignedTxCbor.length % 2 !== 0) {
     throw new Error("draft.unsignedTxCbor must be hex-encoded transaction CBOR.");
   }
   if (!signerKeyHashes.length) throw new Error("draft.signerKeyHashes must contain at least one valid signer key hash.");
+  if (signerKeyHashes.length > MAX_SIGNERS) throw new Error(`draft.signerKeyHashes cannot contain more than ${MAX_SIGNERS} signers.`);
   if (requiredSignatures > signerKeyHashes.length) throw new Error("draft.requiredSignatures cannot exceed signerKeyHashes length.");
+  const assets = Array.isArray(raw.assets) ? raw.assets : [];
+  if (assets.length > MAX_ASSETS) throw new Error(`draft.assets cannot contain more than ${MAX_ASSETS} assets.`);
   return {
-    draftId: assertString(raw.draftId ?? raw.id, "draft.id"),
-    walletId: assertOptionalString(raw.walletId),
-    walletName: assertString(raw.walletName, "draft.walletName"),
-    title: assertString(raw.title, "draft.title"),
-    note: String(raw.note || ""),
-    recipient: assertString(raw.recipient, "draft.recipient"),
+    draftId: assertBoundedString(raw.draftId ?? raw.id, "draft.id", MAX_TEXT_FIELD_CHARS),
+    walletId: assertOptionalBoundedString(raw.walletId, "draft.walletId", MAX_TEXT_FIELD_CHARS),
+    walletName: assertBoundedString(raw.walletName, "draft.walletName", MAX_TEXT_FIELD_CHARS),
+    title: assertBoundedString(raw.title, "draft.title", MAX_TEXT_FIELD_CHARS),
+    note: String(raw.note || "").slice(0, MAX_NOTE_CHARS),
+    recipient: assertBoundedString(raw.recipient, "draft.recipient", MAX_TEXT_FIELD_CHARS),
     lovelace: assertString(raw.lovelace, "draft.lovelace"),
-    assets: Array.isArray(raw.assets) ? raw.assets.map((asset, index) => assertAssetLine(asset, index)) : [],
+    assets: assets.map((asset, index) => assertAssetLine(asset, index)),
     unsignedTxCbor,
     requiredSignatures,
     signerKeyHashes,
@@ -194,6 +216,7 @@ function assertRelayRoomTx(raw: unknown): RelayRoomTx {
 
 function assertRelaySigners(raw: unknown, tx: RelayRoomTx) {
   if (!Array.isArray(raw) || !raw.length) throw new Error("signers must list each policy signer invite.");
+  if (raw.length > MAX_SIGNERS) throw new Error(`signers cannot contain more than ${MAX_SIGNERS} entries.`);
   const labelByKeyHash = new Map<string, string | undefined>();
   for (const item of raw) {
     if (!isRecord(item)) continue;
@@ -201,7 +224,7 @@ function assertRelaySigners(raw: unknown, tx: RelayRoomTx) {
     if (!isKeyHash(keyHash)) continue;
     if (!tx.signerKeyHashes.includes(keyHash)) continue;
     if (!labelByKeyHash.has(keyHash)) {
-      labelByKeyHash.set(keyHash, assertOptionalString(item.label));
+      labelByKeyHash.set(keyHash, assertOptionalBoundedString(item.label, "signer.label", MAX_TEXT_FIELD_CHARS));
     }
   }
   const signers = tx.signerKeyHashes.map((keyHash) => ({ keyHash, label: labelByKeyHash.get(keyHash) }));
@@ -317,6 +340,7 @@ async function withRoomLock<T>(roomIdValue: string, action: () => Promise<T>) {
 }
 
 export async function readRelayRoom(roomIdValue: string) {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(roomIdValue)) throw new Error("Invalid roomId.");
   if (postgresEnabled()) return readRelayRoomPostgres(roomIdValue);
   const raw = await readFile(roomPath(roomIdValue), "utf8");
   return assertRelayRoomRecord(JSON.parse(raw) as unknown);

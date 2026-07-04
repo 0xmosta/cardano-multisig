@@ -48,6 +48,8 @@ type BlockfrostAsset = {
 
 type CardanoNetwork = "mainnet" | "preprod" | "preview";
 
+const MAX_KUPO_PATTERNS = 64;
+
 function getKupoUrl() { return (process.env.CARDANO_KUPO_URL || process.env.KUPO_URL || "").replace(/\/$/, ""); }
 function normalizeNetwork(value: string | null | undefined): CardanoNetwork {
   const normalized = (value || "").trim().toLowerCase();
@@ -201,7 +203,7 @@ async function assetMetadata(unit: string): Promise<Partial<AssetSummary>> {
 
 function parsePatterns(url: URL) {
   const raw = url.searchParams.getAll("patterns").join(",") || url.searchParams.getAll("pattern").join(",");
-  return Array.from(new Set(raw.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean)));
+  return Array.from(new Set(raw.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean))).slice(0, MAX_KUPO_PATTERNS);
 }
 function normalizeHandle(input: string) { return input.trim().replace(/^\$/, "").toLowerCase(); }
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }

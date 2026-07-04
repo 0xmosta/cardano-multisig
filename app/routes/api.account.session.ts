@@ -17,6 +17,20 @@ type SessionAction =
   | { intent: "verify"; network?: string; challengeId?: string; addressHex?: string; rewardAddressHex?: string; signature?: string; key?: string }
   | { intent: "logout" };
 
+const MAX_ACCOUNT_REQUEST_BYTES = 100_000;
+
+async function limitedJson(request: Request) {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_ACCOUNT_REQUEST_BYTES) {
+    throw new Error("Authenticated account request body is too large.");
+  }
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_ACCOUNT_REQUEST_BYTES) {
+    throw new Error("Authenticated account request body is too large.");
+  }
+  return JSON.parse(text) as unknown;
+}
+
 function assertObject(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Invalid authenticated account request body.");
@@ -43,13 +57,13 @@ export async function action({ request }: { request: Request }) {
     if (request.method.toUpperCase() !== "POST") {
       throw new Error("Authenticated account session API accepts POST only.");
     }
-    const { intent, input } = requestBody(await request.json());
+    const { intent, input } = requestBody(await limitedJson(request));
+    const origin = assertOrigin(request);
     if (intent === "logout") {
       const cleared = await destroySession(request);
       return Response.json({ ok: true, authenticated: false }, { headers: { "set-cookie": cleared } });
     }
 
-    const origin = assertOrigin(request);
     if (intent === "challenge") {
       const rewardAddressHex = String(input.rewardAddressHex || "").trim().toLowerCase();
       const addressHex = String((rewardAddressHex || input.addressHex || "")).trim().toLowerCase();
@@ -80,12 +94,18 @@ export async function action({ request }: { request: Request }) {
       if (challenge.origin !== origin) {
         throw new Error("Wallet auth challenge origin mismatch.");
       }
+      if (challenge.identity.addressHex !== addressHex || challenge.identity.kind !== (rewardAddressHex ? "stake" : "payment")) {
+        throw new Error("Wallet auth challenge identity mismatch.");
+      }
       const verified = verifyCip30SignData({
         addressHex,
         payloadHex: challenge.payloadHex,
         signatureHex: signature,
         keyHex: key,
       });
+      if (verified.keyHash !== challenge.identity.keyHash) {
+        throw new Error("Wallet auth challenge key hash mismatch.");
+      }
       const identity = createIdentity({
         kind: rewardAddressHex ? "stake" : "payment",
         keyHash: verified.keyHash,

@@ -226,16 +226,23 @@ function normalizedOrigin(value: string | null | undefined) {
 function forwardedOrigin(request: Request) {
   const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
   if (!forwardedHost) return null;
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
+  const rawProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  const forwardedProto = rawProto === "http" || rawProto === "https" ? rawProto : "https";
   return normalizedOrigin(`${forwardedProto}://${forwardedHost}`);
 }
 
 function allowedAccountOrigins(request: Request) {
+  const publicOrigin = normalizedOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN);
+  const isProduction = (process.env.NODE_ENV || "").trim().toLowerCase() === "production";
+  if (isProduction && !publicOrigin) {
+    throw new Error("CARDANO_MULTISIG_PUBLIC_ORIGIN is required for authenticated account APIs in production.");
+  }
+  if (isProduction) return new Set([publicOrigin!]);
   return new Set(
     [
       normalizedOrigin(request.url),
-      normalizedOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN),
-      forwardedOrigin(request),
+      publicOrigin,
+      publicOrigin ? null : forwardedOrigin(request),
     ].filter((origin): origin is string => Boolean(origin)),
   );
 }
@@ -247,7 +254,8 @@ export function assertOrigin(request: Request) {
     throw new Error("Cross-origin request blocked for authenticated account API (invalid origin).");
   }
   const current = normalizedOrigin(request.url);
-  if (origin && !allowedAccountOrigins(request).has(origin)) {
+  const allowedOrigins = allowedAccountOrigins(request);
+  if (origin && !allowedOrigins.has(origin)) {
     throw new Error(`Cross-origin request blocked for authenticated account API (${origin}).`);
   }
   return origin || normalizedOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN) || forwardedOrigin(request) || current || "http://localhost";

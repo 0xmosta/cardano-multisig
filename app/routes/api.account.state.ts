@@ -14,6 +14,20 @@ type StateRequest = {
   transactions?: TxDraft[];
 };
 
+const MAX_STATE_REQUEST_BYTES = 5_000_000;
+
+async function limitedJson(request: Request) {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_STATE_REQUEST_BYTES) {
+    throw new Error("Authenticated account state payload is too large.");
+  }
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_STATE_REQUEST_BYTES) {
+    throw new Error("Authenticated account state payload is too large.");
+  }
+  return JSON.parse(text) as unknown;
+}
+
 function assertObject(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Invalid authenticated account state payload.");
@@ -55,7 +69,7 @@ export async function action({ request }: { request: Request }) {
       return Response.json({ ok: false, authenticated: false, error: "Sign in with a wallet first." }, { status: 401 });
     }
     assertSessionMutationRequest(request, session, request.headers.get("x-cardano-multisig-csrf"));
-    const snapshot = parseSnapshot(await request.json());
+    const snapshot = parseSnapshot(await limitedJson(request));
     const saved =
       snapshot.intent === "import"
         ? await importIntoAccount(session, { wallets: snapshot.wallets, transactions: snapshot.transactions })

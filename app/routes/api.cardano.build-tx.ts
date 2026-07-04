@@ -15,6 +15,21 @@ type HandleInfo = { name: string; address: string; holder?: string; holderType?:
 
 type CardanoNetwork = "mainnet" | "preprod" | "preview";
 
+const MAX_BUILD_TX_REQUEST_BYTES = 1_000_000;
+const MAX_BUILD_TX_ASSETS = 200;
+
+async function limitedJson(request: Request) {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_BUILD_TX_REQUEST_BYTES) {
+    throw new Error("Build transaction request body is too large.");
+  }
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_BUILD_TX_REQUEST_BYTES) {
+    throw new Error("Build transaction request body is too large.");
+  }
+  return JSON.parse(text) as unknown;
+}
+
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }
 function errorMessage(error: unknown) { if (error instanceof Error) return error.message; if (typeof error === "string") return error; try { return JSON.stringify(error); } catch { return "Could not build transaction."; } }
 function normalizeHandle(input = "") { return input.trim().replace(/^\$/, "").toLowerCase(); }
@@ -311,12 +326,13 @@ function assertBuildRequest(body: unknown): BuildRequest {
   if (!input.recipient || !validAddress(input.recipient)) throw new Error("Enter a valid recipient address.");
   if (!addressMatchesNetwork(input.recipient, configuredNetwork())) throw new Error(`Recipient address does not match configured provider network ${configuredNetwork()}.`);
   if (!Array.isArray(input.assets) || !input.assets.length) throw new Error("Select at least one asset.");
+  if (input.assets.length > MAX_BUILD_TX_ASSETS) throw new Error(`Cannot build a transaction with more than ${MAX_BUILD_TX_ASSETS} assets.`);
   return input;
 }
 
 export async function action({ request }: { request: Request }) {
   try {
-    const input = assertBuildRequest(await request.json());
+    const input = assertBuildRequest(await limitedJson(request));
     const source = await resolveSource(input.wallet);
     const paymentScript = scriptToCsl(input.wallet.paymentScript);
     const utxos = await addressUtxos(source.address, paymentScript.hash().to_hex());

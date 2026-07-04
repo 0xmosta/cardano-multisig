@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import * as CSL from "@emurgo/cardano-serialization-lib-browser";
-import { isKeyHash, normalizeKeyHash } from "../lib/multisig";
+import { normalizeKeyHash } from "../lib/multisig";
 import {
   type RelayRoomCreateRequest,
   type RelayRoomSessionRequest,
@@ -14,6 +14,10 @@ import { buildSignedRelayTransactionCbor } from "../lib/server/relay-submit";
 import type { RelayRoomRecord } from "../lib/server/relay-room-store";
 import { verifiedWitnessKeyHashes } from "../lib/witness-verification";
 
+const MAX_RELAY_REQUEST_BYTES = 1_000_000;
+const MAX_WITNESS_CBOR_CHARS = 100_000;
+const MAX_TEXT_FIELD_CHARS = 500;
+
 async function relayStore() {
   return import("../lib/server/relay-room-store");
 }
@@ -21,6 +25,9 @@ async function relayStore() {
 function requestOrigin(request: Request) {
   const configuredOrigin = normalizedHttpOrigin(process.env.CARDANO_MULTISIG_PUBLIC_ORIGIN);
   if (configuredOrigin) return configuredOrigin;
+  if ((process.env.NODE_ENV || "").trim().toLowerCase() === "production") {
+    throw new Error("CARDANO_MULTISIG_PUBLIC_ORIGIN is required before relay invite URLs can be created in production.");
+  }
 
   const forwardedHost = (request.headers.get("x-forwarded-host") || request.headers.get("host") || "").split(",")[0]?.trim();
   const forwardedProto = (request.headers.get("x-forwarded-proto") || "").split(",")[0]?.trim().toLowerCase();
@@ -61,8 +68,27 @@ function errorMessage(error: unknown) {
   }
 }
 
+async function limitedJson(request: Request) {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_RELAY_REQUEST_BYTES) {
+    throw new Error("Relay room request payload is too large.");
+  }
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_RELAY_REQUEST_BYTES) {
+    throw new Error("Relay room request payload is too large.");
+  }
+  return JSON.parse(text) as unknown;
+}
+
 function randomRecordId(prefix: string) {
   return `${prefix}_${randomBytes(8).toString("hex")}`;
+}
+
+function boundedOptionalString(value: unknown, field: string, maxLength: number) {
+  const next = String(value || "").trim();
+  if (!next) return undefined;
+  if (next.length > maxLength) throw new Error(`${field} is too long.`);
+  return next;
 }
 
 function assertObject(value: unknown) {
@@ -102,13 +128,17 @@ function assertRelaySignPayload(raw: Record<string, unknown>): RelayRoomSignRequ
   const witnessCbor = String(raw.witnessCbor || "").trim().toLowerCase();
   if (!token) throw new Error("Relay signer token is required.");
   if (!witnessCbor) throw new Error("witnessCbor is required.");
+  if (witnessCbor.length > MAX_WITNESS_CBOR_CHARS) throw new Error("witnessCbor is too large.");
+  if (!/^[0-9a-f]+$/i.test(witnessCbor) || witnessCbor.length % 2 !== 0) {
+    throw new Error("witnessCbor must be hex-encoded CBOR.");
+  }
   return {
     intent: "sign",
     token,
     witnessCbor,
-    walletName: String(raw.walletName || "").trim() || undefined,
-    signerName: String(raw.signerName || "").trim() || undefined,
-    signedAt: String(raw.signedAt || "").trim() || undefined,
+    walletName: boundedOptionalString(raw.walletName, "walletName", MAX_TEXT_FIELD_CHARS),
+    signerName: boundedOptionalString(raw.signerName, "signerName", MAX_TEXT_FIELD_CHARS),
+    signedAt: boundedOptionalString(raw.signedAt, "signedAt", MAX_TEXT_FIELD_CHARS),
   };
 }
 
@@ -136,6 +166,7 @@ function initialWitnessRecords(
     const raw = item as Record<string, unknown>;
     const witnessCbor = String(raw.witnessCbor || "").trim().toLowerCase();
     if (!witnessCbor) continue;
+    if (witnessCbor.length > MAX_WITNESS_CBOR_CHARS || witnessCbor.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(witnessCbor)) continue;
 
     let verified: string[];
     try {
@@ -153,9 +184,9 @@ function initialWitnessRecords(
       signerKeyHashClaim: normalizeKeyHash(String(raw.signerKeyHash || matchedSignerKeyHash)),
       matchedSignerKeyHash,
       witnessCbor,
-      walletName: String(raw.walletName || "").trim() || undefined,
-      signerName: String(raw.signerName || "").trim() || undefined,
-      signedAt: String(raw.signedAt || "").trim() || receivedAt,
+      walletName: boundedOptionalString(raw.walletName, "walletName", MAX_TEXT_FIELD_CHARS),
+      signerName: boundedOptionalString(raw.signerName, "signerName", MAX_TEXT_FIELD_CHARS),
+      signedAt: boundedOptionalString(raw.signedAt, "signedAt", MAX_TEXT_FIELD_CHARS) || receivedAt,
       receivedAt,
       matchStatus: "matched",
     });
@@ -368,12 +399,11 @@ async function handleSubmit(raw: Record<string, unknown>) {
 async function handleView(raw: Record<string, unknown>) {
   const roomId = String(raw.roomId || "").trim();
   if (!roomId) throw new Error("roomId is required.");
-  const { publicRelayRoomView, readRelayRoom, syncEquivalentRelayRoomWitnesses } = await relayStore();
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(roomId)) throw new Error("Invalid roomId.");
+  const { publicRelayRoomView, readRelayRoom } = await relayStore();
   const room = await readRelayRoom(roomId);
   await configuredNetworkGuard(room.network);
-  const synced = await syncEquivalentRelayRoomWitnesses(room);
-  const autoSubmitted = await autoSubmitRelayRoomIfReady(synced);
-  return Response.json({ ok: true, role: "viewer", room: publicRelayRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
+  return Response.json({ ok: true, role: "viewer", room: publicRelayRoomView(room) });
 }
 
 export async function action({ request }: { request: Request }) {
@@ -381,7 +411,7 @@ export async function action({ request }: { request: Request }) {
     if (request.method.toUpperCase() !== "POST") {
       throw new Error("Relay rooms accept POST requests only.");
     }
-    const body = await request.json();
+    const body = await limitedJson(request);
     const { intent, input } = assertIntent(body);
     if (intent === "create") return await handleCreate(request, input);
     if (intent === "session") return await handleSession(input);

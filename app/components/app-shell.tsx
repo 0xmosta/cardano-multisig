@@ -7,7 +7,7 @@ import { Badge } from "./ui/badge";
 import { Sidebar, SidebarContent, SidebarMenu, SidebarMenuBadge, SidebarMenuButton } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
-import { LEGACY_STORAGE_KEY, STORAGE_KEY, TX_STORAGE_KEY, mergeTransactionDrafts, networkLabel, type MultisigWallet, type TxDraft } from "../lib/multisig";
+import { LEGACY_STORAGE_KEY, STORAGE_KEY, TX_STORAGE_KEY, networkLabel, type MultisigWallet, type TxDraft } from "../lib/multisig";
 import { cn } from "../lib/utils";
 
 type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
@@ -62,52 +62,21 @@ export type AppShellContext = {
   account: AccountSessionResponse;
   accountState: { wallets: MultisigWallet[]; transactions: TxDraft[]; updatedAt?: string } | null;
   accountSyncState: "idle" | "authenticating" | "hydrating" | "syncing" | "synced" | "error";
-  migrationCounts: { wallets: number; transactions: number; available: boolean };
   connectWallet: (provider: WalletProvider) => Promise<ShellConnectedWallet | null>;
   disconnectWallet: () => void;
   refreshConnectedWallet: () => Promise<ShellConnectedWallet>;
-  refreshCounts: () => void;
   refreshServerState: () => Promise<{ wallets: MultisigWallet[]; transactions: TxDraft[]; updatedAt?: string } | null>;
   saveServerState: (state: { wallets: MultisigWallet[]; transactions: TxDraft[] }) => Promise<{ wallets: MultisigWallet[]; transactions: TxDraft[]; updatedAt?: string } | null>;
   signInConnectedWallet: () => Promise<void>;
   signOutAccount: () => Promise<void>;
   refreshAccount: () => Promise<void>;
-  importLocalState: () => Promise<void>;
 };
 
-const STORAGE_EVENT = "cardano-multisig:storage";
-
-export function notifyAppStorageChanged() {
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(STORAGE_EVENT));
-}
-
-function readStoredArray<T>(key: string) {
-  if (typeof window === "undefined") return [] as T[];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "[]") as unknown;
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [] as T[];
-  }
-}
-
-function readStoredCount(key: string) {
-  return readStoredArray(key).length;
-}
-
-function readLocalSnapshot() {
-  const wallets = readStoredArray<MultisigWallet>(STORAGE_KEY);
-  return {
-    wallets: wallets.length ? wallets : readStoredArray<MultisigWallet>(LEGACY_STORAGE_KEY),
-    transactions: readStoredArray<TxDraft>(TX_STORAGE_KEY),
-  };
-}
-
-function writeLocalSnapshot(snapshot: { wallets: MultisigWallet[]; transactions: TxDraft[] }) {
+function clearLocalSnapshot() {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot.wallets || [], null, 2));
-  window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(snapshot.transactions || [], null, 2));
-  notifyAppStorageChanged();
+  window.localStorage.removeItem(STORAGE_KEY);
+  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  window.localStorage.removeItem(TX_STORAGE_KEY);
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -259,43 +228,23 @@ export function AppShell() {
   const [account, setAccount] = useState<AccountSessionResponse>({ authenticated: false, network: "preprod", session: null });
   const [accountState, setAccountState] = useState<NonNullable<AccountStateResponse["snapshot"]> | null>(null);
   const [accountSyncState, setAccountSyncState] = useState<AppShellContext["accountSyncState"]>("idle");
-  const [migrationCounts, setMigrationCounts] = useState({ wallets: 0, transactions: 0, available: false });
-  const skipNextSyncRef = useRef(false);
+  const accountRef = useRef(account);
+  const accountStateRef = useRef(accountState);
+  const saveQueueRef = useRef<Promise<NonNullable<AccountStateResponse["snapshot"]> | null>>(Promise.resolve(null));
 
-  function refreshCounts() {
-    if (account.authenticated && accountState) {
-      setWalletCount(accountState.wallets.length);
-      setRoomCount(accountState.transactions.length);
-    } else {
-      setWalletCount(readStoredCount(STORAGE_KEY));
-      setRoomCount(readStoredCount(TX_STORAGE_KEY));
-    }
-    const local = readLocalSnapshot();
-    setMigrationCounts({
-      wallets: local.wallets.length,
-      transactions: local.transactions.length,
-      available: local.wallets.length > 0 || local.transactions.length > 0,
-    });
-  }
-
-  function applyServerSnapshot(body: AccountStateResponse, options: { preserveLocalIfServerEmpty?: boolean } = {}) {
+  function applyServerSnapshot(body: AccountStateResponse) {
     if (!body.snapshot) return;
-    setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
+    const nextAccount = { authenticated: body.authenticated, network: body.network, session: body.session };
+    accountRef.current = nextAccount;
+    accountStateRef.current = body.snapshot;
+    setAccount(nextAccount);
     setAccountState(body.snapshot);
-    const serverHasState = (body.snapshot.wallets.length || body.snapshot.transactions.length) > 0;
-    const local = readLocalSnapshot();
-    const preserveLocal = options.preserveLocalIfServerEmpty && !serverHasState && (local.wallets.length || local.transactions.length);
-    if (!preserveLocal) {
-      skipNextSyncRef.current = true;
-      writeLocalSnapshot({
-        wallets: body.snapshot.wallets.length ? body.snapshot.wallets : local.wallets,
-        transactions: body.snapshot.transactions.length ? mergeTransactionDrafts(local.transactions, body.snapshot.transactions) : local.transactions,
-      });
-    }
+    setWalletCount(body.snapshot.wallets.length);
+    setRoomCount(body.snapshot.transactions.length);
+    clearLocalSnapshot();
   }
 
-  async function hydrateFromServer(options: { preserveLocalIfServerEmpty?: boolean } = {}) {
-    if (!account.authenticated) return;
+  async function hydrateFromServer() {
     setAccountSyncState("hydrating");
     const response = await fetch("/api/account/state");
     const body = (await response.json()) as AccountStateResponse;
@@ -303,16 +252,19 @@ export function AppShell() {
       setAccountSyncState("error");
       throw new Error(body.error || "Could not load authenticated account state.");
     }
-    applyServerSnapshot(body, options);
-    refreshCounts();
+    applyServerSnapshot(body);
     setAccountSyncState("synced");
   }
 
   async function refreshAccount() {
     const response = await fetch("/api/account/session");
     const body = (await response.json()) as AccountSessionResponse & { ok?: boolean; error?: string };
-    setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
+    const nextAccount = { authenticated: body.authenticated, network: body.network, session: body.session };
+    accountRef.current = nextAccount;
+    setAccount(nextAccount);
     if (body.authenticated) {
+      accountStateRef.current = null;
+      setAccountState(null);
       setAccountSyncState("hydrating");
       const stateResponse = await fetch("/api/account/state");
       const stateBody = (await stateResponse.json()) as AccountStateResponse;
@@ -320,16 +272,20 @@ export function AppShell() {
         setAccountSyncState("error");
         throw new Error(stateBody.error || "Could not load authenticated account state.");
       }
-      applyServerSnapshot(stateBody, { preserveLocalIfServerEmpty: true });
+      applyServerSnapshot(stateBody);
       setAccountSyncState("synced");
     } else {
+      accountStateRef.current = null;
       setAccountState(null);
       setAccountSyncState("idle");
+      clearLocalSnapshot();
+      setWalletCount(0);
+      setRoomCount(0);
     }
   }
 
   async function refreshServerState() {
-    if (!account.authenticated) return null;
+    if (!accountRef.current.authenticated) return null;
     setAccountSyncState("hydrating");
     const response = await fetch("/api/account/state");
     const body = (await response.json()) as AccountStateResponse;
@@ -337,40 +293,42 @@ export function AppShell() {
       setAccountSyncState("error");
       throw new Error(body.error || "Could not load authenticated account state.");
     }
-    setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
-    setAccountState(body.snapshot);
-    refreshCounts();
+    applyServerSnapshot(body);
     setAccountSyncState("synced");
     return body.snapshot;
   }
 
   async function saveServerState(state: { wallets: MultisigWallet[]; transactions: TxDraft[] }) {
-    if (!account.authenticated || !account.session) return null;
-    setAccountSyncState("syncing");
-    const response = await fetch("/api/account/state", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-cardano-multisig-csrf": account.session.csrfToken,
-      },
-      body: JSON.stringify({ intent: "replace", ...state }),
-    });
-    const body = (await response.json()) as AccountStateResponse;
-    if (!response.ok || !body.ok || !body.snapshot) {
-      setAccountSyncState("error");
-      throw new Error(body.error || "Could not save authenticated account state.");
-    }
-    setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
-    setAccountState(body.snapshot);
-    skipNextSyncRef.current = true;
-    writeLocalSnapshot(body.snapshot);
-    refreshCounts();
-    setAccountSyncState("synced");
-    return body.snapshot;
+    const run = async () => {
+      const currentAccount = accountRef.current;
+      const currentState = accountStateRef.current;
+      if (!currentAccount.authenticated || !currentAccount.session || !currentState?.updatedAt) {
+        throw new Error("Sign in and refresh the server account before saving.");
+      }
+      setAccountSyncState("syncing");
+      const response = await fetch("/api/account/state", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-cardano-multisig-csrf": currentAccount.session.csrfToken,
+        },
+        body: JSON.stringify({ intent: "replace", baseUpdatedAt: currentState.updatedAt, ...state }),
+      });
+      const body = (await response.json()) as AccountStateResponse;
+      if (!response.ok || !body.ok || !body.snapshot) {
+        setAccountSyncState("error");
+        throw new Error(body.error || "Could not save authenticated account state.");
+      }
+      applyServerSnapshot(body);
+      setAccountSyncState("synced");
+      return body.snapshot;
+    };
+    const queued = saveQueueRef.current.then(run, run);
+    saveQueueRef.current = queued.catch(() => null);
+    return queued;
   }
 
   useEffect(() => {
-    refreshCounts();
     const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
     fetch("/api/cardano/provider")
       .then((response) => (response.ok ? response.json() : null))
@@ -378,25 +336,10 @@ export function AppShell() {
       .catch(() => setProviderStatus(null));
     void refreshAccount().catch(() => undefined);
 
-    const onStorageChange = () => {
-      refreshCounts();
-    };
-
-    window.addEventListener("storage", onStorageChange);
-    window.addEventListener(STORAGE_EVENT, onStorageChange);
-    window.addEventListener("focus", onStorageChange);
-
     return () => {
       stopWatchingWallets();
-      window.removeEventListener("storage", onStorageChange);
-      window.removeEventListener(STORAGE_EVENT, onStorageChange);
-      window.removeEventListener("focus", onStorageChange);
     };
   }, []);
-
-  useEffect(() => {
-    refreshCounts();
-  }, [account.authenticated, accountState?.updatedAt, accountState?.wallets.length, accountState?.transactions.length]);
 
   async function connectWallet(provider: WalletProvider) {
     if (connectingId) return null;
@@ -477,8 +420,10 @@ export function AppShell() {
       if (!verifyResponse.ok || verifyBody.authenticated !== true || !verifyBody.session) {
         throw new Error(verifyBody.error || "Wallet auth verification failed.");
       }
-      setAccount({ authenticated: true, network: verifyBody.network, session: verifyBody.session });
-      await hydrateFromServer({ preserveLocalIfServerEmpty: true });
+      const authenticatedAccount = { authenticated: true, network: verifyBody.network, session: verifyBody.session };
+      accountRef.current = authenticatedAccount;
+      setAccount(authenticatedAccount);
+      await hydrateFromServer();
       toast.success("Authenticated account ready", {
         description: `${refreshed.name} signed a ${verifyBody.session.identity.kind} challenge for ${verifyBody.network}.`,
       });
@@ -497,50 +442,21 @@ export function AppShell() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ intent: "logout" }),
     }).catch(() => undefined);
-    setAccount({ authenticated: false, network: account.network, session: null });
+    const signedOutAccount = { authenticated: false, network: accountRef.current.network, session: null };
+    accountRef.current = signedOutAccount;
+    accountStateRef.current = null;
+    setAccount(signedOutAccount);
     setAccountState(null);
     setAccountSyncState("idle");
+    clearLocalSnapshot();
+    setWalletCount(0);
+    setRoomCount(0);
     toast("Authenticated account signed out");
   }
 
   function disconnectWallet() {
     setConnected(null);
     toast("Wallet disconnected");
-  }
-
-  async function importLocalState() {
-    if (!account.authenticated || !account.session) throw new Error("Sign in with a wallet first.");
-    try {
-      setAccountSyncState("syncing");
-      const local = readLocalSnapshot();
-      const response = await fetch("/api/account/state", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-cardano-multisig-csrf": account.session.csrfToken,
-        },
-        body: JSON.stringify({ intent: "import", ...local }),
-      });
-      const body = (await response.json()) as AccountStateResponse;
-      if (!response.ok || !body.ok || !body.snapshot) {
-        throw new Error(body.error || "Could not import local wallets and transactions.");
-      }
-      setAccount({ authenticated: body.authenticated, network: body.network, session: body.session });
-      setAccountState(body.snapshot);
-      skipNextSyncRef.current = true;
-      writeLocalSnapshot(body.snapshot);
-      refreshCounts();
-      setAccountSyncState("synced");
-      toast.success("Local data imported", {
-        description: `${body.snapshot.wallets.length} wallets and ${body.snapshot.transactions.length} transactions are now backed by the server.`,
-      });
-    } catch (error) {
-      setAccountSyncState("error");
-      toast.error("Could not import local data", {
-        description: errorMessage(error, "The authenticated account was not updated."),
-      });
-      throw error;
-    }
   }
 
   const headerAccount = useMemo<AppHeaderAccountSession>(() => {
@@ -563,17 +479,14 @@ export function AppShell() {
     account,
     accountState,
     accountSyncState,
-    migrationCounts,
     connectWallet,
     disconnectWallet,
     refreshConnectedWallet,
-    refreshCounts,
     refreshServerState,
     saveServerState,
     signInConnectedWallet,
     signOutAccount,
     refreshAccount,
-    importLocalState,
   };
 
   return (

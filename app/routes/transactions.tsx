@@ -15,7 +15,6 @@ import { Input } from "../components/ui/input";
 import { Progress } from "../components/ui/progress";
 import {
   type TxDraft,
-  TX_STORAGE_KEY,
   mergeTransactionDrafts,
   pendingSignatureCount,
   signatureCount,
@@ -25,20 +24,6 @@ import { cn } from "../lib/utils";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Transactions · Cardano Multisig" }];
-}
-
-function readTransactions() {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TX_STORAGE_KEY) || "[]") as unknown;
-    return Array.isArray(parsed) ? (parsed as TxDraft[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeTransactions(transactions: TxDraft[]) {
-  window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(transactions, null, 2));
 }
 
 function transactionState(tx: TxDraft) {
@@ -79,7 +64,7 @@ export default function TransactionsRoute() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
 
-  async function refreshRelayRooms(source = readTransactions()) {
+  async function refreshRelayRooms(source = transactions) {
     const relayTransactions = source.filter((tx) => tx.relayRoom?.roomId);
     if (!relayTransactions.length) return;
     setSyncing(true);
@@ -107,10 +92,8 @@ export default function TransactionsRoute() {
             return room ? applyRelayRoomToDraft(tx, room) : tx;
           }),
         );
-        if (accountState) {
+        if (account.authenticated && accountState) {
           void saveServerState({ wallets: accountState.wallets, transactions: next });
-        } else {
-          writeTransactions(next);
         }
         return next;
       });
@@ -150,20 +133,7 @@ export default function TransactionsRoute() {
     }
     setLoading(false);
     setLoadError("");
-    const stored = readTransactions();
-    setTransactions(stored);
-    void refreshRelayRooms(stored).catch(() => undefined);
-    const refreshFromStorage = () => {
-      const stored = readTransactions();
-      setTransactions((current) => mergeTransactionDrafts(current, stored));
-      void refreshRelayRooms(stored).catch(() => undefined);
-    };
-    window.addEventListener("storage", refreshFromStorage);
-    window.addEventListener("focus", refreshFromStorage);
-    return () => {
-      window.removeEventListener("storage", refreshFromStorage);
-      window.removeEventListener("focus", refreshFromStorage);
-    };
+    setTransactions([]);
   }, [account.authenticated, accountState]);
 
   const visibleTransactions = useMemo(() => {

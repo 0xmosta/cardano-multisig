@@ -413,15 +413,27 @@ async function readAccountPostgres(network: Network, subject: string) {
   });
 }
 
-async function writeAccountPostgres(account: StoredAccount) {
+async function writeAccountPostgres(account: StoredAccount, expectedUpdatedAt?: string) {
   await withTransaction(async (client) => {
-    await client.query(
-      `insert into cm_accounts (network, subject, created_at, updated_at)
-       values ($1, $2, $3::timestamptz, $4::timestamptz)
-       on conflict (network, subject)
-       do update set created_at = excluded.created_at, updated_at = excluded.updated_at`,
-      [account.network, account.subject, account.createdAt, account.updatedAt],
-    );
+    if (expectedUpdatedAt) {
+      const updated = await client.query(
+        `update cm_accounts
+         set created_at = $3::timestamptz, updated_at = $4::timestamptz
+         where network = $1 and subject = $2 and updated_at = $5::timestamptz`,
+        [account.network, account.subject, account.createdAt, account.updatedAt, expectedUpdatedAt],
+      );
+      if (updated.rowCount !== 1) {
+        throw new Error("Server account state changed in another tab. Refresh before saving.");
+      }
+    } else {
+      await client.query(
+        `insert into cm_accounts (network, subject, created_at, updated_at)
+         values ($1, $2, $3::timestamptz, $4::timestamptz)
+         on conflict (network, subject)
+         do update set created_at = excluded.created_at, updated_at = excluded.updated_at`,
+        [account.network, account.subject, account.createdAt, account.updatedAt],
+      );
+    }
 
     await client.query(`delete from cm_account_identities where network = $1 and subject = $2`, [account.network, account.subject]);
     for (const identity of account.identities) {
@@ -476,10 +488,10 @@ async function readAccount(network: Network, subject: string) {
   return readJson<StoredAccount>(accountPath(network, subject));
 }
 
-async function writeAccount(account: StoredAccount) {
+async function writeAccount(account: StoredAccount, expectedUpdatedAt?: string) {
   assertPersistenceMode("Authenticated account persistence");
   if (postgresEnabled()) {
-    await writeAccountPostgres(account);
+    await writeAccountPostgres(account, expectedUpdatedAt);
     return;
   }
   await writeJson(accountPath(account.network, account.subject), account);
@@ -764,7 +776,7 @@ export async function createSession(identity: AccountIdentity, network: string) 
   const updatedAccount: StoredAccount = {
     ...account,
     identities: mergeIdentities(account.identities, identity),
-    updatedAt: nowIso(),
+    updatedAt: new Date(Math.max(Date.now(), Date.parse(account.updatedAt) + 1)).toISOString(),
     auditEvents: [...(account.auditEvents || []), auditEvent("auth.session.created", { identityKind: identity.kind, keyHash: identity.keyHash })].slice(-MAX_AUDIT_EVENTS),
   };
   await writeAccount(updatedAccount);
@@ -810,8 +822,16 @@ export async function loadAccountSnapshot(session: AccountSession): Promise<Acco
   };
 }
 
-export async function replaceAccountSnapshot(session: AccountSession, snapshot: AccountSnapshot, reason = "state.replace") {
+export async function replaceAccountSnapshot(
+  session: AccountSession,
+  snapshot: AccountSnapshot,
+  reason = "state.replace",
+  expectedUpdatedAt?: string,
+) {
   const current = (await readAccount(session.network, session.subject)) || (await getOrCreateAccount(session.identity, session.network));
+  if (expectedUpdatedAt && current.updatedAt !== expectedUpdatedAt) {
+    throw new Error("Server account state changed in another tab. Refresh before saving.");
+  }
   const transactions = sanitizeTransactions(snapshot.transactions || [], session.network);
   const recoveredWallets = recoverWalletsFromTransactions(snapshot.wallets || [], hydrateTransactions(transactions), session.network);
   const next: StoredAccount = {
@@ -819,7 +839,7 @@ export async function replaceAccountSnapshot(session: AccountSession, snapshot: 
     identities: mergeIdentities(current.identities || [], session.identity),
     wallets: recoveredWallets,
     transactions,
-    updatedAt: nowIso(),
+    updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
     auditEvents: [
       ...(current.auditEvents || []),
       auditEvent(reason, {
@@ -828,29 +848,12 @@ export async function replaceAccountSnapshot(session: AccountSession, snapshot: 
       }),
     ].slice(-MAX_AUDIT_EVENTS),
   };
-  await writeAccount(next);
+  await writeAccount(next, expectedUpdatedAt);
   return {
     wallets: next.wallets,
     transactions: hydrateTransactions(next.transactions),
     updatedAt: next.updatedAt,
   } satisfies AccountSnapshot;
-}
-
-export async function importIntoAccount(session: AccountSession, snapshot: AccountSnapshot) {
-  const current = await loadAccountSnapshot(session);
-  const walletById = new Map<string, MultisigWallet>();
-  for (const wallet of [...current.wallets, ...(snapshot.wallets || [])]) {
-    walletById.set(wallet.id, wallet);
-  }
-  const txById = new Map<string, TxDraft>();
-  for (const tx of [...current.transactions, ...(snapshot.transactions || [])]) {
-    txById.set(tx.id, tx);
-  }
-  return replaceAccountSnapshot(
-    session,
-    { wallets: [...walletById.values()], transactions: [...txById.values()] },
-    "state.import-local",
-  );
 }
 
 export async function listAccountFiles() {

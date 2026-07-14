@@ -162,6 +162,22 @@ async function main() {
   const reloadedSnapshot = await loadAccountSnapshot(loadedSession);
   assert.equal(reloadedSnapshot.wallets.length, 1);
   assert.equal(reloadedSnapshot.transactions.length, 1);
+  assert(reloadedSnapshot.updatedAt, "expected a server snapshot version");
+  const versionedSnapshot = await replaceAccountSnapshot(
+    loadedSession,
+    { wallets: reloadedSnapshot.wallets, transactions: reloadedSnapshot.transactions },
+    "smoke.versioned-replace",
+    reloadedSnapshot.updatedAt,
+  );
+  await assert.rejects(
+    replaceAccountSnapshot(
+      loadedSession,
+      { wallets: reloadedSnapshot.wallets, transactions: reloadedSnapshot.transactions },
+      "smoke.stale-replace",
+      reloadedSnapshot.updatedAt,
+    ),
+    /Server account state changed in another tab/,
+  );
   const storedAccountTx = await query<{ tx_json: { signatures?: Array<{ witnessCiphertext?: string; witnessCbor?: string }> } }>(
     `select tx_json from cm_account_transactions where network = $1 and subject = $2 and tx_id = $3`,
     [loadedSession.network, loadedSession.subject, txId],
@@ -262,8 +278,9 @@ async function main() {
       {
         ok: true,
         subject: session.subject,
-        walletCount: reloadedSnapshot.wallets.length,
-        transactionCount: reloadedSnapshot.transactions.length,
+        walletCount: versionedSnapshot.wallets.length,
+        transactionCount: versionedSnapshot.transactions.length,
+        staleSnapshotRejected: true,
         importedTransactionEncrypted: true,
         mixedNetworkImportRejected: true,
         relayRoomId: relayRoom.room.id,

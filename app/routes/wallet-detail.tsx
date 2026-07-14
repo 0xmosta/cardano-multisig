@@ -19,7 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "../lib/utils";
-import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
+import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -36,8 +36,6 @@ import {
   type RelayRoomRef,
   type SignatureRecord,
   type TxDraft,
-  STORAGE_KEY as WALLET_KEY,
-  TX_STORAGE_KEY as TX_KEY,
   createId,
   createSignaturePackage,
   decodeInvite,
@@ -92,21 +90,6 @@ export function meta() {
   return [{ title: "Wallet · Cardano Multisig" }];
 }
 
-function readArray<T>(key: string): T[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "[]") as unknown;
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeArray<T>(key: string, value: T[]) {
-  window.localStorage.setItem(key, JSON.stringify(value, null, 2));
-  notifyAppStorageChanged();
-}
-
 const RELAY_SESSION_KEY = "cardano-multisig.relay-rooms.session.v1";
 
 function readRelaySessionRooms() {
@@ -144,11 +127,6 @@ function stripRelayRoomSecrets(tx: TxDraft): TxDraft {
       status,
     } as RelayRoomRef,
   };
-}
-
-function writeTransactions(value: TxDraft[]) {
-  const stored = readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession);
-  writeArray(TX_KEY, mergeTransactionDrafts(stored, value).map(stripRelayRoomSecrets));
 }
 
 function stateSnapshotKey(wallets: Wallet[], txs: TxDraft[]) {
@@ -508,21 +486,11 @@ export default function WalletDetail() {
       };
     }
 
-    const refreshFromStorage = () => {
-      if (cancelled) return;
-      setWallets(readArray<Wallet>(WALLET_KEY));
-      setTxs(readArray<TxDraft>(TX_KEY).map(hydrateRelayRoomSession));
-    };
-    refreshFromStorage();
+    setWallets([]);
+    setTxs([]);
     setHydrated(true);
-    window.addEventListener("storage", refreshFromStorage);
-    window.addEventListener("cardano-multisig:storage", refreshFromStorage);
-    window.addEventListener("focus", refreshFromStorage);
     return () => {
       cancelled = true;
-      window.removeEventListener("storage", refreshFromStorage);
-      window.removeEventListener("cardano-multisig:storage", refreshFromStorage);
-      window.removeEventListener("focus", refreshFromStorage);
     };
   }, [account.authenticated, accountState]);
 
@@ -546,8 +514,6 @@ export default function WalletDetail() {
       return;
     }
     pendingServerSaveKeyRef.current = null;
-    writeArray(WALLET_KEY, wallets);
-    writeTransactions(txs);
   }, [account.authenticated, accountState, hydrated, txs, wallets]);
 
   const wallet = wallets.find((item) => item.id === walletId);

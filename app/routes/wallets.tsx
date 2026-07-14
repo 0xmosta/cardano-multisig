@@ -14,26 +14,11 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "
 import { Input } from "../components/ui/input";
 import {
   type MultisigWallet,
-  LEGACY_STORAGE_KEY,
-  STORAGE_KEY,
   summarizeScript,
 } from "../lib/multisig";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Wallets · Cardano Multisig" }];
-}
-
-function readWallets() {
-  if (typeof window === "undefined") return [];
-  for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(key) || "[]") as unknown;
-      if (Array.isArray(parsed) && parsed.length) return parsed as MultisigWallet[];
-    } catch {
-      // Keep trying the next storage key.
-    }
-  }
-  return [];
 }
 
 function walletTitle(wallet: MultisigWallet) {
@@ -55,7 +40,7 @@ export default function WalletsRoute() {
     if (!account.authenticated) {
       setLoading(false);
       setLoadError("");
-      setWallets(readWallets());
+      setWallets([]);
       return;
     }
     if (accountState) {

@@ -20,7 +20,7 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
-import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
+import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -41,10 +41,7 @@ import {
   type Signer,
   type TxDraft,
   DEFAULT_NETWORK,
-  LEGACY_STORAGE_KEY,
   NETWORKS,
-  STORAGE_KEY,
-  TX_STORAGE_KEY,
   cleanSigner,
   createId,
   createSignaturePackage,
@@ -301,28 +298,6 @@ function migrateWallet(raw: unknown): MultisigWallet | null {
   };
 }
 
-function readJsonArray<T>(key: string, migrate: (raw: unknown) => T | null): T[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const stored = window.localStorage.getItem(key);
-    if (!stored) return [];
-    const parsed = JSON.parse(stored) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map(migrate).filter((item): item is T => Boolean(item));
-  } catch {
-    return [];
-  }
-}
-
-function loadWallets() {
-  const current = readJsonArray(STORAGE_KEY, migrateWallet);
-  return current.length ? current : readJsonArray(LEGACY_STORAGE_KEY, migrateWallet);
-}
-
-function saveWallets(wallets: MultisigWallet[]) {
-  if (typeof window !== "undefined") window.localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets, null, 2));
-}
-
 function migrateDraft(raw: unknown): TxDraft | null {
   if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.title !== "string") return null;
   const status = raw.status === "succeeded" || raw.status === "failed" ? raw.status : "pending";
@@ -364,37 +339,6 @@ function migrateDraft(raw: unknown): TxDraft | null {
     failureReason: typeof raw.failureReason === "string" ? raw.failureReason : undefined,
     relayRoom: relayRoom?.roomId ? relayRoom : undefined,
   };
-}
-
-function loadDrafts() {
-  return readJsonArray(TX_STORAGE_KEY, migrateDraft);
-}
-
-function stripDraftRelaySecrets(draft: TxDraft): TxDraft {
-  return draft.relayRoom
-    ? {
-        ...draft,
-        relayRoom: {
-          roomId: draft.relayRoom.roomId,
-          createdAt: draft.relayRoom.createdAt,
-          lastSyncAt: draft.relayRoom.lastSyncAt,
-          sharedInviteUrl: draft.relayRoom.sharedInviteUrl,
-          status: draft.relayRoom.status,
-        } as RelayRoomRef,
-      }
-    : draft;
-}
-
-function saveDrafts(drafts: TxDraft[]) {
-  const stored = loadDrafts();
-  const merged = mergeTransactionDrafts(stored, drafts);
-  if (typeof window !== "undefined") window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(merged.map(stripDraftRelaySecrets), null, 2));
-}
-
-function deleteStoredDraft(draftId: string) {
-  if (typeof window === "undefined") return;
-  const next = loadDrafts().filter((draft) => draft.id !== draftId);
-  window.localStorage.setItem(TX_STORAGE_KEY, JSON.stringify(next.map(stripDraftRelaySecrets), null, 2));
 }
 
 function draftRelayFingerprint(draft: TxDraft) {
@@ -582,12 +526,9 @@ export default function Home() {
     accountState,
     accountSyncState,
     connected,
-    importLocalState,
-    migrationCounts,
     refreshConnectedWallet,
     refreshServerState,
     saveServerState,
-    signInConnectedWallet,
   } = useAppShell();
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
@@ -718,7 +659,7 @@ export default function Home() {
     if (account.authenticated) {
       if (accountState) {
         setWallets(accountState.wallets);
-        setDrafts((current) => mergeTransactionDrafts(accountState.transactions, current));
+        setDrafts(accountState.transactions);
         setHydrated(true);
         return;
       }
@@ -727,7 +668,7 @@ export default function Home() {
         .then((state) => {
           if (cancelled || !state) return;
           setWallets(state.wallets);
-          setDrafts((current) => mergeTransactionDrafts(state.transactions, current));
+          setDrafts(state.transactions);
           setHydrated(true);
         })
         .catch((error) => {
@@ -740,19 +681,10 @@ export default function Home() {
       };
     }
 
-    const refreshFromStorage = () => {
-      if (cancelled) return;
-      setWallets(loadWallets());
-      setDrafts((current) => mergeTransactionDrafts(loadDrafts(), current));
-    };
-    refreshFromStorage();
+    setWallets([]);
     setHydrated(true);
-    window.addEventListener("storage", refreshFromStorage);
-    window.addEventListener("focus", refreshFromStorage);
     return () => {
       cancelled = true;
-      window.removeEventListener("storage", refreshFromStorage);
-      window.removeEventListener("focus", refreshFromStorage);
     };
   }, [account.authenticated, accountState]);
 
@@ -776,9 +708,6 @@ export default function Home() {
       return;
     }
     pendingServerSaveKeyRef.current = null;
-    saveWallets(wallets);
-    saveDrafts(drafts);
-    notifyAppStorageChanged();
   }, [account.authenticated, accountState, drafts, hydrated, wallets]);
 
   useEffect(() => {
@@ -983,6 +912,10 @@ export default function Home() {
 
   async function importWallet() {
     if (!canImport) return;
+    if (!account.authenticated) {
+      toast.error("Sign in required", { description: "Wallets are saved only to the server-backed account." });
+      return;
+    }
     const handle = normalizeHandleInput(importHandle);
     const wallet: MultisigWallet =
       parsedImportSource.kind === "wallet"
@@ -1105,6 +1038,10 @@ export default function Home() {
   }
 
   function saveAddressDiscovery() {
+    if (!account.authenticated) {
+      toast.error("Sign in required", { description: "Wallets are saved only to the server-backed account." });
+      return;
+    }
     if (!addressDiscovery?.address) {
       setAddressDiscoveryError("Inspect an address or ADA Handle before saving it.");
       return;
@@ -1153,6 +1090,10 @@ export default function Home() {
 
   function saveCreatedWallet() {
     if (!canSave) return;
+    if (!account.authenticated) {
+      toast.error("Sign in required", { description: "Wallets are saved only to the server-backed account." });
+      return;
+    }
     const wallet: MultisigWallet = {
       id: createId("wallet"),
       name: "New multisig wallet",
@@ -1450,29 +1391,16 @@ export default function Home() {
 
   return (
     <div id="home" className="flex scroll-mt-24 flex-col gap-6">
-      {!visibleDraft && (account.authenticated || migrationCounts.available) ? (
+      {!visibleDraft && account.authenticated ? (
         <AppWindow title="Authenticated account state">
           <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="text-sm text-zinc-300">
-                {account.authenticated && account.session
-                  ? `Server-backed ${account.session.identity.kind} account active for ${account.network}.`
-                  : "This browser still has local-only wallets or transactions."}
+                {account.session ? `Server-backed ${account.session.identity.kind} account active for ${account.network}.` : "Server-backed account active."}
               </div>
               <div className="mt-1 text-xs text-zinc-500">
-                Sync state: {accountSyncState}. Local cache currently holds {migrationCounts.wallets} wallets and {migrationCounts.transactions} transactions.
+                Sync state: {accountSyncState}. PostgreSQL is the source of truth for wallets and transactions.
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {!account.authenticated ? (
-                <Button type="button" onClick={() => void signInConnectedWallet()} disabled={!connected}>
-                  {connected ? "Sign challenge for server sync" : "Connect a wallet to enable sync"}
-                </Button>
-              ) : migrationCounts.available ? (
-                <Button type="button" onClick={() => void importLocalState()}>
-                  Import local cache into account
-                </Button>
-              ) : null}
             </div>
           </div>
         </AppWindow>
@@ -1809,8 +1737,8 @@ export default function Home() {
                     </div>
                   </div>
                   {importValidationError ? <p className="text-sm text-red-300">{importValidationError}</p> : null}
-                  <Button onClick={() => void importWallet()} disabled={!canImport || importingWallet}>
-                    {importingWallet ? "Verifying policy…" : "Save imported wallet"}
+                  <Button onClick={() => void importWallet()} disabled={!account.authenticated || !canImport || importingWallet}>
+                    {!account.authenticated ? "Sign in to save" : importingWallet ? "Verifying policy…" : "Save imported wallet"}
                   </Button>
                 </>
               ) : null}
@@ -1858,8 +1786,8 @@ export default function Home() {
                           </CardContent>
                         </Card>
                       )}
-                      <Button onClick={saveAddressDiscovery} disabled={!addressDiscovery.address}>
-                        <Plus className="size-4" /> {addressDiscovery.recoveredScript ? "Import recovered multisig" : "Save watch-only wallet"}
+                      <Button onClick={saveAddressDiscovery} disabled={!account.authenticated || !addressDiscovery.address}>
+                        <Plus className="size-4" /> {!account.authenticated ? "Sign in to save" : addressDiscovery.recoveredScript ? "Import recovered multisig" : "Save watch-only wallet"}
                       </Button>
                     </div>
                   ) : null}
@@ -1942,7 +1870,7 @@ export default function Home() {
                 </div>
                 <Textarea readOnly value={scriptJson} className="min-h-48 font-mono text-xs" />
               </div>
-              <Button onClick={saveCreatedWallet} disabled={!canSave}>Save created wallet</Button>
+              <Button onClick={saveCreatedWallet} disabled={!account.authenticated || !canSave}>{account.authenticated ? "Save created wallet" : "Sign in to save"}</Button>
             </>
           )}
           <Collapsible className="rounded-xl border border-white/8 bg-black/20 px-5 py-4 text-zinc-200">

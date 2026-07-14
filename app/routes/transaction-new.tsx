@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { AccountSyncPanel } from "../components/account-sync-panel";
-import { notifyAppStorageChanged, useAppShell } from "../components/app-shell";
+import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -39,8 +39,6 @@ import {
   type Network,
   type SignatureRecord,
   type TxDraft,
-  TX_STORAGE_KEY,
-  STORAGE_KEY as WALLET_KEY,
   createId,
   expectedNetworkId,
   formatTargetNetwork,
@@ -99,21 +97,6 @@ const DEFAULT_ASSET: AssetOption = {
 
 export function meta() {
   return [{ title: "Create transaction · Cardano Multisig" }];
-}
-
-function readArray<T>(key: string): T[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "[]") as unknown;
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeArray<T>(key: string, value: T[]) {
-  window.localStorage.setItem(key, JSON.stringify(value, null, 2));
-  notifyAppStorageChanged();
 }
 
 function trimDecimal(value: string) {
@@ -293,7 +276,7 @@ export default function NewTransaction() {
       setWallets(accountState.wallets as Wallet[]);
       return;
     }
-    setWallets(readArray<Wallet>(WALLET_KEY));
+    setWallets([]);
   }, [account.authenticated, accountState]);
 
   const wallet = wallets.find((item) => item.id === walletId);
@@ -443,6 +426,11 @@ export default function NewTransaction() {
 
   async function createAndMaybeSign() {
     if (!wallet) return;
+    if (!account.authenticated || !accountState) {
+      setStatus("Sign in before creating a transaction. PostgreSQL is the source of truth.");
+      toast.error("Sign in required");
+      return;
+    }
     if (handleConflict) {
       setStatus(handleConflict);
       toast.error("Wallet identity mismatch", { description: handleConflict });
@@ -541,15 +529,18 @@ export default function NewTransaction() {
       updatedAt: now,
     };
 
-    if (account.authenticated && accountState) {
+    try {
       const nextTransactions = mergeTransactionDrafts(accountState.transactions, [tx]);
-      void saveServerState({ wallets: accountState.wallets, transactions: nextTransactions });
-    } else {
-      const next = mergeTransactionDrafts(readArray<TxDraft>(TX_STORAGE_KEY), [tx]);
-      writeArray(TX_STORAGE_KEY, next);
+      const saved = await saveServerState({ wallets: accountState.wallets, transactions: nextTransactions });
+      if (!saved) throw new Error("The server did not save the transaction.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save the transaction to the server.";
+      setStatus(message);
+      toast.error("Could not save transaction", { description: message });
+      return;
     }
     toast.success("Transaction saved", {
-      description: account.authenticated ? "Saved to the signed-in server account. Open the wallet coordinator to share signer invites." : "Open the wallet coordinator to share signer invites.",
+      description: "Saved to the signed-in server account. Open the wallet coordinator to share signer invites.",
     });
     navigate(`/wallets/${encodeURIComponent(wallet.id)}?draft=${encodeURIComponent(tx.id)}`);
   }

@@ -48,6 +48,8 @@ type BlockfrostAsset = {
 
 type CardanoNetwork = "mainnet" | "preprod" | "preview";
 
+import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
+
 const MAX_KUPO_PATTERNS = 64;
 
 function getKupoUrl() { return (process.env.CARDANO_KUPO_URL || process.env.KUPO_URL || "").replace(/\/$/, ""); }
@@ -420,6 +422,11 @@ async function kupoPatternAssets(patterns: string[], kupoUrl: string) {
 }
 
 export async function loader({ request }: { request: Request }) {
+  try {
+    await enforceRateLimit(request, { scope: "cardano-assets", limit: 120, windowMs: 60_000 });
+  } catch (error) {
+    return rateLimitErrorResponse(error) || Response.json({ ready: false, error: "Asset lookup unavailable." }, { status: 400 });
+  }
   const url = new URL(request.url);
   const identityOnly = url.searchParams.get("identityOnly") === "1";
   const requestNetwork = normalizeNetwork(url.searchParams.get("network") || undefined);

@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import { Pool } from "pg";
@@ -99,10 +100,44 @@ function sanitizeImportedSignature(signature) {
     : { ...rest };
 }
 
+function encryptImportedCapabilities(value) {
+  const purpose = "account-relay-capabilities";
+  const secret = (
+    process.env.CARDANO_MULTISIG_DATA_ENCRYPTION_SECRET ||
+    process.env.CARDANO_MULTISIG_SESSION_SECRET ||
+    process.env.CARDANO_MULTISIG_ACCOUNT_SECRET ||
+    ""
+  ).trim();
+  if (!secret) throw new Error("A server encryption secret is required before importing relay capabilities.");
+  const iv = randomBytes(12);
+  const key = createHash("sha256").update(`${secret}:${purpose}:v1`).digest();
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(Buffer.from(purpose, "utf8"));
+  const ciphertext = Buffer.concat([cipher.update(Buffer.from(JSON.stringify(value), "utf8")), cipher.final()]);
+  return `sec1:${Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64")}`;
+}
+
+function sanitizeImportedRelayRoom(relayRoom) {
+  if (!relayRoom || typeof relayRoom !== "object") return undefined;
+  if (typeof relayRoom.capabilityCiphertext === "string" && relayRoom.capabilityCiphertext.startsWith("sec1:")) {
+    return { ...relayRoom };
+  }
+  const { coordinatorToken, sharedInviteUrl, signerInvites, ...publicRef } = relayRoom;
+  const capabilities = {
+    ...(coordinatorToken ? { coordinatorToken } : {}),
+    ...(sharedInviteUrl ? { sharedInviteUrl } : {}),
+    ...(Array.isArray(signerInvites) && signerInvites.length ? { signerInvites } : {}),
+  };
+  return {
+    ...publicRef,
+    ...(Object.keys(capabilities).length ? { capabilityCiphertext: encryptImportedCapabilities(capabilities) } : {}),
+  };
+}
+
 function sanitizeImportedTransaction(tx) {
   return {
     ...tx,
-    relayRoom: tx?.relayRoom ? { ...tx.relayRoom } : undefined,
+    relayRoom: sanitizeImportedRelayRoom(tx?.relayRoom),
     assets: Array.isArray(tx?.assets) ? tx.assets.map((asset) => ({ ...asset })) : tx?.assets,
     signatures: Array.isArray(tx?.signatures) ? tx.signatures.map(sanitizeImportedSignature) : [],
   };

@@ -1,4 +1,7 @@
+import * as CSL from "@emurgo/cardano-serialization-lib-browser";
 import { normalizeSubmitNetwork, submitErrorMessage, submitSignedTransaction } from "../lib/server/cardano-submit";
+import { assertSessionMutationRequest, loadAccountSnapshot, loadSession } from "../lib/server/account-store";
+import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
 
 type SubmitRequest = { signedTxCbor?: string; network?: string };
 
@@ -32,12 +35,34 @@ function assertSubmitRequest(body: unknown) {
   return { signedTxCbor, network };
 }
 
+function transactionBodyHex(transactionCbor: string) {
+  return Buffer.from(CSL.Transaction.from_hex(transactionCbor).body().to_bytes()).toString("hex");
+}
+
 export async function action({ request }: { request: Request }) {
   try {
+    await enforceRateLimit(request, { scope: "cardano-submit", limit: 20, windowMs: 60_000 });
+    const session = await loadSession(request);
+    if (!session) return Response.json({ ok: false, error: "Sign in with a wallet first." }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    assertSessionMutationRequest(request, session, request.headers.get("x-cardano-multisig-csrf"));
     const input = assertSubmitRequest(await limitedJson(request));
-    return Response.json(await submitSignedTransaction(input.signedTxCbor, input.network));
+    if (input.network !== session.network) throw new Error("Signed transaction network does not match the authenticated account.");
+    const submittedBody = transactionBodyHex(input.signedTxCbor);
+    const snapshot = await loadAccountSnapshot(session);
+    const belongsToAccount = snapshot.transactions.some((tx) => {
+      if (tx.network !== input.network || !tx.unsignedTxCbor?.trim()) return false;
+      try {
+        return transactionBodyHex(tx.unsignedTxCbor) === submittedBody;
+      } catch {
+        return false;
+      }
+    });
+    if (!belongsToAccount) throw new Error("Signed transaction does not match a transaction in this authenticated account.");
+    return Response.json(await submitSignedTransaction(input.signedTxCbor, input.network), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    const limited = rateLimitErrorResponse(error);
+    if (limited) return limited;
     console.error("submit failed", submitErrorMessage(error));
-    return Response.json({ ok: false, error: submitErrorMessage(error) }, { status: 400 });
+    return Response.json({ ok: false, error: submitErrorMessage(error) }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 }

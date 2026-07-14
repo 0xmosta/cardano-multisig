@@ -1,0 +1,82 @@
+import assert from "node:assert/strict";
+import { sanitizeAccountSnapshotInput } from "../app/lib/server/account-state-validation.ts";
+import { decryptSensitiveJson, encryptSensitiveJson } from "../app/lib/server/sensitive-data.ts";
+import { enforceRateLimit, RateLimitError } from "../app/lib/server/rate-limit.ts";
+
+process.env.CARDANO_MULTISIG_SESSION_SECRET ||= "security-smoke-session-secret-at-least-32-bytes";
+
+const keyHash = "11".repeat(28);
+const token = "a".repeat(43);
+const normal = sanitizeAccountSnapshotInput(
+  {
+    wallets: [
+      {
+        id: "wallet-security",
+        name: "Security test",
+        network: "preprod",
+        threshold: 1,
+        signers: [{ id: "signer-1", label: "Signer", keyHash, source: "payment", ignored: "removed" }],
+        paymentScript: { type: "sig", keyHash, ignored: "removed" },
+        createdAt: new Date().toISOString(),
+        imported: true,
+        ignored: "removed",
+      },
+    ],
+    transactions: [
+      {
+        id: "tx-security",
+        walletId: "wallet-security",
+        title: "Security test",
+        walletName: "Security test",
+        network: "preprod",
+        recipient: "addr_test1security",
+        lovelace: "1000000",
+        note: "",
+        unsignedTxCbor: "84a0",
+        requiredSignatures: 1,
+        signerKeyHashes: [keyHash],
+        signatures: [],
+        createdAt: new Date().toISOString(),
+        relayRoom: {
+          roomId: "room-security",
+          coordinatorToken: token,
+          sharedInviteUrl: `https://cardano.example/sign#r=${token}`,
+          signerInvites: [{ keyHash, label: "Signer", inviteUrl: `https://cardano.example/sign#r=${token}` }],
+          createdAt: new Date().toISOString(),
+          status: "open",
+        },
+        ignored: "removed",
+      },
+    ],
+  },
+  "preprod",
+);
+
+assert.equal((normal.wallets[0] as unknown as Record<string, unknown>).ignored, undefined);
+assert.equal((normal.wallets[0].paymentScript as Record<string, unknown>).ignored, undefined);
+assert.equal((normal.transactions[0] as unknown as Record<string, unknown>).ignored, undefined);
+assert.equal(normal.transactions[0].relayRoom?.coordinatorToken, token);
+
+assert.throws(
+  () => sanitizeAccountSnapshotInput({ wallets: [{ rootKey: "xprv_private" }], transactions: [] }, "preprod"),
+  /custodial key material|private extended key/i,
+);
+assert.throws(
+  () => sanitizeAccountSnapshotInput({ wallets: [], transactions: [{ mnemonic: "one two three" }] }, "preprod"),
+  /custodial key material/i,
+);
+
+const encrypted = encryptSensitiveJson({ coordinatorToken: token }, "account-relay-capabilities");
+assert.match(encrypted, /^sec1:/);
+assert.deepEqual(decryptSensitiveJson(encrypted, "account-relay-capabilities"), { coordinatorToken: token });
+assert.throws(() => decryptSensitiveJson(`${encrypted.slice(0, -2)}aa`, "account-relay-capabilities"));
+
+const request = new Request("http://localhost/security", { headers: { "x-forwarded-for": "192.0.2.1" } });
+await enforceRateLimit(request, { scope: "security-smoke", limit: 2, windowMs: 60_000 });
+await enforceRateLimit(request, { scope: "security-smoke", limit: 2, windowMs: 60_000 });
+await assert.rejects(
+  enforceRateLimit(request, { scope: "security-smoke", limit: 2, windowMs: 60_000 }),
+  RateLimitError,
+);
+
+console.log(JSON.stringify({ ok: true, strictSnapshotValidation: true, sensitiveEnvelopeRoundTrip: true, rateLimitEnforced: true }));

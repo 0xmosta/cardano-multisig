@@ -116,6 +116,7 @@ async function main() {
 
   const walletId = `wallet-${Date.now()}`;
   const txId = `draft-${Date.now()}`;
+  const relayCapability = "c".repeat(43);
   const accountSnapshot = await replaceAccountSnapshot(loadedSession, {
     wallets: [
       {
@@ -153,6 +154,14 @@ async function main() {
         ],
         createdAt: nowIso(),
         status: "pending",
+        relayRoom: {
+          roomId: `room-${Date.now()}`,
+          coordinatorToken: relayCapability,
+          sharedInviteUrl: `http://localhost/sign#r=${relayCapability}`,
+          signerInvites: [{ keyHash: identity.keyHash, label: "QA signer", inviteUrl: `http://localhost/sign#r=${relayCapability}` }],
+          createdAt: nowIso(),
+          status: "open",
+        },
       },
     ],
   });
@@ -162,6 +171,8 @@ async function main() {
   const reloadedSnapshot = await loadAccountSnapshot(loadedSession);
   assert.equal(reloadedSnapshot.wallets.length, 1);
   assert.equal(reloadedSnapshot.transactions.length, 1);
+  assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.coordinatorToken, relayCapability);
+  assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.signerInvites?.[0]?.inviteUrl, `http://localhost/sign#r=${relayCapability}`);
   assert(reloadedSnapshot.updatedAt, "expected a server snapshot version");
   const versionedSnapshot = await replaceAccountSnapshot(
     loadedSession,
@@ -178,7 +189,7 @@ async function main() {
     ),
     /Server account state changed in another tab/,
   );
-  const storedAccountTx = await query<{ tx_json: { signatures?: Array<{ witnessCiphertext?: string; witnessCbor?: string }> } }>(
+  const storedAccountTx = await query<{ tx_json: { signatures?: Array<{ witnessCiphertext?: string; witnessCbor?: string }>; relayRoom?: { capabilityCiphertext?: string; coordinatorToken?: string; sharedInviteUrl?: string; signerInvites?: unknown[] } } }>(
     `select tx_json from cm_account_transactions where network = $1 and subject = $2 and tx_id = $3`,
     [loadedSession.network, loadedSession.subject, txId],
   );
@@ -186,6 +197,11 @@ async function main() {
   assert(storedSignature, "expected persisted account signature");
   assert.equal(storedSignature?.witnessCbor, undefined);
   assert.match(storedSignature?.witnessCiphertext || "", /^enc1:/);
+  const storedRelayRoom = storedAccountTx.rows[0]?.tx_json?.relayRoom;
+  assert.match(storedRelayRoom?.capabilityCiphertext || "", /^sec1:/);
+  assert.equal(storedRelayRoom?.coordinatorToken, undefined);
+  assert.equal(storedRelayRoom?.sharedInviteUrl, undefined);
+  assert.equal(storedRelayRoom?.signerInvites, undefined);
 
   const relayRoom = await createRelayRoom({
     network: "preprod",
@@ -282,6 +298,7 @@ async function main() {
         transactionCount: versionedSnapshot.transactions.length,
         staleSnapshotRejected: true,
         importedTransactionEncrypted: true,
+        relayCapabilitiesEncrypted: true,
         mixedNetworkImportRejected: true,
         relayRoomId: relayRoom.room.id,
         submissionTxHash: reloadedRoom.submission?.txHash,

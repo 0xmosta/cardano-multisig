@@ -27,6 +27,8 @@ ENV CARDANO_NETWORK=$CARDANO_NETWORK
 ENV VITE_CARDANO_NETWORK=$VITE_CARDANO_NETWORK
 EXPOSE 3000
 COPY ./package.json package-lock.json /app/
+COPY ./db /app/db
+COPY ./scripts/postgres-migrate.mjs ./scripts/harden-sensitive-state.mjs /app/scripts/
 COPY --from=production-dependencies-env /app/node_modules /app/node_modules
 COPY --from=build-env /app/build /app/build
 WORKDIR /app

@@ -6,6 +6,7 @@ import {
   replaceAccountSnapshot,
 } from "../lib/server/account-store";
 import type { MultisigWallet, TxDraft } from "../lib/multisig";
+import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
 
 type StateRequest = {
   intent?: "replace";
@@ -50,6 +51,7 @@ function parseSnapshot(body: unknown) {
 
 export async function loader({ request }: { request: Request }) {
   try {
+    await enforceRateLimit(request, { scope: "account-state-read", limit: 240, windowMs: 60_000 });
     const session = await loadSession(request);
     const snapshot = session ? await loadAccountSnapshot(session) : { wallets: [], transactions: [] };
     return Response.json(
@@ -61,6 +63,8 @@ export async function loader({ request }: { request: Request }) {
       { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
+    const limited = rateLimitErrorResponse(error);
+    if (limited) return limited;
     const message = error instanceof Error ? error.message : "Could not load authenticated account state.";
     return Response.json({ ok: false, error: message }, { status: 400, headers: NO_STORE_HEADERS });
   }
@@ -68,6 +72,7 @@ export async function loader({ request }: { request: Request }) {
 
 export async function action({ request }: { request: Request }) {
   try {
+    await enforceRateLimit(request, { scope: "account-state-write", limit: 120, windowMs: 60_000 });
     if (request.method.toUpperCase() !== "POST") {
       throw new Error("Authenticated account state API accepts POST only.");
     }
@@ -98,6 +103,8 @@ export async function action({ request }: { request: Request }) {
       { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
+    const limited = rateLimitErrorResponse(error);
+    if (limited) return limited;
     const message = error instanceof Error ? error.message : "Could not save authenticated account state.";
     return Response.json({ ok: false, error: message }, { status: 400, headers: NO_STORE_HEADERS });
   }

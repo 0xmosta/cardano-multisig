@@ -685,6 +685,7 @@ export default function WalletDetail() {
 
   async function ensureRelayRoom(tx: TxDraft) {
     if (!wallet) throw new Error("Wallet not loaded in this browser.");
+    if (!account.authenticated || !account.session) throw new Error("Sign in with a wallet before creating a signing room.");
     if (tx.relayRoom?.coordinatorToken && tx.relayRoom.signerInvites?.length && tx.relayRoom.sharedInviteUrl) {
       await syncExistingWitnessesToRelayRoom(tx, tx.relayRoom);
       return tx.relayRoom;
@@ -695,7 +696,10 @@ export default function WalletDetail() {
     const relayAssets = normalizeRelayAssetLines(tx);
     const response = await fetch("/api/cardano/relay-room", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-cardano-multisig-csrf": account.session.csrfToken,
+      },
       body: JSON.stringify({
         intent: "create",
         network: tx.network,
@@ -841,11 +845,17 @@ export default function WalletDetail() {
     }
 
     try {
+      if (!account.authenticated || !account.session) {
+        throw new Error("Sign in with a wallet before submitting a transaction.");
+      }
       setSignStatus(`Submitting signed transaction to ${providerStatus.network}…`);
       const signedTxCbor = await buildSignedTxCbor(wallet, tx);
       const response = await fetch("/api/cardano/submit", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-cardano-multisig-csrf": account.session.csrfToken,
+        },
         body: JSON.stringify({ signedTxCbor, network: tx.network }),
       });
       const body = await response.json();

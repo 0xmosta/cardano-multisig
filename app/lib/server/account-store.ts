@@ -2,8 +2,9 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PoolClient } from "pg";
-import type { MultisigWallet, Network, SignatureRecord, TxDraft } from "../multisig";
+import type { MultisigWallet, Network, RelayRoomRef, SignatureRecord, TxDraft } from "../multisig";
 import { normalizeKeyHash } from "../multisig";
+import { sanitizeAccountSnapshotInput } from "./account-state-validation";
 import {
   assertPersistenceMode,
   configuredNetwork,
@@ -14,6 +15,7 @@ import {
   withTransaction,
 } from "./postgres";
 import { decryptWitness, encryptWitness } from "./witness-crypto";
+import { decryptSensitiveJson, encryptSensitiveJson, isSensitiveDataEnvelope } from "./sensitive-data";
 
 type AccountIdentityKind = "payment" | "stake";
 
@@ -59,8 +61,16 @@ type StoredAccount = {
   updatedAt: string;
 };
 
-type StoredTxDraft = Omit<TxDraft, "signatures"> & {
+type StoredRelayRoomRef = Omit<RelayRoomRef, "coordinatorToken" | "sharedInviteUrl" | "signerInvites"> & {
+  capabilityCiphertext?: string;
+  coordinatorToken?: string;
+  sharedInviteUrl?: string;
+  signerInvites?: RelayRoomRef["signerInvites"];
+};
+
+type StoredTxDraft = Omit<TxDraft, "signatures" | "relayRoom"> & {
   signatures: StoredSignatureRecord[];
+  relayRoom?: StoredRelayRoomRef;
 };
 
 type StoredSignatureRecord = Omit<SignatureRecord, "witnessCbor"> & {
@@ -85,6 +95,7 @@ const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const ACCOUNT_COOKIE = "cardano_multisig_account_session";
 const MAX_AUDIT_EVENTS = 200;
+const RELAY_CAPABILITY_PURPOSE = "account-relay-capabilities";
 
 function nowIso() {
   return new Date().toISOString();
@@ -272,12 +283,46 @@ function sanitizeWallets(wallets: MultisigWallet[], network: Network) {
   return wallets.filter((wallet) => wallet.network === network).map((wallet) => ({ ...wallet }));
 }
 
+function storeRelayRoom(relayRoom: RelayRoomRef | undefined): StoredRelayRoomRef | undefined {
+  if (!relayRoom) return undefined;
+  const { coordinatorToken, sharedInviteUrl, signerInvites, ...publicRef } = relayRoom;
+  const capabilities = {
+    ...(coordinatorToken ? { coordinatorToken } : {}),
+    ...(sharedInviteUrl ? { sharedInviteUrl } : {}),
+    ...(signerInvites?.length ? { signerInvites } : {}),
+  };
+  return {
+    ...publicRef,
+    ...(Object.keys(capabilities).length
+      ? { capabilityCiphertext: encryptSensitiveJson(capabilities, RELAY_CAPABILITY_PURPOSE) }
+      : {}),
+  };
+}
+
+function hydrateRelayRoom(relayRoom: StoredRelayRoomRef | undefined): RelayRoomRef | undefined {
+  if (!relayRoom) return undefined;
+  const { capabilityCiphertext, coordinatorToken, sharedInviteUrl, signerInvites, ...publicRef } = relayRoom;
+  const encryptedCapabilities = isSensitiveDataEnvelope(capabilityCiphertext)
+    ? decryptSensitiveJson<Pick<RelayRoomRef, "coordinatorToken" | "sharedInviteUrl" | "signerInvites">>(
+        capabilityCiphertext,
+        RELAY_CAPABILITY_PURPOSE,
+      )
+    : {};
+  return {
+    ...publicRef,
+    ...(coordinatorToken ? { coordinatorToken } : {}),
+    ...(sharedInviteUrl ? { sharedInviteUrl } : {}),
+    ...(signerInvites?.length ? { signerInvites } : {}),
+    ...encryptedCapabilities,
+  };
+}
+
 function sanitizeTransactions(transactions: TxDraft[], network: Network): StoredTxDraft[] {
   return transactions
     .filter((tx) => tx.network === network)
     .map((tx) => ({
       ...tx,
-      relayRoom: tx.relayRoom ? { ...tx.relayRoom } : undefined,
+      relayRoom: storeRelayRoom(tx.relayRoom),
       assets: tx.assets?.map((asset) => ({ ...asset })),
       signatures: (tx.signatures || []).map((signature) => {
         const { witnessCbor, ...rest } = signature;
@@ -329,13 +374,55 @@ function recoverWalletsFromTransactions(wallets: MultisigWallet[], transactions:
 function hydrateTransactions(transactions: StoredTxDraft[]): TxDraft[] {
   return transactions.map((tx) => ({
     ...tx,
-    relayRoom: tx.relayRoom ? { ...tx.relayRoom } : undefined,
+    relayRoom: hydrateRelayRoom(tx.relayRoom),
     assets: tx.assets?.map((asset) => ({ ...asset })),
     signatures: (tx.signatures || []).map((signature) => ({
       ...signature,
       witnessCbor: signature.witnessCiphertext ? decryptWitness(signature.witnessCiphertext) : signature.witnessCbor || "",
     })),
   }));
+}
+
+function migrateStoredTransactions(transactions: StoredTxDraft[]) {
+  let changed = false;
+  const migrated = transactions.map((tx) => {
+    const signatures = (tx.signatures || []).map((signature) => {
+      if (!signature.witnessCbor || signature.witnessCiphertext) return signature;
+      const { witnessCbor, ...rest } = signature;
+      changed = true;
+      return { ...rest, witnessCiphertext: encryptWitness(witnessCbor) };
+    });
+    const relayRoom = tx.relayRoom;
+    const hasPlaintextCapabilities = Boolean(
+      relayRoom?.coordinatorToken || relayRoom?.sharedInviteUrl || relayRoom?.signerInvites?.length,
+    );
+    if (!hasPlaintextCapabilities) return { ...tx, signatures };
+    changed = true;
+    return {
+      ...tx,
+      signatures,
+      relayRoom: storeRelayRoom(hydrateRelayRoom(relayRoom)),
+    };
+  });
+  return { changed, transactions: migrated };
+}
+
+async function migrateAccountSensitiveState(account: StoredAccount) {
+  const migrated = migrateStoredTransactions(account.transactions || []);
+  if (!migrated.changed) return account;
+  const next: StoredAccount = {
+    ...account,
+    transactions: migrated.transactions,
+    updatedAt: new Date(Math.max(Date.now(), Date.parse(account.updatedAt) + 1)).toISOString(),
+    auditEvents: [...(account.auditEvents || []), auditEvent("security.sensitive-state-encrypted")].slice(-MAX_AUDIT_EVENTS),
+  };
+  try {
+    await writeAccount(next, account.updatedAt);
+    return next;
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("changed in another tab")) throw error;
+    return (await readAccount(account.network, account.subject)) || account;
+  }
 }
 
 function mergeIdentities(current: AccountIdentity[], identity: AccountIdentity) {
@@ -812,7 +899,8 @@ export async function destroySession(request: Request) {
 }
 
 export async function loadAccountSnapshot(session: AccountSession): Promise<AccountSnapshot> {
-  const account = await readAccount(session.network, session.subject);
+  const stored = await readAccount(session.network, session.subject);
+  const account = stored ? await migrateAccountSensitiveState(stored) : null;
   if (!account) return { wallets: [], transactions: [] };
   const transactions = hydrateTransactions(account.transactions || []);
   return {
@@ -832,8 +920,9 @@ export async function replaceAccountSnapshot(
   if (expectedUpdatedAt && current.updatedAt !== expectedUpdatedAt) {
     throw new Error("Server account state changed in another tab. Refresh before saving.");
   }
-  const transactions = sanitizeTransactions(snapshot.transactions || [], session.network);
-  const recoveredWallets = recoverWalletsFromTransactions(snapshot.wallets || [], hydrateTransactions(transactions), session.network);
+  const sanitized = sanitizeAccountSnapshotInput(snapshot, session.network);
+  const transactions = sanitizeTransactions(sanitized.transactions, session.network);
+  const recoveredWallets = recoverWalletsFromTransactions(sanitized.wallets, hydrateTransactions(transactions), session.network);
   const next: StoredAccount = {
     ...current,
     identities: mergeIdentities(current.identities || [], session.identity),

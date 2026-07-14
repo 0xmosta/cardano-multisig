@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import * as CSL from "@emurgo/cardano-serialization-lib-browser";
-import { normalizeKeyHash } from "../lib/multisig";
+import { isRecord, normalizeKeyHash } from "../lib/multisig";
 import {
   type RelayRoomCreateRequest,
   type RelayRoomSessionRequest,
@@ -13,6 +13,9 @@ import { submitErrorMessage, submitSignedTransaction } from "../lib/server/carda
 import { buildSignedRelayTransactionCbor } from "../lib/server/relay-submit";
 import type { RelayRoomRecord } from "../lib/server/relay-room-store";
 import { verifiedWitnessKeyHashes } from "../lib/witness-verification";
+import { assertOrigin, assertSessionMutationRequest, loadAccountSnapshot, loadSession } from "../lib/server/account-store";
+import { assertNoCustodialSecrets } from "../lib/server/account-state-validation";
+import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
 
 const MAX_RELAY_REQUEST_BYTES = 1_000_000;
 const MAX_WITNESS_CBOR_CHARS = 100_000;
@@ -66,6 +69,12 @@ function errorMessage(error: unknown) {
   } catch {
     return "Relay room request failed.";
   }
+}
+
+function noStore(response: Response) {
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "no-store");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function limitedJson(request: Request) {
@@ -411,15 +420,46 @@ export async function action({ request }: { request: Request }) {
     if (request.method.toUpperCase() !== "POST") {
       throw new Error("Relay rooms accept POST requests only.");
     }
+    assertOrigin(request);
+    await enforceRateLimit(request, { scope: "relay-api", limit: 300, windowMs: 60_000 });
     const body = await limitedJson(request);
     const { intent, input } = assertIntent(body);
-    if (intent === "create") return await handleCreate(request, input);
-    if (intent === "session") return await handleSession(input);
-    if (intent === "view") return await handleView(input);
-    if (intent === "sign") return await handleSign(input);
-    if (intent === "submit") return await handleSubmit(input);
+    const token = typeof input.token === "string" ? input.token.trim() : "";
+    if (intent === "create") {
+      assertNoCustodialSecrets(input, "relay room create request");
+      const session = await loadSession(request);
+      if (!session) return Response.json({ ok: false, error: "Sign in with a wallet before creating a signing room." }, { status: 401, headers: { "Cache-Control": "no-store" } });
+      assertSessionMutationRequest(request, session, request.headers.get("x-cardano-multisig-csrf"));
+      await enforceRateLimit(request, { scope: "relay-create", limit: 20, windowMs: 60 * 60_000, actor: `account:${session.subject}` });
+      const snapshot = await loadAccountSnapshot(session);
+      const draft = isRecord(input.draft) ? input.draft : {};
+      const draftId = String(draft.draftId || draft.id || "").trim();
+      const savedDraft = snapshot.transactions.find((tx) => tx.id === draftId);
+      if (!savedDraft || savedDraft.unsignedTxCbor.trim().toLowerCase() !== String(draft.unsignedTxCbor || "").trim().toLowerCase()) {
+        throw new Error("Signing room transaction does not match this authenticated account.");
+      }
+      return noStore(await handleCreate(request, input));
+    }
+    if (intent === "session") {
+      await enforceRateLimit(request, { scope: "relay-session", limit: 180, windowMs: 60_000, actor: `token:${token}` });
+      return noStore(await handleSession(input));
+    }
+    if (intent === "view") {
+      await enforceRateLimit(request, { scope: "relay-view", limit: 120, windowMs: 60_000, actor: `room:${String(input.roomId || "")}` });
+      return noStore(await handleView(input));
+    }
+    if (intent === "sign") {
+      await enforceRateLimit(request, { scope: "relay-sign", limit: 60, windowMs: 10 * 60_000, actor: `token:${token}` });
+      return noStore(await handleSign(input));
+    }
+    if (intent === "submit") {
+      await enforceRateLimit(request, { scope: "relay-submit", limit: 20, windowMs: 60_000, actor: `token:${token}` });
+      return noStore(await handleSubmit(input));
+    }
     throw new Error(`Unsupported relay room intent: ${intent}`);
   } catch (error) {
-    return Response.json({ ok: false, error: errorMessage(error) }, { status: 400 });
+    const limited = rateLimitErrorResponse(error);
+    if (limited) return limited;
+    return Response.json({ ok: false, error: errorMessage(error) }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 }

@@ -1262,10 +1262,14 @@ export default function Home() {
       return draft.relayRoom;
     }
     if (!draft.unsignedTxCbor.trim()) throw new Error("This transaction has no unsigned tx CBOR yet, so a short relay link cannot be created.");
+    if (!account.authenticated || !account.session) throw new Error("Sign in with a wallet before creating a signing room.");
     const wallet = wallets.find((item) => item.id === draft.walletId || item.name === draft.walletName);
     const response = await fetch("/api/cardano/relay-room", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-cardano-multisig-csrf": account.session.csrfToken,
+      },
       body: JSON.stringify({
         intent: "create",
         network: draft.network,

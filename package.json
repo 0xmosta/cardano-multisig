@@ -12,8 +12,10 @@
     "dev": "react-router dev",
     "db:migrate": "node scripts/postgres-migrate.mjs",
     "db:import-file-store": "node scripts/import-file-store.mjs",
+    "db:harden-sensitive-state": "node scripts/harden-sensitive-state.mjs",
     "smoke:app": "node scripts/smoke-app.mjs",
     "smoke:postgres": "tsx scripts/smoke-postgres-persistence.ts",
+    "smoke:security": "tsx scripts/smoke-security.ts",
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc"
   },

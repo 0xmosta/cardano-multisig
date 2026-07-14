@@ -146,14 +146,30 @@ function assertOptionalBoundedString(value: unknown, field: string, maxLength: n
 function assertOptionalNativeScript(value: unknown): NativeScript | undefined {
   if (!isRecord(value)) return undefined;
   const type = assertString(value.type, "script.type");
+  if (!["sig", "all", "any", "atLeast", "before", "after"].includes(type)) {
+    throw new Error(`Unsupported native script type: ${type}.`);
+  }
   const script: NativeScript = { type };
-  if (typeof value.keyHash === "string" && value.keyHash.trim()) script.keyHash = normalizeKeyHash(value.keyHash);
-  if (typeof value.required === "number") script.required = value.required;
-  if (typeof value.slot === "number") script.slot = value.slot;
-  if (Array.isArray(value.scripts)) script.scripts = value.scripts.map(assertOptionalNativeScript).filter(Boolean) as NativeScript[];
-  for (const [key, raw] of Object.entries(value)) {
-    if (key in script || key === "scripts") continue;
-    script[key] = raw;
+  if (type === "sig") {
+    const keyHash = normalizeKeyHash(assertString(value.keyHash, "script.keyHash"));
+    if (!isKeyHash(keyHash)) throw new Error("script.keyHash must be a 56-character key hash.");
+    script.keyHash = keyHash;
+  }
+  if (type === "atLeast") {
+    const required = Number(value.required);
+    if (!Number.isInteger(required) || required < 1 || required > MAX_SIGNERS) throw new Error("script.required is invalid.");
+    script.required = required;
+  }
+  if (type === "before" || type === "after") {
+    const slot = Number(value.slot);
+    if (!Number.isSafeInteger(slot) || slot < 0) throw new Error("script.slot is invalid.");
+    script.slot = slot;
+  }
+  if (["all", "any", "atLeast"].includes(type)) {
+    if (!Array.isArray(value.scripts) || !value.scripts.length) throw new Error("script.scripts must contain child scripts.");
+    if (value.scripts.length > MAX_SIGNERS) throw new Error(`script.scripts cannot contain more than ${MAX_SIGNERS} children.`);
+    script.scripts = value.scripts.map(assertOptionalNativeScript).filter(Boolean) as NativeScript[];
+    if (type === "atLeast" && (script.required || 0) > script.scripts.length) throw new Error("script.required cannot exceed child count.");
   }
   return script;
 }

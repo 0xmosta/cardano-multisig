@@ -1,7 +1,10 @@
 import * as CSL from "@emurgo/cardano-serialization-lib-browser";
+import { assertSessionMutationRequest, loadAccountSnapshot, loadSession } from "../lib/server/account-store";
+import { assertNoCustodialSecrets } from "../lib/server/account-state-validation";
+import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
 
 type NativeScriptJson = { type: string; keyHash?: string; scripts?: NativeScriptJson[]; required?: number; slot?: number; [key: string]: unknown };
-type WalletInput = { name?: string; handle?: string; network?: string; paymentScript: NativeScriptJson; stakeScript?: NativeScriptJson | null };
+type WalletInput = { id?: string; name?: string; handle?: string; network?: string; paymentScript: NativeScriptJson; stakeScript?: NativeScriptJson | null };
 type AssetLine = { unit: string; quantity: string; decimals?: number };
 type BuildRequest = { wallet: WalletInput; recipient: string; assets: AssetLine[] };
 type KoiosUtxoAsset = { policy_id?: string; asset_name?: string; quantity?: string };
@@ -332,9 +335,29 @@ function assertBuildRequest(body: unknown): BuildRequest {
 
 export async function action({ request }: { request: Request }) {
   try {
-    const input = assertBuildRequest(await limitedJson(request));
-    const source = await resolveSource(input.wallet);
-    const paymentScript = scriptToCsl(input.wallet.paymentScript);
+    await enforceRateLimit(request, { scope: "cardano-build-tx", limit: 30, windowMs: 60_000 });
+    const session = await loadSession(request);
+    if (!session) return Response.json({ ok: false, error: "Sign in with a wallet first." }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    assertSessionMutationRequest(request, session, request.headers.get("x-cardano-multisig-csrf"));
+    const body = await limitedJson(request);
+    assertNoCustodialSecrets(body, "transaction build request");
+    const input = assertBuildRequest(body);
+    const snapshot = await loadAccountSnapshot(session);
+    const savedWallet = snapshot.wallets.find((wallet) => wallet.id === input.wallet.id && wallet.paymentScript);
+    if (!savedWallet?.paymentScript) throw new Error("The requested multisig wallet is not saved in this authenticated account.");
+    const requestedPaymentHash = scriptToCsl(input.wallet.paymentScript).hash().to_hex();
+    const savedPaymentHash = scriptToCsl(savedWallet.paymentScript).hash().to_hex();
+    if (requestedPaymentHash !== savedPaymentHash) throw new Error("The requested payment script does not match the saved wallet.");
+    const trustedWallet: WalletInput = {
+      id: savedWallet.id,
+      name: savedWallet.name,
+      handle: savedWallet.handle,
+      network: savedWallet.network,
+      paymentScript: savedWallet.paymentScript,
+      stakeScript: savedWallet.stakeScript,
+    };
+    const source = await resolveSource(trustedWallet);
+    const paymentScript = scriptToCsl(trustedWallet.paymentScript);
     const utxos = await addressUtxos(source.address, paymentScript.hash().to_hex());
     if (!utxos.length) throw new Error("No spendable UTxOs found for this multisig address.");
     const params = await epochParams();
@@ -348,9 +371,11 @@ export async function action({ request }: { request: Request }) {
     builder.add_output(adjustedOutput.output);
     builder.add_change_if_needed(CSL.Address.from_bech32(source.address));
     const tx = builder.build_tx_unsafe();
-    return Response.json({ ok: true, unsignedTxCbor: tx.to_hex(), fee: tx.body().fee().to_str(), sourceAddress: source.address, handle: source.handle, inputCount: utxos.length, adjustedMinAda: adjustedOutput.adjusted, minAda: adjustedOutput.minCoin, assets: withAdjustedAda(input.assets, adjustedOutput.adjustedCoin) });
+    return Response.json({ ok: true, unsignedTxCbor: tx.to_hex(), fee: tx.body().fee().to_str(), sourceAddress: source.address, handle: source.handle, inputCount: utxos.length, adjustedMinAda: adjustedOutput.adjusted, minAda: adjustedOutput.minCoin, assets: withAdjustedAda(input.assets, adjustedOutput.adjustedCoin) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    const limited = rateLimitErrorResponse(error);
+    if (limited) return limited;
     console.error("build-tx failed", errorMessage(error));
-    return Response.json({ ok: false, error: errorMessage(error) }, { status: 400 });
+    return Response.json({ ok: false, error: errorMessage(error) }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 }

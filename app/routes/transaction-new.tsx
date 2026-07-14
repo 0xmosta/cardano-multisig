@@ -397,12 +397,16 @@ export default function NewTransaction() {
 
   async function buildUnsignedTx(txAssets: AssetLine[]) {
     if (!wallet) throw new Error("Wallet not loaded.");
+    if (!account.authenticated || !account.session) throw new Error("Sign in with a wallet before building a transaction.");
     if (!recipient.trim()) throw new Error("Enter a recipient address.");
 
     setStatus("Building balanced unsigned transaction from multisig UTxOs…");
     const response = await fetch("/api/cardano/build-tx", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-cardano-multisig-csrf": account.session.csrfToken,
+      },
       body: JSON.stringify({ wallet, recipient: recipient.trim(), assets: txAssets }),
     });
     const body = await response.json();

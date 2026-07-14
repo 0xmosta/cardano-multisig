@@ -45,11 +45,11 @@ function statusBadgeVariant(state: ReturnType<typeof transactionState>) {
 }
 
 function walletHref(tx: TxDraft) {
-  return tx.walletId ? `/wallets/${encodeURIComponent(tx.walletId)}` : "/";
+  return tx.walletId ? `/wallets/${encodeURIComponent(tx.walletId)}` : "/wallets";
 }
 
 function newTransactionHref(tx: TxDraft) {
-  return tx.walletId ? `/wallets/${encodeURIComponent(tx.walletId)}/transactions/new` : "/";
+  return tx.walletId ? `/wallets/${encodeURIComponent(tx.walletId)}/transactions/new` : "/wallets";
 }
 
 function relayTokenFromInviteUrl(inviteUrl: string) {
@@ -60,6 +60,57 @@ function relayTokenFromInviteUrl(inviteUrl: string) {
   } catch {
     return inviteUrl.split("#r=")[1]?.trim() || "";
   }
+}
+
+function TransactionMobileCard({ tx }: { tx: TxDraft }) {
+  const signed = signatureCount(tx);
+  const missing = pendingSignatureCount(tx);
+  const state = transactionState(tx);
+  return (
+    <article className="min-w-0 rounded-lg border border-border bg-black/20 p-4">
+      <div className="flex min-w-0 items-start gap-3">
+        <Avatar label={tx.walletName} tone={missing ? "primary" : "success"} />
+        <div className="min-w-0 flex-1">
+          <div className="break-words font-semibold text-foreground">{tx.title}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>{tx.walletName}</span>
+            <span>·</span>
+            <span>{tx.network}</span>
+            <Badge variant={statusBadgeVariant(state)}>{state}</Badge>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-md border border-white/8 bg-white/[0.025] p-3">
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>Required signatures</span>
+          <span className="font-medium text-foreground">{signed}/{tx.requiredSignatures}</span>
+        </div>
+        <Progress className="mt-2" value={signed} max={tx.requiredSignatures} />
+        <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+          {state === "submitted" ? <CheckCircle2 className="size-3" /> : missing ? <Clock className="size-3" /> : <ShieldCheck className="size-3" />}
+          {state === "submitted" ? "Submitted" : missing ? `${missing} more required` : "Ready to submit"}
+        </div>
+      </div>
+
+      <div className="mt-3 break-all rounded-md border border-white/8 bg-black/20 p-3 text-xs text-muted-foreground">
+        {tx.txHash ? `Transaction ${tx.txHash}` : tx.recipient || "No recipient saved"}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <Button asChild className="min-w-0 px-2">
+          <Link to={walletHref(tx)}>
+            Wallet <ArrowRight className="size-4" />
+          </Link>
+        </Button>
+        <Button asChild variant="secondary" className="min-w-0 px-2">
+          <Link to={newTransactionHref(tx)}>
+            <Plus className="size-4" /> New
+          </Link>
+        </Button>
+      </div>
+    </article>
+  );
 }
 
 export default function TransactionsRoute() {
@@ -280,17 +331,17 @@ export default function TransactionsRoute() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold text-zinc-50">Transactions</h1>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-zinc-50 sm:text-3xl">Transactions</h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-400">Track pending signature rooms, open wallet coordinators, and continue transaction work from {account ? "server-synced account state" : "this browser"}.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
           <Badge variant="secondary">
             {transactions.length} room{transactions.length === 1 ? "" : "s"}
           </Badge>
           {readyCount ? <Badge className="bg-emerald-300 text-emerald-950">{readyCount} ready</Badge> : null}
           {submittedCount ? <Badge variant="secondary">{submittedCount} submitted</Badge> : null}
-          <Button type="button" size="sm" variant="secondary" onClick={() => void refreshRelayRooms()} disabled={syncing}>
+          <Button type="button" size="sm" variant="secondary" className="max-sm:flex-1" onClick={() => void refreshRelayRooms()} disabled={syncing}>
             <RefreshCw className={cn("size-4", syncing ? "animate-spin" : "")} /> Sync
           </Button>
         </div>
@@ -299,7 +350,7 @@ export default function TransactionsRoute() {
       <AccountSyncPanel />
 
       <AppWindow title="Transaction rooms" contentClassName="p-0">
-        <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
+        <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-4 sm:p-5">
           <div className="relative min-w-full flex-1 sm:min-w-0">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -314,7 +365,7 @@ export default function TransactionsRoute() {
             <span>shown</span>
           </Badge>
         </div>
-        <div className="p-5">
+        <div className="p-3 sm:p-5">
           {loading ? (
             <Empty>
               <EmptyHeader>
@@ -336,13 +387,18 @@ export default function TransactionsRoute() {
               </EmptyContent>
             </Empty>
           ) : transactions.length ? (
-            <DataTable columns={columns} data={visibleTransactions} emptyLabel="No transaction matches." />
+            <DataTable
+              columns={columns}
+              data={visibleTransactions}
+              emptyLabel="No transaction matches."
+              renderMobileRow={(tx) => <TransactionMobileCard tx={tx} />}
+            />
           ) : (
             <Empty>
               <EmptyHeader>
                 {account ? <Cloud className="size-5 text-sky-200" /> : <Clock className="size-5 text-muted-foreground" />}
-                <EmptyTitle>{account ? "No server transaction rooms yet" : "No local transaction rooms yet"}</EmptyTitle>
-                <EmptyDescription>{account ? "Import a local browser copy above or create a new transaction from a synced wallet." : "Create a transaction from a wallet, then sign in to make rooms available across browsers."}</EmptyDescription>
+                <EmptyTitle>{account ? "No server transaction rooms yet" : "Sign in to load transactions"}</EmptyTitle>
+                <EmptyDescription>{account ? "Create a transaction from a synced wallet to open a coordinator room." : "Use the account menu to authenticate; PostgreSQL is the source of truth for transaction rooms."}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}

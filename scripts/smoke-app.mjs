@@ -3,7 +3,9 @@ const baseUrl = (process.env.BASE_URL || "http://localhost:3000").replace(/\/$/,
 const checks = [
   { path: "/", expect: ["Cardano multisig"] },
   { path: "/wallets", expect: ["Wallets"] },
+  { path: "/wallets/import", expect: ["Cardano multisig"] },
   { path: "/transactions", expect: ["Transactions"] },
+  { path: "/sign", expect: ["Cardano multisig"] },
   { path: "/favicon.svg", contentType: "image/svg+xml" },
   { path: "/api/cardano/provider", json: true, expectJson: ["ready", "network"] },
 ];

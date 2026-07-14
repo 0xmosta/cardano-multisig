@@ -12,6 +12,7 @@ import * as React from "react";
 import { Button } from "./button";
 import { Input } from "./input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
+import { cn } from "../../lib/utils";
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
@@ -19,6 +20,7 @@ interface DataTableProps<TData, TValue> {
   filterColumn?: string;
   filterPlaceholder?: string;
   emptyLabel?: string;
+  renderMobileRow?: (row: TData, index: number) => React.ReactNode;
 }
 
 export function DataTable<TData, TValue>({
@@ -27,6 +29,7 @@ export function DataTable<TData, TValue>({
   filterColumn,
   filterPlaceholder = "Filter...",
   emptyLabel = "No results.",
+  renderMobileRow,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const table = useReactTable({
@@ -42,6 +45,7 @@ export function DataTable<TData, TValue>({
     },
   });
   const filter = filterColumn ? table.getColumn(filterColumn) : null;
+  const rows = table.getRowModel().rows;
 
   return (
     <div className="space-y-4">
@@ -53,7 +57,18 @@ export function DataTable<TData, TValue>({
           className="max-w-sm"
         />
       ) : null}
-      <div className="overflow-hidden rounded-md border">
+      {renderMobileRow ? (
+        <div className="grid gap-3 md:hidden">
+          {rows.length ? (
+            rows.map((row, index) => (
+              <React.Fragment key={row.id}>{renderMobileRow(row.original, index)}</React.Fragment>
+            ))
+          ) : (
+            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{emptyLabel}</div>
+          )}
+        </div>
+      ) : null}
+      <div className={cn("overflow-hidden rounded-md border", renderMobileRow ? "hidden md:block" : "block")}>
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -67,8 +82,8 @@ export function DataTable<TData, TValue>({
             ))}
           </TableHeader>
           <TableBody>
-            {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
+            {rows.length ? (
+              rows.map((row) => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>

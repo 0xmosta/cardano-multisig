@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useOutletContext } from "react-router";
-import { Home, ListChecks, WalletCards } from "lucide-react";
+import { ListChecks, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { AppHeader, type AppHeaderAccountSession, type AppHeaderProviderStatus } from "./app-header";
 import { Badge } from "./ui/badge";
@@ -165,7 +165,6 @@ export function useAppShell() {
 function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount: number }) {
   const location = useLocation();
   const items = [
-    { label: "Home", href: "/", icon: Home, active: location.pathname === "/" },
     { label: "Wallets", href: "/wallets", icon: WalletCards, active: location.pathname === "/wallets" || location.pathname.startsWith("/wallets/"), count: walletCount },
     { label: "Transactions", href: "/transactions", icon: ListChecks, active: location.pathname === "/transactions", count: roomCount },
   ];
@@ -174,7 +173,7 @@ function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount
     <TooltipProvider>
       <Sidebar aria-label="Primary" className="fixed bottom-4 left-1/2 z-40 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 md:bottom-auto md:left-4 md:top-1/2 md:w-16 md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:p-2 xl:left-6">
         <SidebarContent>
-          <SidebarMenu className="grid-cols-3 md:flex md:flex-col">
+          <SidebarMenu className="grid-cols-2 md:flex md:flex-col">
             {items.map((item) => {
               const Icon = item.icon;
               return (
@@ -490,7 +489,7 @@ export function AppShell() {
   };
 
   return (
-    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-6 overflow-x-hidden px-4 pb-24 pt-6 text-foreground sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
+    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 overflow-x-hidden px-3 pb-24 pt-3 text-foreground sm:gap-6 sm:px-6 sm:pt-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
       <AppSidebar walletCount={walletCount} roomCount={roomCount} />
       <AppHeader
         providers={providers}

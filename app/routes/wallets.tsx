@@ -29,6 +29,68 @@ function walletHref(wallet: MultisigWallet) {
   return `/wallets/${encodeURIComponent(wallet.id)}`;
 }
 
+function WalletMobileCard({ wallet }: { wallet: MultisigWallet }) {
+  const watchOnly = !wallet.paymentScript;
+  const title = walletTitle(wallet);
+  return (
+    <article className="min-w-0 rounded-lg border border-border bg-black/20 p-4">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+          <WalletCards className="size-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Link to={walletHref(wallet)} className="min-w-0 break-words font-semibold text-foreground underline-offset-4 hover:underline">
+              {title}
+            </Link>
+            <Badge variant="outline">{wallet.network}</Badge>
+          </div>
+          <div className="mt-1 break-all text-xs text-muted-foreground">
+            {watchOnly ? wallet.discovery?.address || wallet.id : wallet.handle ? wallet.name : wallet.id}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 text-sm">
+        <div className="rounded-md border border-white/8 bg-white/[0.025] p-3">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Policy</div>
+          <div className="mt-1 text-foreground">
+            {watchOnly ? "Native script needed to spend" : `Payment ${summarizeScript(wallet.paymentScript)}`}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {watchOnly ? "watch-only" : `${wallet.threshold || 0}-of-${wallet.signers?.length || 0} required`}
+          </div>
+        </div>
+        <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-white/[0.025] p-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Signers</div>
+            <div className="mt-2 flex items-center">
+              {wallet.signers?.length ? (
+                <div className="-space-x-2 whitespace-nowrap">
+                  {wallet.signers.slice(0, 5).map((signer, index) => (
+                    <Avatar key={signer.id || signer.keyHash} label={signer.label || `Signer ${index + 1}`} className="size-8 border border-background" />
+                  ))}
+                </div>
+              ) : (
+                <span className="text-xs text-muted-foreground">Watch address</span>
+              )}
+            </div>
+          </div>
+          <Badge variant={watchOnly ? "outline" : wallet.imported ? "default" : "secondary"}>
+            {watchOnly ? "watch-only" : wallet.imported ? "imported" : "created"}
+          </Badge>
+        </div>
+      </div>
+
+      <Button asChild className="mt-4 w-full">
+        <Link to={walletHref(wallet)}>
+          Open wallet <ArrowRight className="size-4" />
+        </Link>
+      </Button>
+    </article>
+  );
+}
+
 export default function WalletsRoute() {
   const { account, accountState, refreshServerState } = useAppShell();
   const [wallets, setWallets] = useState<MultisigWallet[]>([]);
@@ -175,12 +237,12 @@ export default function WalletsRoute() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold text-zinc-50">Wallets</h1>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-zinc-50 sm:text-3xl">Wallets</h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open saved multisig policies, review signer rules, and continue treasury work from {account ? "your signed-in server account" : "this browser"}.</p>
         </div>
-        <Button asChild>
-          <Link to="/">
+        <Button asChild className="w-full sm:w-auto">
+          <Link to="/wallets/import">
             <Plus className="size-4" /> Import or create
           </Link>
         </Button>
@@ -189,7 +251,7 @@ export default function WalletsRoute() {
       <AccountSyncPanel />
 
       <AppWindow title="Wallets" contentClassName="p-0">
-        <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-5">
+        <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-4 sm:p-5">
           <div className="relative min-w-full flex-1 sm:min-w-0">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -204,7 +266,7 @@ export default function WalletsRoute() {
             <span>shown</span>
           </Badge>
         </div>
-        <div className="p-5">
+        <div className="p-3 sm:p-5">
           {loading ? (
             <Empty>
               <EmptyHeader>
@@ -226,17 +288,22 @@ export default function WalletsRoute() {
               </EmptyContent>
             </Empty>
           ) : wallets.length ? (
-            <DataTable columns={columns} data={visibleWallets} emptyLabel="No wallet matches." />
+            <DataTable
+              columns={columns}
+              data={visibleWallets}
+              emptyLabel="No wallet matches."
+              renderMobileRow={(wallet) => <WalletMobileCard wallet={wallet} />}
+            />
           ) : (
             <Empty>
               <EmptyHeader>
                 {account ? <Cloud className="size-5 text-sky-200" /> : <WalletCards className="size-5 text-muted-foreground" />}
-                <EmptyTitle>{account ? "No server wallets yet" : "No local wallets saved yet"}</EmptyTitle>
-                <EmptyDescription>{account ? "Import a local browser copy above or create/import a policy to save it for this account." : "Create or import a multisig wallet from Home, then sign in to sync it across browsers."}</EmptyDescription>
+                <EmptyTitle>{account ? "No server wallets yet" : "Sign in to load wallets"}</EmptyTitle>
+                <EmptyDescription>{account ? "Import a wallet export or create a policy to save it to this account." : "Use the account menu to authenticate; PostgreSQL is the source of truth for wallet data."}</EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
                 <Button asChild>
-                  <Link to="/">
+                  <Link to="/wallets/import">
                     <Plus className="size-4" /> Import or create
                   </Link>
                 </Button>

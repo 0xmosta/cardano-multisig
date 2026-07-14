@@ -1016,7 +1016,7 @@ export default function WalletDetail() {
   if (!wallet) {
     return (
       <div className="flex flex-col gap-6">
-        <Link className="text-sm text-sky-300" to="/">
+        <Link className="text-sm text-sky-300" to="/wallets">
           ← Back
         </Link>
         <Card className="glass-panel">
@@ -1083,15 +1083,15 @@ export default function WalletDetail() {
   ];
 
   return (
-    <div className="flex flex-col gap-6">
-      <section className="min-w-0 rounded-xl border border-white/8 bg-[#121214] p-5 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.95)]">
+    <div className="flex min-w-0 flex-col gap-4 overflow-x-hidden sm:gap-6">
+      <section className="min-w-0 rounded-xl border border-white/8 bg-[#121214] p-4 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.95)] sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <Link to="/" className="inline-flex items-center gap-2 text-sm text-sky-300 transition hover:text-sky-200">
+            <Link to="/wallets" className="inline-flex items-center gap-2 text-sm text-sky-300 transition hover:text-sky-200">
               <ArrowLeft className="size-4" /> Back to wallets
             </Link>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <h1 className="min-w-0 break-words text-3xl font-semibold tracking-tight text-slate-50">
+              <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-slate-50 sm:text-3xl">
                 {wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}
               </h1>
               <Badge variant="outline" className="border-white/10 text-zinc-400">{wallet.network}</Badge>
@@ -1505,7 +1505,7 @@ export default function WalletDetail() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="p-5">
+            <CardContent className="p-4 sm:p-5">
               {walletAssets.length === 0 ? (
                 <div className="rounded-lg border p-4 text-sm text-muted-foreground">
                   <Database className="mr-2 inline size-4 text-sky-300" /> {assetStatus}

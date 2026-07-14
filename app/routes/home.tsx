@@ -16,7 +16,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/home";
 import { cn } from "../lib/utils";
@@ -598,6 +598,9 @@ function clearRelayInviteSession() {
 }
 
 export default function Home() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const walletWorkspaceRequested = location.pathname === "/wallets/import";
   const {
     account,
     accountState,
@@ -617,7 +620,7 @@ export default function Home() {
 
   const [mode, setMode] = useState<Mode>("import");
   const [importMode, setImportMode] = useState<ImportMode>("export");
-  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+  const [walletDialogOpen, setWalletDialogOpen] = useState(walletWorkspaceRequested);
   const [threshold, setThreshold] = useState(2);
   const [signers, setSigners] = useState<Signer[]>([emptySigner("Signer 1"), emptySigner("Signer 2"), emptySigner("Signer 3")]);
   const [importHandle, setImportHandle] = useState("");
@@ -791,6 +794,12 @@ export default function Home() {
     }
     pendingServerSaveKeyRef.current = null;
   }, [account.authenticated, accountState, drafts, hydrated, wallets]);
+
+  useEffect(() => {
+    if (!walletWorkspaceRequested || walletDialogOpen) return;
+    const timeout = window.setTimeout(() => navigate("/wallets", { replace: true }), 0);
+    return () => window.clearTimeout(timeout);
+  }, [navigate, walletDialogOpen, walletWorkspaceRequested]);
 
   useEffect(() => {
     if (!relayInviteToken) return;
@@ -1744,7 +1753,7 @@ export default function Home() {
               <h2 className="text-xl font-semibold text-zinc-50">Wallet workspace</h2>
               <p className="mt-1 text-sm text-zinc-400">Keep the first step simple: import something real, or create a fresh M-of-N policy.</p>
             </div>
-            <Tabs value={mode} onValueChange={(value) => setMode(value as Mode)}>
+            <Tabs value={mode} onValueChange={(value) => setMode(value as Mode)} className="max-sm:w-full">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="import">
                   <Import className="size-4" /> import
@@ -1777,7 +1786,7 @@ export default function Home() {
                 <>
                   <div className="space-y-2">
                     <Label>Wallet export JSON or payment script</Label>
-                    <div className="flex items-center justify-between text-xs text-zinc-500">
+                    <div className="flex flex-col items-start gap-2 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
                       <span>Paste a Cardano Multisig or public-only Eternl wallet export, or paste payment native-script CBOR / JSON directly.</span>
                       <Button type="button" variant="ghost" size="sm" onClick={() => setWalletImportText(SAMPLE_PAYMENT_SCRIPT)}>
                         Load sample
@@ -1795,7 +1804,7 @@ export default function Home() {
 
                   {parsedImportSource.kind !== "wallet" ? (
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <Label>Stake script (optional)</Label>
                         <Button type="button" variant="ghost" size="sm" onClick={() => setStakeScriptText(SAMPLE_STAKE_SCRIPT)}>
                           Load sample
@@ -1815,7 +1824,7 @@ export default function Home() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <span>
                         {parsedImportSource.kind === "wallet" ? (
-                          <span className="inline-flex items-center gap-2"><FileJson className="size-4" /> Wallet export detected · {parsedImportSource.wallet.threshold}-of-{parsedImportSource.wallet.signers.length}</span>
+                          <span className="inline-flex flex-wrap items-center gap-2"><FileJson className="size-4" /> Wallet export detected · {parsedImportSource.wallet.threshold}-of-{parsedImportSource.wallet.signers.length}</span>
                         ) : (
                           <span>Detected {importedSigners.length} signer{importedSigners.length === 1 ? "" : "s"} · payment {summarizeScript(parsedPayment.script)} · stake {summarizeScript(parsedStake.script)}</span>
                         )}
@@ -1828,7 +1837,7 @@ export default function Home() {
                     </div>
                   </div>
                   {importValidationError ? <p className="text-sm text-red-300">{importValidationError}</p> : null}
-                  <Button onClick={() => void importWallet()} disabled={!account.authenticated || !canImport || importingWallet}>
+                  <Button className="max-sm:w-full" onClick={() => void importWallet()} disabled={!account.authenticated || !canImport || importingWallet}>
                     {!account.authenticated ? "Sign in to save" : importingWallet ? "Verifying policy…" : "Save imported wallet"}
                   </Button>
                 </>
@@ -1841,7 +1850,7 @@ export default function Home() {
                     <Input value={addressOrHandle} onChange={(event) => setAddressOrHandle(event.target.value)} placeholder={DEFAULT_NETWORK === "mainnet" ? "addr1... or $treasury" : "addr_test1..."} />
                     <p className="text-sm text-zinc-500">Use this when you know the receiving address or mainnet ADA Handle, but not the full script export.</p>
                   </div>
-                  <Button variant="secondary" onClick={() => void lookupAddressImport()} disabled={discoveringAddress}>
+                  <Button className="max-sm:w-full" variant="secondary" onClick={() => void lookupAddressImport()} disabled={discoveringAddress}>
                     <Search className="size-4" /> {discoveringAddress ? "Checking address..." : "Inspect address"}
                   </Button>
                   {addressDiscoveryError ? (
@@ -1949,7 +1958,7 @@ export default function Home() {
                       <Input value={signer.label} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, label: event.target.value } : item))} placeholder={`Signer ${index + 1}`} />
                     </div>
                     <Input value={signer.keyHash} onChange={(event) => setSigners((current) => current.map((item) => item.id === signer.id ? { ...item, keyHash: event.target.value } : item))} placeholder="56-char key hash" />
-                    <Button variant="ghost" onClick={() => setSigners((current) => current.filter((item) => item.id !== signer.id))}>×</Button>
+                    <Button variant="ghost" className="max-md:w-full" onClick={() => setSigners((current) => current.filter((item) => item.id !== signer.id))}>Remove</Button>
                   </div>
                 ))}
                 <Button variant="secondary" onClick={() => setSigners((current) => [...current, emptySigner(`Signer ${current.length + 1}`)])}>Add signer</Button>
@@ -1964,7 +1973,7 @@ export default function Home() {
               <Button onClick={saveCreatedWallet} disabled={!account.authenticated || !canSave}>{account.authenticated ? "Save created wallet" : "Sign in to save"}</Button>
             </>
           )}
-          <Collapsible className="rounded-xl border border-white/8 bg-black/20 px-5 py-4 text-zinc-200">
+          <Collapsible className="rounded-xl border border-white/8 bg-black/20 px-4 py-4 text-zinc-200 sm:px-5">
             <CollapsibleTrigger asChild>
               <Button type="button" variant="ghost" className="h-auto justify-start p-0 text-sm font-semibold text-zinc-100 hover:bg-transparent">
                 Advanced witness import

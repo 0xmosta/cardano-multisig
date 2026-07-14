@@ -548,7 +548,7 @@ export default function NewTransaction() {
   if (!wallet) {
     return (
       <div className="flex flex-col gap-6">
-        <Link className="text-sm text-sky-300" to="/">
+        <Link className="text-sm text-sky-300" to="/wallets">
           ← Back
         </Link>
         <Card className="glass-panel">
@@ -573,7 +573,7 @@ export default function NewTransaction() {
           </CardHeader>
           <CardContent>
             <Button asChild>
-              <Link to="/">Import script or wallet export</Link>
+              <Link to="/wallets/import">Import script or wallet export</Link>
             </Button>
           </CardContent>
         </Card>
@@ -590,13 +590,13 @@ export default function NewTransaction() {
             <ArrowLeft className="size-4" /> Back to wallet
           </Link>
           <div>
-            <h1 className="text-3xl font-semibold text-slate-50 sm:text-4xl">Create transaction</h1>
+            <h1 className="text-2xl font-semibold text-slate-50 sm:text-4xl">Create transaction</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
               Select treasury assets, set the recipient, then build a signer-ready transaction room.
             </p>
           </div>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400 sm:w-auto">
           <span className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
             <WalletCards className="size-4 text-slate-300" />
             <span className="max-w-56 truncate">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</span>
@@ -772,11 +772,11 @@ export default function NewTransaction() {
 
         <div className="min-w-0 space-y-4 xl:sticky xl:top-6">
           <Card className="glass-panel min-w-0 overflow-hidden rounded-lg">
-            <CardHeader className="border-b border-white/8 px-5 py-4">
+            <CardHeader className="border-b border-white/8 px-4 py-4 sm:px-5">
               <CardTitle className="text-lg">Ready check</CardTitle>
               <CardDescription>Confirm the spend before creating the signer room.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4 p-5">
+            <CardContent className="space-y-4 p-4 sm:p-5">
               <div className="space-y-3">
                 {requestedAssetSummary.map((asset) => (
                   <div key={asset.id} className="flex min-w-0 items-center gap-3 rounded-md border border-white/8 bg-black/20 p-3">

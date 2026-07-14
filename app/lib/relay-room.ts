@@ -158,7 +158,7 @@ export type RelayRoomSubmitRequest = {
 };
 
 export function relayInviteUrl(origin: string, token: string) {
-  return `${origin.replace(/\/$/, "")}/#r=${encodeURIComponent(token)}`;
+  return `${origin.replace(/\/$/, "")}/sign#r=${encodeURIComponent(token)}`;
 }
 
 export function relayWitnessToSignature(witness: RelayRoomWitnessRecord): SignatureRecord {

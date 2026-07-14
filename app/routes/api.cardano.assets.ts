@@ -234,6 +234,13 @@ async function scriptHashFromAddress(address: string): Promise<string | null> {
   }
 }
 
+function patternsMatchPaymentScript(patterns: string[], paymentScriptHash: string) {
+  return patterns.some((pattern) => {
+    const normalized = pattern.replace(/\.\*$/, "");
+    return (normalized.length === 58 || normalized.length === 114) && normalized.slice(2, 58) === paymentScriptHash;
+  });
+}
+
 async function resolveHandle(name: string, network: CardanoNetwork): Promise<HandleInfo | null> {
   if (!isMainnetNetwork(network)) return null;
   const handle = normalizeHandle(name);
@@ -415,12 +422,24 @@ export async function loader({ request }: { request: Request }) {
   let handle: HandleInfo | null = null;
   let address = requestedAddress;
   if (handleName) {
-    handle = await resolveHandle(handleName, network);
-    if (handle) address = handle.address;
+    const requestedHandle = await resolveHandle(handleName, network);
+    if (requestedHandle) {
+      const paymentScriptHash = await scriptHashFromAddress(requestedHandle.address);
+      if (!patterns.length || (paymentScriptHash && patternsMatchPaymentScript(patterns, paymentScriptHash))) {
+        handle = requestedHandle;
+        address = requestedHandle.address;
+      }
+    }
   }
   if (!handle && stakeAddress) {
-    handle = await resolveHandleByStakeAddress(stakeAddress, network);
-    if (handle) address = handle.address;
+    const stakeHandle = await resolveHandleByStakeAddress(stakeAddress, network);
+    if (stakeHandle) {
+      const paymentScriptHash = await scriptHashFromAddress(stakeHandle.address);
+      if (!patterns.length || (paymentScriptHash && patternsMatchPaymentScript(patterns, paymentScriptHash))) {
+        handle = stakeHandle;
+        address = stakeHandle.address;
+      }
+    }
   }
   let recoveredScript: RecoveredScript | null = null;
   if (address) {

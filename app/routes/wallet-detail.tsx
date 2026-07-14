@@ -38,6 +38,7 @@ import {
   type TxDraft,
   STORAGE_KEY as WALLET_KEY,
   TX_STORAGE_KEY as TX_KEY,
+  createId,
   createSignaturePackage,
   decodeInvite,
   expectedNetworkId,
@@ -53,6 +54,7 @@ import {
   parseSignaturePackage,
   pendingSignatureCount,
   removeUnmatchedSignatures,
+  requiredSignatures,
   requiredPendingSignerKeyHashes,
   signatureCount,
   summarizeScript,
@@ -81,7 +83,8 @@ type AssetOption = {
   assetName?: string;
 };
 type HandleInfo = { name: string; address: string; holder?: string; holderType?: string; image?: string };
-type AssetFetch = { assets: AssetOption[]; handle?: HandleInfo | null; source?: string; address?: string; outputs?: number };
+type RecoveredScript = { source: string; txHash: string; scriptHash: string; paymentScript: NativeScript };
+type AssetFetch = { assets: AssetOption[]; handle?: HandleInfo | null; source?: string; address?: string; outputs?: number; recoveredScript?: RecoveredScript | null };
 type TxPhase = "pending" | "ready" | "submitted";
 type RelaySyncState = { status: "idle" | "syncing" | "synced" | "failed"; at?: string; error?: string };
 
@@ -277,6 +280,29 @@ function handleLabel(handle?: HandleInfo | null) {
   return handle ? `$${handle.name}` : "";
 }
 
+function recoveredPaymentSigners(script: NativeScript, existing: Wallet["signers"]) {
+  const existingByHash = new Map(existing.map((signer) => [normalizeKeyHash(signer.keyHash), signer]));
+  const signers: Wallet["signers"] = [];
+  const seen = new Set<string>();
+  function visit(node: NativeScript) {
+    if (node.type === "sig" && node.keyHash) {
+      const keyHash = normalizeKeyHash(node.keyHash);
+      if (!seen.has(keyHash)) {
+        seen.add(keyHash);
+        signers.push(existingByHash.get(keyHash) || {
+          id: createId("payment"),
+          label: `Payment signer ${signers.length + 1}`,
+          keyHash,
+          source: "payment",
+        });
+      }
+    }
+    for (const child of node.scripts || []) visit(child);
+  }
+  visit(script);
+  return signers;
+}
+
 function scriptToCsl(CSL: any, script: NativeScript): any {
   if (script.type === "sig" && script.keyHash) {
     return CSL.NativeScript.new_script_pubkey(CSL.ScriptPubkey.new(CSL.Ed25519KeyHash.from_hex(script.keyHash)));
@@ -324,7 +350,7 @@ async function fetchWalletAssets(wallet: Wallet): Promise<AssetFetch> {
     const response = await fetch(`/api/cardano/assets?${params.toString()}`);
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || "Could not load address assets.");
-    return { assets: body.assets || [], handle: body.handle, source: body.source, address: body.address, outputs: body.outputs };
+    return { assets: body.assets || [], handle: body.handle, source: body.source, address: body.address, outputs: body.outputs, recoveredScript: body.recoveredScript };
   }
 
   const { patterns, stakeAddress } = await walletResolution(wallet);
@@ -333,7 +359,7 @@ async function fetchWalletAssets(wallet: Wallet): Promise<AssetFetch> {
   const response = await fetch(`/api/cardano/assets?${query}`);
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Could not load multisig assets.");
-  return { assets: body.assets || [], handle: body.handle, source: body.source, address: body.address, outputs: body.outputs };
+  return { assets: body.assets || [], handle: body.handle, source: body.source, address: body.address, outputs: body.outputs, recoveredScript: body.recoveredScript };
 }
 
 function signerLabel(wallet: Wallet, keyHash: string) {
@@ -444,9 +470,11 @@ export default function WalletDetail() {
   const [txs, setTxs] = useState<TxDraft[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const pendingServerSaveKeyRef = useRef<string | null>(null);
+  const assetRequestIdRef = useRef(0);
   const [signStatus, setSignStatus] = useState("");
   const [walletAssets, setWalletAssets] = useState<AssetOption[]>([]);
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
+  const [handleConflict, setHandleConflict] = useState("");
   const [handleInput, setHandleInput] = useState("");
   const [nameInput, setNameInput] = useState("");
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
@@ -964,14 +992,43 @@ export default function WalletDetail() {
 
   async function refreshAssets(target = wallet) {
     if (!target) return;
+    const requestId = ++assetRequestIdRef.current;
+    setResolvedHandle(null);
+    setHandleConflict("");
     setAssetStatus("Loading multisig assets from the configured Cardano provider…");
     try {
       const result = await fetchWalletAssets(target);
+      if (requestId !== assetRequestIdRef.current) return;
       setWalletAssets(result.assets);
       setResolvedHandle(result.handle || null);
-      if (result.handle && !target.handle) {
-        const next = wallets.map((item) => (item.id === target.id ? { ...item, handle: result.handle!.name } : item));
-        setWallets(next);
+      const savedHandle = handleCandidate(target);
+      const resolvedName = result.handle?.name.trim().replace(/^\$/, "").toLowerCase() || "";
+      setHandleConflict(
+        savedHandle && resolvedName && savedHandle !== resolvedName
+          ? `Saved identity $${savedHandle} does not match this payment policy. The policy address resolves to $${resolvedName}.`
+          : "",
+      );
+      if (!target.paymentScript && result.recoveredScript?.paymentScript) {
+        const recoveredPayment = result.recoveredScript.paymentScript;
+        const recoveredSigners = recoveredPaymentSigners(recoveredPayment, target.signers || []);
+        setWallets((current) => current.map((item) => item.id === target.id && !item.paymentScript
+          ? {
+              ...item,
+              handle: item.handle || result.handle?.name,
+              threshold: requiredSignatures(recoveredPayment),
+              signers: recoveredSigners,
+              paymentScript: recoveredPayment,
+              script: recoveredPayment,
+              imported: true,
+              discovery: item.discovery ? { ...item.discovery, kind: "script" } : item.discovery,
+            }
+          : item));
+        if (result.handle) setHandleInput(result.handle.name);
+        toast.success("Native script recovered", {
+          description: "This wallet is no longer watch-only. Its payment policy was verified against the on-chain address.",
+        });
+      } else if (result.handle && !target.handle) {
+        setWallets((current) => current.map((item) => item.id === target.id ? { ...item, handle: result.handle!.name } : item));
         setHandleInput(result.handle.name);
       }
       const prefix = result.handle ? `Resolved ${handleLabel(result.handle)} · ` : "";
@@ -981,6 +1038,7 @@ export default function WalletDetail() {
           : `${prefix}No spendable multisig assets found yet.`,
       );
     } catch (error) {
+      if (requestId !== assetRequestIdRef.current) return;
       setWalletAssets([]);
       setAssetStatus(error instanceof Error ? error.message : "Could not load multisig assets.");
     }
@@ -1065,7 +1123,7 @@ export default function WalletDetail() {
             </Link>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <h1 className="min-w-0 break-words text-3xl font-semibold tracking-tight text-slate-50">
-                {resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}
+                {wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}
               </h1>
               <Badge variant="outline" className="border-white/10 text-zinc-400">{wallet.network}</Badge>
               <Badge variant={isWatchOnly ? "outline" : "secondary"} className={isWatchOnly ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : ""}>
@@ -1077,7 +1135,6 @@ export default function WalletDetail() {
                 <span className="break-all">{wallet.discovery?.address}</span>
               ) : (
                 <>
-                  {resolvedHandle ? `${wallet.name} · ` : ""}
                   payment {summarizeScript(wallet.paymentScript)} · stake {summarizeScript(wallet.stakeScript)}
                 </>
               )}
@@ -1122,6 +1179,14 @@ export default function WalletDetail() {
           <CardContent className="flex gap-3 p-4 text-sm text-muted-foreground">
           <AlertTriangle />
           <span>{connectWarning}</span>
+          </CardContent>
+        </Card>
+      ) : null}
+      {handleConflict ? (
+        <Card className="border-rose-400/30 bg-rose-400/10">
+          <CardContent className="flex gap-3 p-4 text-sm text-rose-100">
+            <AlertTriangle className="size-4 shrink-0" />
+            <span>{handleConflict} Fix the saved identity or import the policy that belongs to the intended Handle before creating a transaction.</span>
           </CardContent>
         </Card>
       ) : null}
@@ -1441,9 +1506,13 @@ export default function WalletDetail() {
                 <Input value={handleInput} onChange={(event) => setHandleInput(event.target.value)} placeholder="$discatalyst" />
               </div>
               <Button variant="secondary" onClick={saveHandle}>Save identity</Button>
-              {resolvedHandle ? (
+              {resolvedHandle && !handleConflict ? (
                 <div className="break-all rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
                   Resolved {handleLabel(resolvedHandle)} → {resolvedHandle.address}
+                </div>
+              ) : handleConflict ? (
+                <div className="break-all rounded-lg border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-100">
+                  {handleConflict}
                 </div>
               ) : null}
             </CardContent>
@@ -1457,7 +1526,7 @@ export default function WalletDetail() {
                   <CardDescription>
                     {isWatchOnly
                       ? "Fetched directly from the saved address. Import the native script when this needs to become an active multisig wallet."
-                      : resolvedHandle
+                      : resolvedHandle && !handleConflict
                       ? `ADA Handle ${handleLabel(resolvedHandle)} resolved to this multisig script address.`
                       : "Fetched from the server-managed Cardano provider for this script wallet."}
                   </CardDescription>

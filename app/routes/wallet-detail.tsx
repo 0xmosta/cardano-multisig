@@ -565,7 +565,7 @@ export default function WalletDetail() {
       .filter((tx) => tx.walletId === walletId || (!tx.walletId && wallet && tx.walletName === wallet.name))
       .sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
   }, [txs, wallet, walletId]);
-  const isWatchOnly = wallet ? !wallet.paymentScript && Boolean(wallet.discovery?.address) : false;
+  const isWatchOnly = wallet ? !wallet.paymentScript : false;
 
   useEffect(() => {
     if (wallet) void refreshAssets(wallet);

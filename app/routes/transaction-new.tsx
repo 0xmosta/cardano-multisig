@@ -296,7 +296,7 @@ export default function NewTransaction() {
   }, [account.authenticated, accountState]);
 
   const wallet = wallets.find((item) => item.id === walletId);
-  const isWatchOnly = wallet ? !wallet.paymentScript && Boolean(wallet.discovery?.address) : false;
+  const isWatchOnly = wallet ? !wallet.paymentScript : false;
   const assetOptions = useMemo(
     () =>
       (multisigAssets.length ? multisigAssets : [DEFAULT_ASSET]).sort((left, right) => {

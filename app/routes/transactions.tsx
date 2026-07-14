@@ -122,6 +122,8 @@ export default function TransactionsRoute() {
   useEffect(() => {
     if (account.authenticated) {
       if (accountState) {
+        setLoading(false);
+        setLoadError("");
         setTransactions(accountState.transactions);
         void refreshRelayRooms(accountState.transactions).catch(() => undefined);
         return;
@@ -146,6 +148,8 @@ export default function TransactionsRoute() {
         cancelled = true;
       };
     }
+    setLoading(false);
+    setLoadError("");
     const stored = readTransactions();
     setTransactions(stored);
     void refreshRelayRooms(stored).catch(() => undefined);

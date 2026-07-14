@@ -53,10 +53,14 @@ export default function WalletsRoute() {
 
   useEffect(() => {
     if (!account.authenticated) {
+      setLoading(false);
+      setLoadError("");
       setWallets(readWallets());
       return;
     }
     if (accountState) {
+      setLoading(false);
+      setLoadError("");
       setWallets(accountState.wallets);
       return;
     }

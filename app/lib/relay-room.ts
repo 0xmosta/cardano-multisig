@@ -130,6 +130,8 @@ export type RelayRoomSessionResponse =
 
 export type RelayRoomViewResponse = { ok: true; role: "viewer"; room: RelayRoomPublicView; autoSubmitError?: string };
 
+export const RELAY_SYNC_INTERVAL_MS = 60_000;
+
 export type RelayRoomSignRequest = {
   intent: "sign";
   token: string;
@@ -232,6 +234,26 @@ function nextTxFromRelayRoom(tx: TxDraft, room: RelayRoomCoordinatorView | Relay
 
 export function applyRelayRoomToDraft(tx: TxDraft, room: RelayRoomCoordinatorView | RelayRoomSignerView | RelayRoomPublicView): TxDraft {
   return nextTxFromRelayRoom(tx, room);
+}
+
+export function relayDraftFingerprint(draft: TxDraft) {
+  return JSON.stringify({
+    status: draft.status,
+    txHash: draft.txHash,
+    relayStatus: draft.relayRoom?.status,
+    signatures: (draft.signatures || [])
+      .map((signature) => [
+        normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || ""),
+        signature.matchStatus,
+        signature.signedAt,
+        signature.relayWitnessId,
+      ])
+      .sort((left, right) => (left[0] || "").localeCompare(right[0] || "")),
+  });
+}
+
+export function hasActiveRelayRoom(draft: Pick<TxDraft, "relayRoom" | "txHash">) {
+  return Boolean(draft.relayRoom?.roomId && (draft.relayRoom.status || "open") === "open" && !draft.txHash);
 }
 
 export function draftFromRelaySignerView(room: RelayRoomSignerView): TxDraft {

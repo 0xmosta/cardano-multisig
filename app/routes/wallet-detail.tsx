@@ -63,7 +63,10 @@ import {
   type RelayRoomCreateResponse,
   type RelayRoomSessionResponse,
   type RelayRoomSignerView,
+  RELAY_SYNC_INTERVAL_MS,
   applyRelayRoomToDraft,
+  hasActiveRelayRoom,
+  relayDraftFingerprint,
 } from "../lib/relay-room";
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
@@ -448,6 +451,8 @@ export default function WalletDetail() {
   const [txs, setTxs] = useState<TxDraft[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const pendingServerSaveKeyRef = useRef<string | null>(null);
+  const txsRef = useRef<TxDraft[]>([]);
+  const relaySyncInFlightRef = useRef(false);
   const assetRequestIdRef = useRef(0);
   const [signStatus, setSignStatus] = useState("");
   const [walletAssets, setWalletAssets] = useState<AssetOption[]>([]);
@@ -458,6 +463,8 @@ export default function WalletDetail() {
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
   const [signaturePackageInput, setSignaturePackageInput] = useState("");
   const [relaySync, setRelaySync] = useState<RelaySyncState>({ status: "idle" });
+
+  txsRef.current = txs;
 
   useEffect(() => {
     let cancelled = false;
@@ -544,8 +551,7 @@ export default function WalletDetail() {
           (tx) =>
             tx.walletId === walletId &&
             (tx.relayRoom?.coordinatorToken || tx.relayRoom?.sharedInviteUrl || tx.relayRoom?.roomId) &&
-            (tx.relayRoom.status || "open") === "open" &&
-            !tx.txHash,
+            hasActiveRelayRoom(tx),
         )
         .map((tx) => `${tx.id}:${tx.relayRoom!.coordinatorToken || tx.relayRoom!.sharedInviteUrl || tx.relayRoom!.roomId}:${tx.relayRoom!.status || "open"}`)
         .join("|"),
@@ -557,18 +563,19 @@ export default function WalletDetail() {
       (tx) =>
         tx.walletId === walletId &&
         (tx.relayRoom?.coordinatorToken || tx.relayRoom?.sharedInviteUrl || tx.relayRoom?.roomId) &&
-        (tx.relayRoom.status || "open") === "open" &&
-        !tx.txHash,
+        hasActiveRelayRoom(tx),
     ) as Array<TxDraft & { relayRoom: RelayRoomRef }>;
   }
 
-  async function refreshRelayRooms(source: TxDraft[] = txs) {
+  async function refreshRelayRooms(source: TxDraft[] = txsRef.current) {
+    if (relaySyncInFlightRef.current) return false;
     const relayDrafts = relayDraftsForWallet(source);
     if (!relayDrafts.length) {
       setRelaySync({ status: "idle" });
       return false;
     }
 
+    relaySyncInFlightRef.current = true;
     setRelaySync({ status: "syncing", at: nowIso() });
     try {
       const updates = await Promise.all(
@@ -586,13 +593,7 @@ export default function WalletDetail() {
           const room = byId.get(tx.id);
           if (!room) return tx;
           const updated = applyRelayRoomToDraft(tx, room);
-          const beforeSignatureIds = (tx.signatures || []).map((signature) => signature.relayWitnessId || signature.witnessCbor).join("|");
-          const afterSignatureIds = (updated.signatures || []).map((signature) => signature.relayWitnessId || signature.witnessCbor).join("|");
-          const txChanged =
-            beforeSignatureIds !== afterSignatureIds ||
-            tx.relayRoom?.status !== updated.relayRoom?.status ||
-            tx.txHash !== updated.txHash ||
-            tx.relayRoom?.lastSyncAt !== updated.relayRoom?.lastSyncAt;
+          const txChanged = relayDraftFingerprint(updated) !== relayDraftFingerprint(tx);
           if (txChanged) changed = true;
           return txChanged ? updated : tx;
         });
@@ -603,6 +604,8 @@ export default function WalletDetail() {
     } catch (error) {
       setRelaySync({ status: "failed", at: nowIso(), error: error instanceof Error ? error.message : "Relay sync failed." });
       throw error;
+    } finally {
+      relaySyncInFlightRef.current = false;
     }
   }
 
@@ -612,14 +615,14 @@ export default function WalletDetail() {
     let cancelled = false;
     const sync = async () => {
       if (cancelled) return;
-      await refreshRelayRooms().catch(() => undefined);
+      await refreshRelayRooms(txsRef.current).catch(() => undefined);
     };
 
     void sync();
     const interval = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
       void sync();
-    }, 8000);
+    }, RELAY_SYNC_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(interval);

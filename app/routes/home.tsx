@@ -74,8 +74,11 @@ import {
   type RelayRoomCreateResponse,
   type RelayRoomSessionResponse,
   type RelayRoomSignerView,
+  RELAY_SYNC_INTERVAL_MS,
   applyRelayRoomToDraft,
   draftFromRelaySignerView,
+  hasActiveRelayRoom,
+  relayDraftFingerprint,
 } from "../lib/relay-room";
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
@@ -414,21 +417,6 @@ function migrateDraft(raw: unknown): TxDraft | null {
   };
 }
 
-function draftRelayFingerprint(draft: TxDraft) {
-  return JSON.stringify({
-    status: draft.status,
-    txHash: draft.txHash,
-    relayStatus: draft.relayRoom?.status,
-    signatures: draft.signatures
-      .map((signature) => [
-        normalizeKeyHash(signature.matchedSignerKeyHash || signature.signerKeyHash || ""),
-        signature.matchStatus,
-        signature.signedAt,
-      ])
-      .sort((left, right) => (left[0] || "").localeCompare(right[0] || "")),
-  });
-}
-
 function stateSnapshotKey(wallets: MultisigWallet[], drafts: TxDraft[]) {
   return JSON.stringify({ wallets, drafts });
 }
@@ -623,6 +611,9 @@ export default function Home() {
   const [drafts, setDrafts] = useState<TxDraft[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const pendingServerSaveKeyRef = useRef<string | null>(null);
+  const draftsRef = useRef<TxDraft[]>([]);
+  const relaySyncInFlightRef = useRef(false);
+  const relayInviteSyncInFlightRef = useRef(false);
 
   const [mode, setMode] = useState<Mode>("import");
   const [importMode, setImportMode] = useState<ImportMode>("export");
@@ -653,6 +644,8 @@ export default function Home() {
   const [walletSearch, setWalletSearch] = useState("");
   const [copyingInviteId, setCopyingInviteId] = useState<string | null>(null);
   const signaturePanelRef = useRef<HTMLDivElement>(null);
+
+  draftsRef.current = drafts;
 
   async function loadRelayInvite(token: string, options: { quiet?: boolean } = {}) {
     const response = await fetch("/api/cardano/relay-room", {
@@ -803,7 +796,8 @@ export default function Home() {
     if (!relayInviteToken) return;
     let cancelled = false;
     const sync = async () => {
-      if (document.visibilityState === "hidden") return;
+      if (document.visibilityState === "hidden" || relayInviteSyncInFlightRef.current) return;
+      relayInviteSyncInFlightRef.current = true;
       try {
         const room = await loadRelayInvite(relayInviteToken, { quiet: true });
         if (!cancelled && room.progress.matchedCount >= room.progress.requiredSignatures) {
@@ -811,11 +805,13 @@ export default function Home() {
         }
       } catch (error) {
         if (!cancelled) setStatus(error instanceof Error ? error.message : "Could not refresh the relay signer room.");
+      } finally {
+        relayInviteSyncInFlightRef.current = false;
       }
     };
     const interval = window.setInterval(() => {
       void sync();
-    }, 5000);
+    }, RELAY_SYNC_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -886,7 +882,7 @@ export default function Home() {
   const relayRoomSyncKey = useMemo(
     () =>
       drafts
-        .filter((draft) => draft.relayRoom?.roomId)
+        .filter(hasActiveRelayRoom)
         .map((draft) => `${draft.id}:${draft.relayRoom?.roomId}`)
         .sort()
         .join("|"),
@@ -897,47 +893,53 @@ export default function Home() {
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this transaction targets ${formatTargetNetwork(visibleDraft.network)}.`
       : "";
 
-  async function refreshHomeRelayRooms(sourceDrafts: TxDraft[] = drafts) {
-    const relayDrafts = sourceDrafts.filter((draft) => draft.relayRoom?.roomId);
+  async function refreshHomeRelayRooms(sourceDrafts: TxDraft[] = draftsRef.current) {
+    if (relaySyncInFlightRef.current) return;
+    const relayDrafts = sourceDrafts.filter(hasActiveRelayRoom);
     if (!relayDrafts.length) return;
 
-    const rooms = await Promise.all(
-      relayDrafts.map(async (draft) => {
-        const token = draft.relayRoom?.coordinatorToken || relayTokenFromInviteUrl(draft.relayRoom?.sharedInviteUrl || "");
-        if (!token) return null;
-        const response = await fetch("/api/cardano/relay-room", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ intent: "session", token }),
-        });
-        const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
-        if (!response.ok || !body.ok || body.role !== "coordinator") return null;
-        return { draftId: draft.id, room: body.room };
-      }),
-    );
+    relaySyncInFlightRef.current = true;
+    try {
+      const rooms = await Promise.all(
+        relayDrafts.map(async (draft) => {
+          const token = draft.relayRoom?.coordinatorToken || relayTokenFromInviteUrl(draft.relayRoom?.sharedInviteUrl || "");
+          if (!token) return null;
+          const response = await fetch("/api/cardano/relay-room", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ intent: "session", token }),
+          });
+          const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
+          if (!response.ok || !body.ok || body.role !== "coordinator") return null;
+          return { draftId: draft.id, room: body.room };
+        }),
+      );
 
-    const roomsByDraftId = new Map(rooms.filter((item): item is NonNullable<typeof item> => Boolean(item)).map((item) => [item.draftId, item.room]));
-    if (!roomsByDraftId.size) return;
+      const roomsByDraftId = new Map(rooms.filter((item): item is NonNullable<typeof item> => Boolean(item)).map((item) => [item.draftId, item.room]));
+      if (!roomsByDraftId.size) return;
 
-    setDrafts((current) =>
-      current.map((draft) => {
-        const room = roomsByDraftId.get(draft.id);
-        if (!room) return draft;
-        const synced = applyRelayRoomToDraft(draft, room);
-        const next: TxDraft = {
-          ...synced,
-          relayRoom: {
-            ...draft.relayRoom,
-            ...synced.relayRoom,
-            roomId: room.roomId,
-            createdAt: draft.relayRoom?.createdAt || nowIso(),
-            lastSyncAt: nowIso(),
-            status: room.status,
-          },
-        };
-        return draftRelayFingerprint(next) === draftRelayFingerprint(draft) ? draft : next;
-      }),
-    );
+      setDrafts((current) =>
+        current.map((draft) => {
+          const room = roomsByDraftId.get(draft.id);
+          if (!room) return draft;
+          const synced = applyRelayRoomToDraft(draft, room);
+          const next: TxDraft = {
+            ...synced,
+            relayRoom: {
+              ...draft.relayRoom,
+              ...synced.relayRoom,
+              roomId: room.roomId,
+              createdAt: draft.relayRoom?.createdAt || nowIso(),
+              lastSyncAt: nowIso(),
+              status: room.status,
+            },
+          };
+          return relayDraftFingerprint(next) === relayDraftFingerprint(draft) ? draft : next;
+        }),
+      );
+    } finally {
+      relaySyncInFlightRef.current = false;
+    }
   }
 
   useEffect(() => {
@@ -950,7 +952,7 @@ export default function Home() {
     void sync();
     const interval = window.setInterval(() => {
       void sync();
-    }, 5000);
+    }, RELAY_SYNC_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(interval);

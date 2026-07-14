@@ -1,6 +1,6 @@
 import { ArrowRight, CheckCircle2, Clock, Cloud, Loader2, Plus, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { Route } from "./+types/transactions";
 import { AccountSyncPanel } from "../components/account-sync-panel";
@@ -15,11 +15,17 @@ import { Input } from "../components/ui/input";
 import { Progress } from "../components/ui/progress";
 import {
   type TxDraft,
-  mergeTransactionDrafts,
   pendingSignatureCount,
   signatureCount,
 } from "../lib/multisig";
-import { applyRelayRoomToDraft, type RelayRoomSessionResponse, type RelayRoomViewResponse } from "../lib/relay-room";
+import {
+  RELAY_SYNC_INTERVAL_MS,
+  applyRelayRoomToDraft,
+  hasActiveRelayRoom,
+  relayDraftFingerprint,
+  type RelayRoomSessionResponse,
+  type RelayRoomViewResponse,
+} from "../lib/relay-room";
 import { cn } from "../lib/utils";
 
 export function meta({}: Route.MetaArgs) {
@@ -63,10 +69,28 @@ export default function TransactionsRoute() {
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const transactionsRef = useRef<TxDraft[]>([]);
+  const accountStateRef = useRef(accountState);
+  const relaySyncInFlightRef = useRef(false);
 
-  async function refreshRelayRooms(source = transactions) {
-    const relayTransactions = source.filter((tx) => tx.relayRoom?.roomId);
-    if (!relayTransactions.length) return;
+  transactionsRef.current = transactions;
+  accountStateRef.current = accountState;
+
+  const relaySyncKey = useMemo(
+    () =>
+      transactions
+        .filter(hasActiveRelayRoom)
+        .map((tx) => `${tx.id}:${tx.relayRoom?.roomId}`)
+        .sort()
+        .join("|"),
+    [transactions],
+  );
+
+  async function refreshRelayRooms(source = transactionsRef.current) {
+    if (relaySyncInFlightRef.current) return false;
+    const relayTransactions = source.filter(hasActiveRelayRoom);
+    if (!relayTransactions.length) return false;
+    relaySyncInFlightRef.current = true;
     setSyncing(true);
     try {
       const updates = await Promise.all(
@@ -83,21 +107,24 @@ export default function TransactionsRoute() {
         }),
       );
       const byId = new Map(updates.filter((item): item is NonNullable<typeof item> => Boolean(item)).map((item) => [item.txId, item.room]));
-      if (!byId.size) return;
-      setTransactions((current) => {
-        const next = mergeTransactionDrafts(
-          current,
-          source.map((tx) => {
-            const room = byId.get(tx.id);
-            return room ? applyRelayRoomToDraft(tx, room) : tx;
-          }),
-        );
-        if (account.authenticated && accountState) {
-          void saveServerState({ wallets: accountState.wallets, transactions: next });
-        }
-        return next;
-      });
+      if (!byId.size) return false;
+      const applyRooms = (current: TxDraft[]) =>
+        current.map((tx) => {
+          const room = byId.get(tx.id);
+          if (!room) return tx;
+          const next = applyRelayRoomToDraft(tx, room);
+          return relayDraftFingerprint(next) === relayDraftFingerprint(tx) ? tx : next;
+        });
+      const next = applyRooms(source);
+      if (!next.some((tx, index) => tx !== source[index])) return false;
+      setTransactions((current) => applyRooms(current));
+      const currentAccountState = accountStateRef.current;
+      if (account.authenticated && currentAccountState) {
+        await saveServerState({ wallets: currentAccountState.wallets, transactions: applyRooms(currentAccountState.transactions) });
+      }
+      return true;
     } finally {
+      relaySyncInFlightRef.current = false;
       setSyncing(false);
     }
   }
@@ -108,7 +135,6 @@ export default function TransactionsRoute() {
         setLoading(false);
         setLoadError("");
         setTransactions(accountState.transactions);
-        void refreshRelayRooms(accountState.transactions).catch(() => undefined);
         return;
       }
       let cancelled = false;
@@ -118,7 +144,6 @@ export default function TransactionsRoute() {
         .then((state) => {
           if (!cancelled && state) {
             setTransactions(state.transactions);
-            void refreshRelayRooms(state.transactions).catch(() => undefined);
           }
         })
         .catch((error) => {
@@ -135,6 +160,23 @@ export default function TransactionsRoute() {
     setLoadError("");
     setTransactions([]);
   }, [account.authenticated, accountState]);
+
+  useEffect(() => {
+    if (!account.authenticated || !accountState || !relaySyncKey) return;
+    let cancelled = false;
+    const sync = async () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      await refreshRelayRooms(transactionsRef.current).catch(() => undefined);
+    };
+    void sync();
+    const interval = window.setInterval(() => {
+      void sync();
+    }, RELAY_SYNC_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [account.authenticated, Boolean(accountState), relaySyncKey]);
 
   const visibleTransactions = useMemo(() => {
     const value = query.trim().toLowerCase();
@@ -248,7 +290,7 @@ export default function TransactionsRoute() {
           </Badge>
           {readyCount ? <Badge className="bg-emerald-300 text-emerald-950">{readyCount} ready</Badge> : null}
           {submittedCount ? <Badge variant="secondary">{submittedCount} submitted</Badge> : null}
-          <Button type="button" size="sm" variant="secondary" onClick={() => void refreshRelayRooms(transactions)} disabled={syncing}>
+          <Button type="button" size="sm" variant="secondary" onClick={() => void refreshRelayRooms()} disabled={syncing}>
             <RefreshCw className={cn("size-4", syncing ? "animate-spin" : "")} /> Sync
           </Button>
         </div>

@@ -241,6 +241,17 @@ function patternsMatchPaymentScript(patterns: string[], paymentScriptHash: strin
   });
 }
 
+async function patternsMatchHandleAddress(patterns: string[], address: string, requireStakeMatch: boolean) {
+  if (!patterns.length) return true;
+  const addressPattern = await kupoPatternFromAddress(address, configuredNetwork());
+  const normalizedPatterns = patterns.map((pattern) => pattern.replace(/\.\*$/, ""));
+  if (requireStakeMatch && addressPattern?.length === 114) {
+    return normalizedPatterns.includes(addressPattern);
+  }
+  const paymentScriptHash = await scriptHashFromAddress(address);
+  return Boolean(paymentScriptHash && patternsMatchPaymentScript(patterns, paymentScriptHash));
+}
+
 async function resolveHandle(name: string, network: CardanoNetwork): Promise<HandleInfo | null> {
   if (!isMainnetNetwork(network)) return null;
   const handle = normalizeHandle(name);
@@ -410,6 +421,7 @@ async function kupoPatternAssets(patterns: string[], kupoUrl: string) {
 
 export async function loader({ request }: { request: Request }) {
   const url = new URL(request.url);
+  const identityOnly = url.searchParams.get("identityOnly") === "1";
   const requestNetwork = normalizeNetwork(url.searchParams.get("network") || undefined);
   const network = configuredNetwork();
   if (requestNetwork !== network) {
@@ -421,25 +433,38 @@ export async function loader({ request }: { request: Request }) {
   const stakeAddress = (url.searchParams.get("stakeAddress") || "").trim();
   let handle: HandleInfo | null = null;
   let address = requestedAddress;
+  let requestedHandleMatched: boolean | null = handleName ? false : null;
   if (handleName) {
     const requestedHandle = await resolveHandle(handleName, network);
     if (requestedHandle) {
-      const paymentScriptHash = await scriptHashFromAddress(requestedHandle.address);
-      if (!patterns.length || (paymentScriptHash && patternsMatchPaymentScript(patterns, paymentScriptHash))) {
+      if (await patternsMatchHandleAddress(patterns, requestedHandle.address, Boolean(stakeAddress))) {
         handle = requestedHandle;
         address = requestedHandle.address;
+        requestedHandleMatched = true;
       }
     }
   }
   if (!handle && stakeAddress) {
     const stakeHandle = await resolveHandleByStakeAddress(stakeAddress, network);
     if (stakeHandle) {
-      const paymentScriptHash = await scriptHashFromAddress(stakeHandle.address);
-      if (!patterns.length || (paymentScriptHash && patternsMatchPaymentScript(patterns, paymentScriptHash))) {
+      if (await patternsMatchHandleAddress(patterns, stakeHandle.address, true)) {
         handle = stakeHandle;
         address = stakeHandle.address;
       }
     }
+  }
+  if (identityOnly) {
+    return Response.json({
+      ready: true,
+      identityOnly: true,
+      assets: [],
+      outputs: 0,
+      handle,
+      address,
+      patterns,
+      requestedHandle: handleName || null,
+      requestedHandleMatched,
+    });
   }
   let recoveredScript: RecoveredScript | null = null;
   if (address) {

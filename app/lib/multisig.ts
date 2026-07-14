@@ -181,22 +181,27 @@ export function requiredSignatures(script: NativeScript | null | undefined): num
   if (!script) return 0;
   const children = Array.isArray(script.scripts) ? script.scripts : [];
   if (script.type === "sig") return 1;
-  if (script.type === "any") return children.length ? 1 : 0;
+  if (script.type === "any") {
+    return children.length ? Math.min(...children.map((child) => requiredSignatures(child))) : 0;
+  }
   if (script.type === "all") {
     return children.reduce((total, child) => total + requiredSignatures(child), 0);
   }
-  if (script.type === "atLeast") return Number(script.required || 0);
+  if (script.type === "atLeast") {
+    const required = Math.max(0, Math.min(Number(script.required || 0), children.length));
+    return children
+      .map((child) => requiredSignatures(child))
+      .sort((left, right) => left - right)
+      .slice(0, required)
+      .reduce((total, childRequired) => total + childRequired, 0);
+  }
   return children.reduce((total, child) => Math.max(total, requiredSignatures(child)), 0);
 }
 
 export function summarizeScript(script: NativeScript | null | undefined) {
   if (!script) return "Not provided";
   const leaves = countLeafScripts(script);
-  if (script.type === "sig") return "1-of-1";
-  if (script.type === "any") return `1-of-${leaves}`;
-  if (script.type === "all") return `${leaves}-of-${leaves}`;
-  if (script.type === "atLeast") return `${script.required ?? 0}-of-${leaves}`;
-  return `${script.type} script`;
+  return leaves ? `${requiredSignatures(script)}-of-${leaves}` : `${script.type} script`;
 }
 
 export function networkLabel(networkId: number) {

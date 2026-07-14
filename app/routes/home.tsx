@@ -474,7 +474,46 @@ function looksLikeAddress(value: string) {
 }
 
 function normalizeHandleInput(value: string) {
-  return value.trim().replace(/^\$/, "");
+  return value.trim().replace(/^\$/, "").toLowerCase();
+}
+
+function nativeScriptToCsl(CSL: any, script: NativeScript): any {
+  if (script.type === "sig" && script.keyHash) {
+    return CSL.NativeScript.new_script_pubkey(CSL.ScriptPubkey.new(CSL.Ed25519KeyHash.from_hex(script.keyHash)));
+  }
+  const children = CSL.NativeScripts.new();
+  for (const child of script.scripts || []) children.add(nativeScriptToCsl(CSL, child));
+  if (script.type === "all") return CSL.NativeScript.new_script_all(CSL.ScriptAll.new(children));
+  if (script.type === "any") return CSL.NativeScript.new_script_any(CSL.ScriptAny.new(children));
+  if (script.type === "atLeast") {
+    return CSL.NativeScript.new_script_n_of_k(CSL.ScriptNOfK.new(Number(script.required || 1), children));
+  }
+  throw new Error(`Unsupported native script type: ${script.type}`);
+}
+
+async function importedWalletIdentityQuery(wallet: MultisigWallet) {
+  if (!wallet.paymentScript || !wallet.handle) return null;
+  const CSL = await import("@emurgo/cardano-serialization-lib-browser");
+  const paymentHash = nativeScriptToCsl(CSL, wallet.paymentScript).hash().to_hex();
+  const mainnet = wallet.network === "mainnet";
+  const params = new URLSearchParams({
+    network: wallet.network,
+    patterns: `${mainnet ? "71" : "70"}${paymentHash}`,
+    handle: normalizeHandleInput(wallet.handle),
+    identityOnly: "1",
+  });
+  if (wallet.stakeScript) {
+    const stakeHash = nativeScriptToCsl(CSL, wallet.stakeScript).hash().to_hex();
+    params.set("patterns", `${mainnet ? "31" : "30"}${paymentHash}${stakeHash},${params.get("patterns")}`);
+    params.set(
+      "stakeAddress",
+      CSL.RewardAddress.new(
+        mainnet ? 1 : 0,
+        CSL.Credential.from_scripthash(CSL.ScriptHash.from_hex(stakeHash)),
+      ).to_address().to_bech32(),
+    );
+  }
+  return params;
 }
 
 function parseImportSource(value: string):
@@ -563,6 +602,8 @@ export default function Home() {
   const [importHandle, setImportHandle] = useState("");
   const [walletImportText, setWalletImportText] = useState("");
   const [stakeScriptText, setStakeScriptText] = useState("");
+  const [importingWallet, setImportingWallet] = useState(false);
+  const [importValidationError, setImportValidationError] = useState("");
   const [addressOrHandle, setAddressOrHandle] = useState("");
   const [discoveringAddress, setDiscoveringAddress] = useState(false);
   const [addressDiscovery, setAddressDiscovery] = useState<AddressDiscovery | null>(null);
@@ -940,7 +981,7 @@ export default function Home() {
     setSignerSearchError("");
   }
 
-  function importWallet() {
+  async function importWallet() {
     if (!canImport) return;
     const handle = normalizeHandleInput(importHandle);
     const wallet: MultisigWallet =
@@ -967,6 +1008,33 @@ export default function Home() {
             createdAt: nowIso(),
             imported: true,
           };
+    const identityHandle = normalizeHandleInput(wallet.handle || "");
+    if (identityHandle && wallet.network === "mainnet" && wallet.paymentScript) {
+      setImportingWallet(true);
+      setImportValidationError("");
+      try {
+        const params = await importedWalletIdentityQuery(wallet);
+        if (!params) throw new Error("Could not derive the imported payment policy.");
+        const response = await fetch(`/api/cardano/assets?${params.toString()}`);
+        const body = await response.json() as {
+          requestedHandleMatched?: boolean;
+          handle?: { name?: string } | null;
+          error?: string;
+        };
+        if (!response.ok) throw new Error(body.error || "Could not verify the imported policy against the ADA Handle.");
+        if (!body.requestedHandleMatched) {
+          const resolved = body.handle?.name ? ` It belongs to $${body.handle.name}.` : "";
+          throw new Error(`The imported payment and stake policy does not match $${identityHandle}.${resolved}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not verify the imported wallet identity.";
+        setImportValidationError(message);
+        toast.error("Wallet identity mismatch", { description: message });
+        return;
+      } finally {
+        setImportingWallet(false);
+      }
+    }
     setWallets((current) => [wallet, ...current]);
     setWalletDialogOpen(false);
     setStatus("Wallet imported. Open it to create transactions and track signer progress.");
@@ -1698,7 +1766,7 @@ export default function Home() {
                     </div>
                     <Textarea
                       value={walletImportText}
-                      onChange={(event) => setWalletImportText(event.target.value)}
+                      onChange={(event) => { setWalletImportText(event.target.value); setImportValidationError(""); }}
                       placeholder='Paste wallet export JSON or payment native-script CBOR / JSON'
                       className="min-h-48 font-mono text-xs"
                       aria-invalid={parsedImportSource.kind === "script" && Boolean(parsedPayment.error)}
@@ -1714,14 +1782,14 @@ export default function Home() {
                           Load sample
                         </Button>
                       </div>
-                      <Textarea value={stakeScriptText} onChange={(event) => setStakeScriptText(event.target.value)} placeholder="Paste stake native-script CBOR / JSON if it has one" className="min-h-32 font-mono text-xs" aria-invalid={Boolean(parsedStake.error)} />
+                      <Textarea value={stakeScriptText} onChange={(event) => { setStakeScriptText(event.target.value); setImportValidationError(""); }} placeholder="Paste stake native-script CBOR / JSON if it has one" className="min-h-32 font-mono text-xs" aria-invalid={Boolean(parsedStake.error)} />
                       {parsedStake.error ? <p className="text-sm text-red-300">{parsedStake.error}</p> : null}
                     </div>
                   ) : null}
 
                   <div className="space-y-2">
                     <Label>Display name / ADA Handle (optional)</Label>
-                    <Input value={importHandle} onChange={(event) => setImportHandle(event.target.value)} placeholder="$discatalyst" />
+                    <Input value={importHandle} onChange={(event) => { setImportHandle(event.target.value); setImportValidationError(""); }} placeholder="$discatalyst" />
                   </div>
 
                   <div className="rounded-lg border border-border bg-slate-950/60 p-4 text-sm text-slate-300">
@@ -1740,7 +1808,10 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
-                  <Button onClick={importWallet} disabled={!canImport}>Save imported wallet</Button>
+                  {importValidationError ? <p className="text-sm text-red-300">{importValidationError}</p> : null}
+                  <Button onClick={() => void importWallet()} disabled={!canImport || importingWallet}>
+                    {importingWallet ? "Verifying policy…" : "Save imported wallet"}
+                  </Button>
                 </>
               ) : null}
 

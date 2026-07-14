@@ -276,6 +276,7 @@ export default function NewTransaction() {
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [multisigAssets, setMultisigAssets] = useState<AssetOption[]>([]);
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
+  const [handleConflict, setHandleConflict] = useState("");
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
   const [title, setTitle] = useState("Treasury payment");
   const [recipient, setRecipient] = useState("");
@@ -322,7 +323,7 @@ export default function NewTransaction() {
       available: option?.quantity,
     };
   });
-  const readyToBuild = Boolean(recipient.trim()) && assets.some((asset) => Number(asset.quantity || "0") > 0);
+  const readyToBuild = !handleConflict && Boolean(recipient.trim()) && assets.some((asset) => Number(asset.quantity || "0") > 0);
   const totalAssetCount = assetOptions.filter((asset) => asset.unit !== "lovelace").length;
 
   useEffect(() => {
@@ -332,11 +333,20 @@ export default function NewTransaction() {
 
   async function refreshMultisigAssets(target = wallet) {
     if (!target) return;
+    setResolvedHandle(null);
+    setHandleConflict("");
     setAssetStatus("Loading multisig assets from the configured Cardano provider…");
     try {
       const result = await fetchMultisigAssets(target);
       const fetched = result.assets;
       setResolvedHandle(result.handle || null);
+      const savedHandle = handleCandidate(target);
+      const resolvedName = result.handle?.name.trim().replace(/^\$/, "").toLowerCase() || "";
+      setHandleConflict(
+        savedHandle && resolvedName && savedHandle !== resolvedName
+          ? `Saved identity $${savedHandle} does not match this payment policy. The policy address resolves to $${resolvedName}.`
+          : "",
+      );
       setMultisigAssets(fetched.length ? fetched : [DEFAULT_ASSET]);
       const prefix = result.handle ? `Resolved ${handleLabel(result.handle)} · ` : "";
       setAssetStatus(
@@ -433,6 +443,11 @@ export default function NewTransaction() {
 
   async function createAndMaybeSign() {
     if (!wallet) return;
+    if (handleConflict) {
+      setStatus(handleConflict);
+      toast.error("Wallet identity mismatch", { description: handleConflict });
+      return;
+    }
     if (!wallet.paymentScript) {
       setStatus("This wallet was imported from an address or ADA Handle. Import the native script or wallet export before creating transactions.");
       toast.error("Native script required");
@@ -593,13 +608,22 @@ export default function NewTransaction() {
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
           <span className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
             <WalletCards className="size-4 text-slate-300" />
-            <span className="max-w-56 truncate">{resolvedHandle ? handleLabel(resolvedHandle) : wallet.name}</span>
+            <span className="max-w-56 truncate">{wallet.handle ? `$${wallet.handle.replace(/^\$/, "")}` : wallet.name}</span>
           </span>
           <span className="rounded-md border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-emerald-100">
             {wallet.threshold}-of-{wallet.signers.length}
           </span>
         </div>
       </div>
+
+      {handleConflict ? (
+        <Card className="border-rose-400/30 bg-rose-400/10">
+          <CardContent className="flex gap-3 p-4 text-sm text-rose-100">
+            <AlertTriangle className="size-4 shrink-0" />
+            <span>{handleConflict} Transaction creation is disabled until the saved identity or imported policy is corrected.</span>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <section className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <AppWindow title="Transaction composer" className="max-w-full" contentClassName="space-y-5 p-3 sm:p-5">

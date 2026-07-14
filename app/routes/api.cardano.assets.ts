@@ -208,6 +208,19 @@ function parsePatterns(url: URL) {
 function normalizeHandle(input: string) { return input.trim().replace(/^\$/, "").toLowerCase(); }
 function validAddress(address: string) { return /^addr1[0-9a-z]+$/i.test(address) || /^addr_test1[0-9a-z]+$/i.test(address); }
 
+async function kupoPatternFromAddress(address: string, network: CardanoNetwork): Promise<string | null> {
+  try {
+    const CSL = await import("@emurgo/cardano-serialization-lib-browser");
+    const parsed = CSL.Address.from_bech32(address);
+    const expectedNetworkId = isMainnetNetwork(network) ? 1 : 0;
+    if (parsed.network_id() !== expectedNetworkId) return null;
+    const pattern = Buffer.from(parsed.to_bytes()).toString("hex");
+    return /^[0-9a-f]{58}$|^[0-9a-f]{114}$/.test(pattern) ? pattern : null;
+  } catch {
+    return null;
+  }
+}
+
 async function scriptHashFromAddress(address: string): Promise<string | null> {
   try {
     const CSL = await import("@emurgo/cardano-serialization-lib-browser");
@@ -395,7 +408,7 @@ export async function loader({ request }: { request: Request }) {
   if (requestNetwork !== network) {
     return Response.json({ ready: false, assets: [], outputs: 0, error: `Wallet network ${requestNetwork} does not match configured provider network ${network}.` }, { status: 409 });
   }
-  const patterns = parsePatterns(url);
+  let patterns = parsePatterns(url);
   const handleName = normalizeHandle(url.searchParams.get("handle") || "");
   const requestedAddress = (url.searchParams.get("address") || "").trim();
   const stakeAddress = (url.searchParams.get("stakeAddress") || "").trim();
@@ -409,11 +422,20 @@ export async function loader({ request }: { request: Request }) {
     handle = await resolveHandleByStakeAddress(stakeAddress, network);
     if (handle) address = handle.address;
   }
+  let recoveredScript: RecoveredScript | null = null;
   if (address) {
-    const recoveredScript = configuredNetwork() === "mainnet" ? await koiosRecoverNativeScript(address) : null;
+    const exactAddressPattern = await kupoPatternFromAddress(address, network);
+    if (!exactAddressPattern) {
+      return Response.json(
+        { ready: false, assets: [], outputs: 0, handle, address, patterns, error: `Address is invalid or does not match configured Cardano network ${network}.` },
+        { status: 400 },
+      );
+    }
+    patterns = Array.from(new Set([exactAddressPattern, ...patterns])).slice(0, MAX_KUPO_PATTERNS);
+    recoveredScript = network === "mainnet" ? await koiosRecoverNativeScript(address) : null;
     const blockfrost = await blockfrostAddressAssets(address);
     if (blockfrost) return Response.json({ ready: true, source: "blockfrost", handle, address, patterns, outputs: blockfrost.outputs, assets: blockfrost.assets, recoveredScript });
-    const exact = configuredNetwork() === "mainnet" ? await koiosAddressAssets(address) : null;
+    const exact = network === "mainnet" ? await koiosAddressAssets(address) : null;
     if (exact) return Response.json({ ready: true, source: "koios", handle, address, patterns, outputs: exact.outputs, assets: exact.assets, recoveredScript });
   }
 
@@ -424,7 +446,7 @@ export async function loader({ request }: { request: Request }) {
   if (!kupoUrl) return Response.json({ ready: false, assets: [], outputs: 0, handle, address, patterns, error: "Kupo is not configured on the server." }, { status: 503 });
   try {
     const fetched = await kupoPatternAssets(patterns, kupoUrl);
-    return Response.json({ ready: true, source: "kupo", handle, address, patterns, pattern: patterns[0], outputs: fetched.outputs, assets: fetched.assets });
+    return Response.json({ ready: true, source: "kupo", handle, address, patterns, pattern: patterns[0], outputs: fetched.outputs, assets: fetched.assets, recoveredScript });
   } catch (error) {
     return Response.json({ ready: false, assets: [], outputs: 0, handle, address, patterns, error: error instanceof Error ? error.message : "Could not fetch assets." }, { status: 502 });
   }

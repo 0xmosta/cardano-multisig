@@ -36,6 +36,7 @@ import { Textarea } from "../components/ui/textarea";
 import {
   type MultisigWallet,
   type NativeScript,
+  type Network,
   type RelayRoomRef,
   type SignatureRecord,
   type Signer,
@@ -298,6 +299,78 @@ function migrateWallet(raw: unknown): MultisigWallet | null {
   };
 }
 
+function eternlAccountCandidates(raw: Record<string, unknown>, wallet: Record<string, unknown>) {
+  const candidates: Record<string, unknown>[] = [];
+  for (const list of [wallet.accountList, raw.accountList]) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!isRecord(item)) continue;
+      candidates.push(isRecord(item.account) ? item.account : item);
+    }
+  }
+  return candidates;
+}
+
+function eternlWalletName(raw: Record<string, unknown>, wallet: Record<string, unknown>) {
+  const settings = [wallet.settings, raw.settings]
+    .filter(isRecord)
+    .find((value) => typeof value.name === "string" && value.name.trim());
+  return settings && typeof settings.name === "string" ? settings.name.trim() : "Imported Eternl multisig";
+}
+
+function migrateEternlWallet(raw: unknown): MultisigWallet | null {
+  if (!isRecord(raw)) return null;
+  const wallet = isRecord(raw.wallet) ? raw.wallet : raw;
+  const candidates = eternlAccountCandidates(raw, wallet);
+  const account = candidates.find((value) => typeof value.paymentScript === "string");
+  const looksLikeEternlMultisig = wallet.signType === "multisig" || Boolean(account);
+  if (!looksLikeEternlMultisig) return null;
+  if (wallet.rootKey !== null && wallet.rootKey !== undefined && wallet.rootKey !== "") {
+    throw new Error("This Eternl export contains a root key. Create a public-only multisig export before importing it here.");
+  }
+  if (!account || typeof account.paymentScript !== "string") {
+    throw new Error("The Eternl export does not contain a payment native script.");
+  }
+
+  let paymentScript: NativeScript;
+  let stakeScript: NativeScript | null = null;
+  try {
+    paymentScript = parseCborScript(account.paymentScript);
+  } catch (error) {
+    throw new Error(`Invalid Eternl payment script: ${error instanceof Error ? error.message : "Could not decode native-script CBOR."}`);
+  }
+  if (typeof account.stakeScript === "string" && account.stakeScript.trim()) {
+    try {
+      stakeScript = parseCborScript(account.stakeScript);
+    } catch (error) {
+      throw new Error(`Invalid Eternl stake script: ${error instanceof Error ? error.message : "Could not decode native-script CBOR."}`);
+    }
+  }
+
+  const name = eternlWalletName(raw, wallet);
+  const handle = name.startsWith("$") ? normalizeHandleInput(name) : undefined;
+  const networkId = wallet.networkId ?? account.networkId;
+  const network: Network = networkId === "mainnet" || networkId === 1 ? "mainnet" : networkId === "preview" ? "preview" : "preprod";
+  const signers = uniqueSigners([
+    ...collectSigners(paymentScript, "payment"),
+    ...collectSigners(stakeScript, "stake"),
+  ]);
+
+  return {
+    id: typeof wallet.id === "string" ? wallet.id : typeof account.id === "string" ? account.id : createId("wallet"),
+    name,
+    handle,
+    network,
+    threshold: requiredSignatures(paymentScript),
+    signers,
+    paymentScript,
+    stakeScript,
+    script: paymentScript,
+    createdAt: nowIso(),
+    imported: true,
+  };
+}
+
 function migrateDraft(raw: unknown): TxDraft | null {
   if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.title !== "string") return null;
   const status = raw.status === "succeeded" || raw.status === "failed" ? raw.status : "pending";
@@ -468,11 +541,27 @@ function parseImportSource(value: string):
   if (!trimmed) return { kind: "empty" };
   if (trimmed.startsWith("{")) {
     try {
-      const parsed = JSON.parse(trimmed) as unknown;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed) as unknown;
+      } catch (initialError) {
+        const withoutMarkdownPrimitives = trimmed.replace(/:\s*\*\*(null|true|false)\*\*(?=\s*[,}])/g, ": $1");
+        if (withoutMarkdownPrimitives === trimmed) throw initialError;
+        parsed = JSON.parse(withoutMarkdownPrimitives) as unknown;
+      }
       const wallet = migrateWallet(parsed);
       if (wallet) return { kind: "wallet", wallet };
-    } catch {
-      // Fall through to script parsing so the user still gets a specific JSON error.
+      const eternlWallet = migrateEternlWallet(parsed);
+      if (eternlWallet) return { kind: "wallet", wallet: eternlWallet };
+    } catch (error) {
+      return {
+        kind: "script",
+        parsed: {
+          script: null,
+          error: error instanceof Error ? error.message : "Invalid wallet export JSON.",
+          format: "json",
+        },
+      };
     }
   }
   return { kind: "script", parsed: parseScript(value, true) };
@@ -1687,7 +1776,7 @@ export default function Home() {
                   <div className="space-y-2">
                     <Label>Wallet export JSON or payment script</Label>
                     <div className="flex items-center justify-between text-xs text-zinc-500">
-                      <span>Paste a previously exported wallet JSON, or paste payment native-script CBOR / JSON directly.</span>
+                      <span>Paste a Cardano Multisig or public-only Eternl wallet export, or paste payment native-script CBOR / JSON directly.</span>
                       <Button type="button" variant="ghost" size="sm" onClick={() => setWalletImportText(SAMPLE_PAYMENT_SCRIPT)}>
                         Load sample
                       </Button>

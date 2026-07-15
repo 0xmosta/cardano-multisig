@@ -4,6 +4,8 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 import type { MultisigWallet, Network, RelayRoomRef, SignatureRecord, TxDraft } from "../multisig";
 import { normalizeKeyHash } from "../multisig";
+import { relayDraftsPersistenceFingerprint } from "../relay-room";
+import { stableJsonStringify } from "../utils";
 import { sanitizeAccountSnapshotInput } from "./account-state-validation";
 import {
   assertPersistenceMode,
@@ -401,10 +403,13 @@ function hydrateTransactions(transactions: StoredTxDraft[]): TxDraft[] {
     ...tx,
     relayRoom: hydrateRelayRoom(tx.relayRoom),
     assets: tx.assets?.map((asset) => ({ ...asset })),
-    signatures: (tx.signatures || []).map((signature) => ({
-      ...signature,
-      witnessCbor: signature.witnessCiphertext ? decryptWitness(signature.witnessCiphertext) : signature.witnessCbor || "",
-    })),
+    signatures: (tx.signatures || []).map((signature) => {
+      const { witnessCiphertext, ...publicSignature } = signature;
+      return {
+        ...publicSignature,
+        witnessCbor: witnessCiphertext ? decryptWitness(witnessCiphertext) : signature.witnessCbor || "",
+      };
+    }),
   }));
 }
 
@@ -948,8 +953,25 @@ export async function replaceAccountSnapshot(
     throw new AccountStateConflictError();
   }
   const sanitized = sanitizeAccountSnapshotInput(snapshot, session.network);
+  const currentTransactions = hydrateTransactions(current.transactions || []);
+  const currentWallets = recoverWalletsFromTransactions(current.wallets || [], currentTransactions, session.network);
+  const recoveredWallets = recoverWalletsFromTransactions(sanitized.wallets, sanitized.transactions, session.network);
+  const currentFingerprint = stableJsonStringify({
+    wallets: currentWallets,
+    transactions: relayDraftsPersistenceFingerprint(currentTransactions),
+  });
+  const nextFingerprint = stableJsonStringify({
+    wallets: recoveredWallets,
+    transactions: relayDraftsPersistenceFingerprint(sanitized.transactions),
+  });
+  if (currentFingerprint === nextFingerprint) {
+    return {
+      wallets: currentWallets,
+      transactions: currentTransactions,
+      updatedAt: current.updatedAt,
+    } satisfies AccountSnapshot;
+  }
   const transactions = sanitizeTransactions(sanitized.transactions, session.network);
-  const recoveredWallets = recoverWalletsFromTransactions(sanitized.wallets, hydrateTransactions(transactions), session.network);
   const next: StoredAccount = {
     ...current,
     identities: mergeIdentities(current.identities || [], session.identity),

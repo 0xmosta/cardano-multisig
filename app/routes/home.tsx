@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/home";
-import { cn } from "../lib/utils";
+import { cn, stableJsonStringify } from "../lib/utils";
 import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
@@ -419,7 +419,7 @@ function migrateDraft(raw: unknown): TxDraft | null {
 }
 
 function stateSnapshotKey(wallets: MultisigWallet[], drafts: TxDraft[]) {
-  return JSON.stringify({ wallets, drafts: relayDraftsPersistenceFingerprint(drafts) });
+  return stableJsonStringify({ wallets, drafts: relayDraftsPersistenceFingerprint(drafts) });
 }
 
 

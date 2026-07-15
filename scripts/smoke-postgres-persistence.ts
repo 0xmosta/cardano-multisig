@@ -181,12 +181,29 @@ async function main() {
   assert.equal(reloadedSnapshot.transactions.length, 1);
   assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.coordinatorToken, relayCapability);
   assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.signerInvites?.[0]?.inviteUrl, `http://localhost/sign#r=${relayCapability}`);
+  assert.equal(
+    (reloadedSnapshot.transactions[0]?.signatures[0] as unknown as { witnessCiphertext?: string })?.witnessCiphertext,
+    undefined,
+    "expected encrypted witness storage fields to stay server-side",
+  );
   assert(reloadedSnapshot.updatedAt, "expected a server snapshot version");
   assert.match(reloadedSnapshot.updatedAt, /\.\d{6}Z$/, "expected the account version to preserve PostgreSQL microseconds");
+  const noOpSnapshot = await replaceAccountSnapshot(
+    loadedSession,
+    { wallets: reloadedSnapshot.wallets, transactions: reloadedSnapshot.transactions },
+    "smoke.no-op-replace",
+    reloadedSnapshot.updatedAt,
+  );
+  assert.equal(noOpSnapshot.updatedAt, reloadedSnapshot.updatedAt, "expected identical account writes to remain a no-op");
   const legacyMillisecondVersion = reloadedSnapshot.updatedAt.replace(/(\.\d{3})\d{3}Z$/, "$1Z");
   const versionedSnapshot = await replaceAccountSnapshot(
     loadedSession,
-    { wallets: reloadedSnapshot.wallets, transactions: reloadedSnapshot.transactions },
+    {
+      wallets: reloadedSnapshot.wallets,
+      transactions: reloadedSnapshot.transactions.map((tx) =>
+        tx.id === txId ? { ...tx, note: `${tx.note} versioned` } : tx,
+      ),
+    },
     "smoke.versioned-replace",
     legacyMillisecondVersion,
   );
@@ -328,6 +345,7 @@ async function main() {
         staleSnapshotReturnsConflict: true,
         postgresVersionPrecisionPreserved: true,
         legacyMillisecondVersionAccepted: true,
+        identicalSnapshotWriteSkipped: true,
         importedTransactionEncrypted: true,
         relayCapabilitiesEncrypted: true,
         mixedNetworkImportRejected: true,

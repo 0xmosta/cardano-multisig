@@ -18,7 +18,7 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { cn } from "../lib/utils";
+import { cn, stableJsonStringify } from "../lib/utils";
 import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
@@ -113,28 +113,28 @@ function writeRelaySessionRoom(txId: string, relayRoom: RelayRoomRef) {
 }
 
 function hydrateRelayRoomSession(tx: TxDraft): TxDraft {
-  const base = tx.relayRoom ? stripRelayRoomSecrets(tx) : tx;
-  const sessionRelayRoom = readRelaySessionRooms()[tx.id];
-  return sessionRelayRoom ? { ...base, relayRoom: { ...base.relayRoom, ...sessionRelayRoom } } : base;
-}
-
-function stripRelayRoomSecrets(tx: TxDraft): TxDraft {
   if (!tx.relayRoom) return tx;
-  const { roomId, createdAt, lastSyncAt, sharedInviteUrl, status } = tx.relayRoom;
+  const sessionRelayRoom = readRelaySessionRooms()[tx.id];
+  if (!sessionRelayRoom) return tx;
   return {
     ...tx,
     relayRoom: {
-      roomId,
-      createdAt,
-      lastSyncAt,
-      sharedInviteUrl,
-      status,
-    } as RelayRoomRef,
+      ...tx.relayRoom,
+      ...(!tx.relayRoom.coordinatorToken && sessionRelayRoom.coordinatorToken
+        ? { coordinatorToken: sessionRelayRoom.coordinatorToken }
+        : {}),
+      ...(!tx.relayRoom.sharedInviteUrl && sessionRelayRoom.sharedInviteUrl
+        ? { sharedInviteUrl: sessionRelayRoom.sharedInviteUrl }
+        : {}),
+      ...(!tx.relayRoom.signerInvites?.length && sessionRelayRoom.signerInvites?.length
+        ? { signerInvites: sessionRelayRoom.signerInvites }
+        : {}),
+    },
   };
 }
 
 function stateSnapshotKey(wallets: Wallet[], txs: TxDraft[]) {
-  return JSON.stringify({ wallets, txs: relayDraftsPersistenceFingerprint(txs) });
+  return stableJsonStringify({ wallets, txs: relayDraftsPersistenceFingerprint(txs) });
 }
 
 function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {

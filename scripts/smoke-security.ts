@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mergeSignatures, type SignatureRecord, type TxDraft } from "../app/lib/multisig.ts";
 import { persistableRelayDraft } from "../app/lib/relay-room.ts";
+import { stableJsonStringify } from "../app/lib/utils.ts";
 import { sanitizeAccountSnapshotInput } from "../app/lib/server/account-state-validation.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../app/lib/server/sensitive-data.ts";
 import { enforceRateLimit, RateLimitError } from "../app/lib/server/rate-limit.ts";
@@ -94,6 +95,7 @@ assert.equal(mergedSignatures.length, 1);
 assert.equal(mergedSignatures[0].witnessCbor, witnessSignature.witnessCbor);
 const progressDraft = { ...normal.transactions[0], signatures: [progressSignature] } as TxDraft;
 assert.deepEqual(persistableRelayDraft(progressDraft).signatures, []);
+assert.equal(stableJsonStringify({ beta: 2, alpha: { delta: 4, charlie: 3 } }), stableJsonStringify({ alpha: { charlie: 3, delta: 4 }, beta: 2 }));
 
 const request = new Request("http://localhost/security", { headers: { "x-forwarded-for": "192.0.2.1" } });
 await enforceRateLimit(request, { scope: "security-smoke", limit: 2, windowMs: 60_000 });

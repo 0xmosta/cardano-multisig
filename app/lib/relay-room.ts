@@ -1,5 +1,6 @@
 import type { AssetLine, NativeScript, Network, RelayRoomRef, SignatureRecord, TxDraft } from "./multisig";
 import { mergeSignatures, normalizeKeyHash, nowIso } from "./multisig";
+import { stableJsonStringify } from "./utils";
 
 export type RelayRoomStatus = "open" | "submitted" | "cancelled" | "expired";
 export type RelayWitnessMatchStatus = "matched" | "unmatched";
@@ -262,7 +263,7 @@ export function persistableRelayDraft(draft: TxDraft): TxDraft {
 }
 
 export function relayDraftsPersistenceFingerprint(drafts: TxDraft[]) {
-  return JSON.stringify(
+  return stableJsonStringify(
     drafts.map((draft) => {
       const persistable = persistableRelayDraft(draft);
       const { updatedAt: _updatedAt, relayRoom, ...durableDraft } = persistable;

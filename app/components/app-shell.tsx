@@ -7,9 +7,9 @@ import { Badge } from "./ui/badge";
 import { Sidebar, SidebarContent, SidebarMenu, SidebarMenuBadge, SidebarMenuButton } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
-import { LEGACY_STORAGE_KEY, STORAGE_KEY, TX_STORAGE_KEY, networkLabel, type MultisigWallet, type TxDraft } from "../lib/multisig";
+import { LEGACY_STORAGE_KEY, STORAGE_KEY, TX_STORAGE_KEY, networkLabel, normalizeKeyHash, type MultisigWallet, type TxDraft } from "../lib/multisig";
 import { persistableRelayDraft } from "../lib/relay-room";
-import { cn } from "../lib/utils";
+import { cn, userFacingError } from "../lib/utils";
 
 type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
 
@@ -81,7 +81,7 @@ function clearLocalSnapshot() {
 }
 
 function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
+  return userFacingError(error, fallback);
 }
 
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
@@ -94,6 +94,27 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
+}
+
+async function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit, attempts = 3) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(input, init);
+      if (response.ok || ![429, 502, 503, 504].includes(response.status) || attempt === attempts - 1) return response;
+      const retryAfterSeconds = Number(response.headers.get("retry-after") || "0");
+      await wait(retryAfterSeconds > 0 ? retryAfterSeconds * 1_000 : 500 * 2 ** attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) throw error;
+      await wait(500 * 2 ** attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Connection unavailable.");
 }
 
 function hexToBytes(hex: string) {
@@ -246,18 +267,18 @@ export function AppShell() {
 
   async function hydrateFromServer() {
     setAccountSyncState("hydrating");
-    const response = await fetch("/api/account/state");
+    const response = await fetchWithRetry("/api/account/state");
     const body = (await response.json()) as AccountStateResponse;
     if (!response.ok || !body.ok || !body.snapshot) {
       setAccountSyncState("error");
-      throw new Error(body.error || "Could not load authenticated account state.");
+      throw new Error(body.error || "We could not load your account. Please try again.");
     }
     applyServerSnapshot(body);
     setAccountSyncState("synced");
   }
 
   async function refreshAccount() {
-    const response = await fetch("/api/account/session");
+    const response = await fetchWithRetry("/api/account/session");
     const body = (await response.json()) as AccountSessionResponse & { ok?: boolean; error?: string };
     const nextAccount = { authenticated: body.authenticated, network: body.network, session: body.session };
     accountRef.current = nextAccount;
@@ -266,11 +287,11 @@ export function AppShell() {
       accountStateRef.current = null;
       setAccountState(null);
       setAccountSyncState("hydrating");
-      const stateResponse = await fetch("/api/account/state");
+      const stateResponse = await fetchWithRetry("/api/account/state");
       const stateBody = (await stateResponse.json()) as AccountStateResponse;
       if (!stateResponse.ok || !stateBody.ok || !stateBody.snapshot) {
         setAccountSyncState("error");
-        throw new Error(stateBody.error || "Could not load authenticated account state.");
+        throw new Error(stateBody.error || "We could not load your account. Please try again.");
       }
       applyServerSnapshot(stateBody);
       setAccountSyncState("synced");
@@ -287,11 +308,11 @@ export function AppShell() {
   async function refreshServerState() {
     if (!accountRef.current.authenticated) return null;
     setAccountSyncState("hydrating");
-    const response = await fetch("/api/account/state");
+    const response = await fetchWithRetry("/api/account/state");
     const body = (await response.json()) as AccountStateResponse;
     if (!response.ok || !body.ok || !body.snapshot) {
       setAccountSyncState("error");
-      throw new Error(body.error || "Could not load authenticated account state.");
+      throw new Error(body.error || "We could not refresh your account. Please try again.");
     }
     applyServerSnapshot(body);
     setAccountSyncState("synced");
@@ -303,7 +324,7 @@ export function AppShell() {
       const currentAccount = accountRef.current;
       const currentState = accountStateRef.current;
       if (!currentAccount.authenticated || !currentAccount.session || !currentState?.updatedAt) {
-        throw new Error("Sign in and refresh the server account before saving.");
+        throw new Error("Sign in and refresh your account before saving.");
       }
       setAccountSyncState("syncing");
       const persistableState = {
@@ -320,7 +341,9 @@ export function AppShell() {
       });
       const body = (await response.json()) as AccountStateResponse;
       if (!response.ok || !body.ok || !body.snapshot) {
-        const message = body.error || "Could not save authenticated account state.";
+        const message = response.status === 429
+          ? "Saving is temporarily paused. Wait a moment, then try again."
+          : body.error || "We could not save your latest changes.";
         const conflict = response.status === 409 || message.includes("changed in another tab");
         if (conflict) {
           await refreshServerState().catch(() => undefined);
@@ -340,7 +363,7 @@ export function AppShell() {
 
   useEffect(() => {
     const stopWatchingWallets = watchInstalledBrowserWallets(setProviders);
-    fetch("/api/cardano/provider")
+    fetchWithRetry("/api/cardano/provider", undefined, 2)
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => setProviderStatus(payload))
       .catch(() => setProviderStatus(null));
@@ -434,8 +457,8 @@ export function AppShell() {
       accountRef.current = authenticatedAccount;
       setAccount(authenticatedAccount);
       await hydrateFromServer();
-      toast.success("Authenticated account ready", {
-        description: `${refreshed.name} signed a ${verifyBody.session.identity.kind} challenge for ${verifyBody.network}.`,
+      toast.success("Signed in", {
+        description: `Your wallets and transactions are ready on ${verifyBody.network}.`,
       });
     } catch (error) {
       setAccountSyncState("error");
@@ -461,7 +484,7 @@ export function AppShell() {
     clearLocalSnapshot();
     setWalletCount(0);
     setRoomCount(0);
-    toast("Authenticated account signed out");
+    toast("Signed out");
   }
 
   function disconnectWallet() {
@@ -478,6 +501,14 @@ export function AppShell() {
       network: account.network,
     };
   }, [account]);
+
+  const signerWalletCount = useMemo(() => {
+    const connectedKeyHash = normalizeKeyHash(connected?.keyHash || "");
+    if (!connectedKeyHash || !accountState) return 0;
+    return accountState.wallets.filter((wallet) =>
+      wallet.signers.some((signer) => normalizeKeyHash(signer.keyHash) === connectedKeyHash),
+    ).length;
+  }, [accountState, connected?.keyHash]);
 
   const context: AppShellContext = {
     providers,
@@ -511,6 +542,7 @@ export function AppShell() {
         providerStatus={providerStatus}
         walletCount={walletCount}
         roomCount={roomCount}
+        signerWalletCount={signerWalletCount}
         onConnect={(provider) => void connectWallet(provider)}
         onDisconnect={disconnectWallet}
         onSignIn={() => void signInConnectedWallet()}

@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import type { Route } from "./+types/wallets";
 import { AccountSyncPanel } from "../components/account-sync-panel";
 import { useAppShell } from "../components/app-shell";
+import { userFacingError } from "../lib/utils";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -119,7 +120,7 @@ export default function WalletsRoute() {
         if (!cancelled && state) setWallets(state.wallets);
       })
       .catch((error) => {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Could not load server wallets.");
+        if (!cancelled) setLoadError(userFacingError(error, "We could not load your wallets."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -239,7 +240,7 @@ export default function WalletsRoute() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-zinc-50 sm:text-3xl">Wallets</h1>
-          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open saved multisig policies, review signer rules, and continue treasury work from {account ? "your signed-in server account" : "this browser"}.</p>
+          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open a wallet, review its signers, and continue where you left off from any signed-in device.</p>
         </div>
         <Button asChild className="w-full sm:w-auto">
           <Link to="/wallets/import">
@@ -272,7 +273,7 @@ export default function WalletsRoute() {
               <EmptyHeader>
                 <Loader2 className="size-5 animate-spin text-sky-200" />
                 <EmptyTitle>Loading server wallets</EmptyTitle>
-                <EmptyDescription>Fetching the wallet list for your authenticated account.</EmptyDescription>
+                <EmptyDescription>Loading your saved wallets.</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : loadError ? (
@@ -299,7 +300,7 @@ export default function WalletsRoute() {
               <EmptyHeader>
                 {account ? <Cloud className="size-5 text-sky-200" /> : <WalletCards className="size-5 text-muted-foreground" />}
                 <EmptyTitle>{account ? "No server wallets yet" : "Sign in to load wallets"}</EmptyTitle>
-                <EmptyDescription>{account ? "Import a wallet export or create a policy to save it to this account." : "Use the account menu to authenticate; PostgreSQL is the source of truth for wallet data."}</EmptyDescription>
+                <EmptyDescription>{account ? "Import a wallet export or create a policy to get started." : "Sign in from the account menu to access your wallets."}</EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
                 <Button asChild>

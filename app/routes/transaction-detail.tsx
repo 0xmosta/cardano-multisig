@@ -39,7 +39,7 @@ import {
   type RelayRoomSessionResponse,
   type RelayRoomViewResponse,
 } from "../lib/relay-room";
-import { cn } from "../lib/utils";
+import { cn, userFacingError } from "../lib/utils";
 
 type TransactionState = "pending" | "ready" | "submitted";
 type RelaySync = { status: "idle" | "syncing" | "synced" | "failed"; at?: string; error?: string };
@@ -147,7 +147,7 @@ export default function TransactionDetailRoute() {
         if (!cancelled) setTransaction(snapshot?.transactions.find((tx) => tx.id === decodedId) || null);
       })
       .catch((error) => {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Could not load the transaction.");
+        if (!cancelled) setLoadError(userFacingError(error, "We could not load this transaction."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -178,7 +178,7 @@ export default function TransactionDetailRoute() {
       setTransaction((current) => (current ? applyRelayRoomToDraft(current, body.room) : current));
       setRelaySync({ status: "synced", at: new Date().toISOString() });
     } catch (error) {
-      setRelaySync({ status: "failed", at: new Date().toISOString(), error: error instanceof Error ? error.message : "Relay sync failed." });
+      setRelaySync({ status: "failed", at: new Date().toISOString(), error: userFacingError(error, "Signature progress could not be refreshed.") });
     } finally {
       relaySyncInFlightRef.current = false;
     }
@@ -204,7 +204,7 @@ export default function TransactionDetailRoute() {
         <EmptyHeader>
           <Loader2 className="size-5 animate-spin text-sky-200" />
           <EmptyTitle>Loading transaction</EmptyTitle>
-          <EmptyDescription>Fetching the transaction from your server-backed account.</EmptyDescription>
+          <EmptyDescription>Loading the saved transaction details.</EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
@@ -215,7 +215,7 @@ export default function TransactionDetailRoute() {
       <Empty>
         <EmptyHeader>
           <EmptyTitle>{loadError ? "Could not load transaction" : "Transaction not found"}</EmptyTitle>
-          <EmptyDescription>{loadError || (account.authenticated ? "This transaction is not part of the signed-in account." : "Sign in with your wallet to open server-backed transaction details.")}</EmptyDescription>
+          <EmptyDescription>{loadError || (account.authenticated ? "This transaction is not part of the signed-in account." : "Sign in with your wallet to open this transaction.")}</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button asChild variant="secondary"><Link to="/transactions"><ArrowLeft className="size-4" /> Back to transactions</Link></Button>
@@ -236,9 +236,9 @@ export default function TransactionDetailRoute() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button asChild variant="ghost" className="-ml-3"><Link to="/transactions"><ArrowLeft className="size-4" /> Transactions</Link></Button>
-        {transaction.relayRoom ? (
-          <Button type="button" size="sm" variant="secondary" onClick={() => void refreshRelay()} disabled={relaySync.status === "syncing"}>
-            <RefreshCw className={cn("size-4", relaySync.status === "syncing" ? "animate-spin" : "")} /> Refresh
+        {transaction.relayRoom && relaySync.status === "failed" ? (
+          <Button type="button" size="sm" variant="secondary" onClick={() => void refreshRelay()}>
+            <RefreshCw className="size-4" /> Try again
           </Button>
         ) : null}
       </div>
@@ -254,12 +254,11 @@ export default function TransactionDetailRoute() {
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-400">
                 <span>{transaction.walletName}</span><span>·</span><span>{transaction.network}</span>
-                {transaction.relayRoom ? <><span>·</span><span className={relaySync.status === "failed" ? "text-rose-300" : "text-sky-300"}>relay {relaySync.status === "idle" ? transaction.relayRoom.status || "open" : relaySync.status}</span></> : null}
               </div>
             </div>
           </div>
           <Button asChild className="w-full sm:w-auto">
-            <Link to={walletHref(transaction, true)}>Open coordinator <ArrowRight className="size-4" /></Link>
+            <Link to={walletHref(transaction, true)}>Manage signatures <ArrowRight className="size-4" /></Link>
           </Button>
         </div>
       </section>
@@ -297,9 +296,9 @@ export default function TransactionDetailRoute() {
 
         <aside className="min-w-0 space-y-4 xl:sticky xl:top-6 xl:self-start">
           <Card>
-            <CardHeader><CardTitle>Next action</CardTitle><CardDescription>{state === "pending" ? "Continue collecting signatures in the coordinator." : state === "ready" ? "Review and submit from the coordinator." : "Review the related wallet or create another transaction."}</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Next action</CardTitle><CardDescription>{state === "pending" ? "Open the wallet to sign or share this request with others." : state === "ready" ? "All required signatures are present; submission can complete automatically." : "This transaction is complete. You can review the wallet or create another one."}</CardDescription></CardHeader>
             <CardContent className="space-y-2">
-              <Button asChild className="w-full"><Link to={walletHref(transaction, true)}><ShieldCheck className="size-4" /> Open coordinator</Link></Button>
+              <Button asChild className="w-full"><Link to={walletHref(transaction, true)}><ShieldCheck className="size-4" /> Manage signatures</Link></Button>
               <Button asChild variant="secondary" className="w-full"><Link to={walletHref(transaction)}><WalletCards className="size-4" /> View wallet</Link></Button>
               <Button asChild variant="outline" className="w-full"><Link to={newTransactionHref(transaction)}>New transaction <ArrowRight className="size-4" /></Link></Button>
             </CardContent>
@@ -309,7 +308,7 @@ export default function TransactionDetailRoute() {
             <CardContent className="space-y-3 text-sm">
               <div><div className="text-zinc-500">Created</div><div className="mt-1 text-zinc-200">{new Date(transaction.createdAt).toLocaleString()}</div></div>
               <div><div className="text-zinc-500">Transaction ID</div><div className="mt-1 flex items-center gap-2"><code className="min-w-0 flex-1 truncate text-xs text-zinc-300">{transaction.id}</code><Button type="button" size="icon-sm" variant="ghost" onClick={() => { void navigator.clipboard.writeText(transaction.id); toast.success("Transaction ID copied"); }}><Copy className="size-4" /></Button></div></div>
-              {transaction.relayRoom ? <div><div className="text-zinc-500">Relay</div><div className="mt-1 text-zinc-200">{transaction.relayRoom.status || "open"} · synced {relativeTime(relaySync.at || transaction.relayRoom.lastSyncAt)}</div></div> : null}
+              {transaction.relayRoom ? <div><div className="text-zinc-500">Signature progress updated</div><div className="mt-1 text-zinc-200">{relativeTime(relaySync.at || transaction.relayRoom.lastSyncAt)}</div></div> : null}
             </CardContent>
           </Card>
         </aside>

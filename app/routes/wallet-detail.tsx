@@ -19,7 +19,7 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { cn, stableJsonStringify } from "../lib/utils";
+import { cn, stableJsonStringify, userFacingError } from "../lib/utils";
 import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
@@ -215,8 +215,25 @@ function phaseIcon(status: TxPhase) {
 }
 
 function phaseLabel(status: TxPhase) {
-  if (status === "ready") return "ready to submit";
-  return status;
+  if (status === "submitted") return "Completed";
+  if (status === "ready") return "Ready";
+  return "Waiting";
+}
+
+function nextActionLabel(tx: TxDraft, connectedKeyHash?: string | null) {
+  const phase = txPhase(tx);
+  if (phase === "submitted") return "Completed";
+  if (phase === "ready") return "Required signatures collected";
+  const connectedSigner = normalizeKeyHash(connectedKeyHash || "");
+  if (
+    connectedSigner &&
+    tx.signerKeyHashes.some((keyHash) => normalizeKeyHash(keyHash) === connectedSigner) &&
+    !hasMatchedSignature(tx, connectedSigner)
+  ) {
+    return "Your signature is needed";
+  }
+  const pending = pendingSignatureCount(tx);
+  return `Waiting for ${pending} signature${pending === 1 ? "" : "s"}`;
 }
 
 function shortHash(value?: string | null, edge = 8) {
@@ -490,7 +507,7 @@ export default function WalletDetail() {
         })
         .catch((error) => {
           if (cancelled) return;
-          setSignStatus(error instanceof Error ? error.message : "Could not load the authenticated account state.");
+          setSignStatus(userFacingError(error, "We could not load your account."));
           setHydrated(true);
         });
       return () => {
@@ -516,7 +533,7 @@ export default function WalletDetail() {
       pendingServerSaveKeyRef.current = nextKey;
       void saveServerState({ wallets, transactions: txs })
         .catch((error) => {
-          const message = error instanceof Error ? error.message : "Could not sync the authenticated account state.";
+          const message = userFacingError(error, "We could not save your latest changes.");
           setSignStatus(message);
           toast.error("Could not sync account state", { description: message });
         })
@@ -633,7 +650,7 @@ export default function WalletDetail() {
       setRelaySync({ status: "synced", at: nowIso() });
       return changed;
     } catch (error) {
-      setRelaySync({ status: "failed", at: nowIso(), error: error instanceof Error ? error.message : "Relay sync failed." });
+      setRelaySync({ status: "failed", at: nowIso(), error: userFacingError(error, "Signature progress could not be refreshed.") });
       throw error;
     } finally {
       relaySyncInFlightRef.current = false;
@@ -715,14 +732,14 @@ export default function WalletDetail() {
   }
 
   async function ensureRelayRoom(tx: TxDraft) {
-    if (!wallet) throw new Error("Wallet not loaded in this browser.");
+    if (!wallet) throw new Error("Wallet not loaded.");
     if (!account.authenticated || !account.session) throw new Error("Sign in with a wallet before creating a signing room.");
     if (tx.relayRoom?.coordinatorToken && tx.relayRoom.signerInvites?.length && tx.relayRoom.sharedInviteUrl) {
       await syncExistingWitnessesToRelayRoom(tx, tx.relayRoom);
       return tx.relayRoom;
     }
     if (!tx.unsignedTxCbor.trim()) {
-      throw new Error("This transaction has no unsigned tx CBOR yet, so a relay room cannot be created.");
+      throw new Error("This transaction is incomplete. Recreate it before sharing it with signers.");
     }
     const relayAssets = normalizeRelayAssetLines(tx);
     const response = await fetch("/api/cardano/relay-room", {
@@ -789,7 +806,7 @@ export default function WalletDetail() {
       return;
     }
     if (!tx.unsignedTxCbor?.trim()) {
-      setSignStatus("This transaction has no unsigned tx CBOR, so a wallet cannot sign it yet.");
+      setSignStatus("This transaction is incomplete. Recreate it before signing.");
       return;
     }
 
@@ -816,16 +833,16 @@ export default function WalletDetail() {
       setTxs(next);
       setSignStatus(
         connected.keyHash
-          ? "Signature captured. Copy the witness package for the coordinator or keep collecting signatures here."
-          : "Signature captured, but the signer key hash could not be verified. The coordinator will see it as unmatched until they confirm the signer.",
+          ? "Signature added. It will be delivered automatically."
+          : "Signature added, but its signer could not be verified. It will not count until the signer is recognized.",
       );
       toast.success("Signature captured", {
-        description: connected.keyHash ? "The coordinator view was updated locally." : "Signer key hash could not be verified.",
+        description: connected.keyHash ? "Signature progress was updated." : "The signer could not be verified.",
       });
     } catch (error) {
-      setSignStatus(error instanceof Error ? error.message : "Wallet refused to sign.");
+      setSignStatus(userFacingError(error, "The wallet did not approve the signature."));
       toast.error("Wallet refused to sign", {
-        description: error instanceof Error ? error.message : "The signing request was cancelled or rejected.",
+        description: userFacingError(error, "The signing request was cancelled or rejected."),
       });
     }
   }
@@ -833,33 +850,29 @@ export default function WalletDetail() {
   async function copyInvite(tx: TxDraft) {
     try {
       const relayRoom = await ensureRelayRoom(tx);
-      if (!relayRoom.sharedInviteUrl) throw new Error("Relay room exists, but the shared signer link could not be found.");
+      if (!relayRoom.sharedInviteUrl) throw new Error("The signer link could not be found.");
       await navigator.clipboard.writeText(relayRoom.sharedInviteUrl);
-      setSignStatus("One signer link copied. Send this same link to every signer; witnesses return automatically after signing.");
+      setSignStatus("Signer link copied. Send the same link privately to every signer; progress updates automatically.");
       toast.success("Signer link copied", {
         description: "Send the same link to every signer.",
       });
     } catch (error) {
-      setSignStatus(
-        error instanceof Error
-          ? `${error.message} Short relay link was not copied.`
-          : "Relay room unavailable. Short relay link was not copied.",
-      );
+      setSignStatus(userFacingError(error, "The signer link could not be created."));
       toast.error("Could not copy signer link", {
-        description: error instanceof Error ? error.message : "Relay room unavailable.",
+        description: userFacingError(error, "The signer link could not be created."),
       });
     }
   }
 
   async function copySignatures(tx: TxDraft) {
     await navigator.clipboard.writeText(createSignaturePackage(tx.id, tx.signatures || []));
-    setSignStatus("Witness package copied.");
-    toast.success("Witness package copied");
+    setSignStatus("Signature backup copied.");
+    toast.success("Signature backup copied");
   }
 
   async function submitTransaction(tx: TxDraft) {
     if (!wallet) {
-      setSignStatus("Wallet not loaded in this browser, so the signed transaction cannot be assembled yet.");
+      setSignStatus("Wallet not loaded, so the signed transaction cannot be assembled yet.");
       return;
     }
     if (tx.txHash) {
@@ -867,11 +880,11 @@ export default function WalletDetail() {
       return;
     }
     if (txPhase(tx) !== "ready") {
-      setSignStatus("Collect all required witnesses before submitting this transaction.");
+      setSignStatus("Collect the required signatures before submitting this transaction.");
       return;
     }
     if (!providerStatus?.services.submit) {
-      setSignStatus("Server-side submit is not enabled for this deployment yet.");
+      setSignStatus("Transaction submission is not available right now.");
       return;
     }
 
@@ -930,7 +943,7 @@ export default function WalletDetail() {
         description: String(body.txHash || ""),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not submit transaction.";
+      const message = userFacingError(error, "We could not submit the transaction.");
       const next = txs.map((item) =>
         item.id === tx.id
           ? {
@@ -964,13 +977,13 @@ export default function WalletDetail() {
       setTxs(next);
       setSignaturePackageInput("");
       setSignStatus(`Imported ${signatures.length} signature${signatures.length === 1 ? "" : "s"} into the coordinator view.`);
-      toast.success("Witness package imported", {
+      toast.success("Signature backup imported", {
         description: `${signatures.length} signature${signatures.length === 1 ? "" : "s"} merged.`,
       });
     } catch (error) {
-      setSignStatus(error instanceof Error ? error.message : "Invalid signature package.");
-      toast.error("Invalid witness package", {
-        description: error instanceof Error ? error.message : "Could not parse the signature package.",
+      setSignStatus(userFacingError(error, "The signature backup is not valid."));
+      toast.error("Invalid signature backup", {
+        description: userFacingError(error, "The signature backup could not be read."),
       });
     }
   }
@@ -1050,7 +1063,7 @@ export default function WalletDetail() {
     } catch (error) {
       if (requestId !== assetRequestIdRef.current) return;
       setWalletAssets([]);
-      setAssetStatus(error instanceof Error ? error.message : "Could not load multisig assets.");
+      setAssetStatus(userFacingError(error, "We could not load wallet assets."));
     }
   }
 
@@ -1061,7 +1074,7 @@ export default function WalletDetail() {
           ← Back
         </Link>
         <Card className="glass-panel">
-          <CardContent className="p-8 text-slate-300">Wallet not found in this browser. Import or create it first.</CardContent>
+          <CardContent className="p-8 text-slate-300">Wallet not found in your account. Return to the wallet list and try again.</CardContent>
         </Card>
       </div>
     );
@@ -1221,43 +1234,20 @@ export default function WalletDetail() {
               <div>
                 <h2 className="text-xl font-semibold text-zinc-50">Transactions</h2>
                 <p className="mt-1 text-sm text-zinc-400">
-                  Copy one shared signer link, watch returned witnesses merge automatically, and keep the manual witness package fallback available.
+                  Open what needs attention or share a pending transaction with the remaining signers.
                 </p>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                  <Badge
-                    variant={relaySync.status === "failed" ? "outline" : relaySync.status === "syncing" ? "secondary" : "outline"}
-                    className={cn(
-                      relaySync.status === "failed" ? "border-rose-400/30 bg-rose-400/10 text-rose-200" : "",
-                      relaySync.status === "synced" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" : "",
-                    )}
-                  >
-                    relay {relaySync.status}
-                  </Badge>
-                  <span>
-                    last synced{" "}
-                    {relativeTime(
-                      relaySync.at ||
-                        walletTxs
-                          .map((tx) => tx.relayRoom?.lastSyncAt)
-                          .filter((value): value is string => Boolean(value))
-                          .sort()
-                          .slice(-1)[0],
-                    )}
-                  </span>
-                  {relaySync.error ? <span className="text-rose-300">{relaySync.error}</span> : null}
-                </div>
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="max-sm:w-full"
-                onClick={() => void refreshRelayRooms()}
-                disabled={relaySync.status === "syncing" || !relayDraftsForWallet().length}
-              >
-                <RefreshCw className={cn("size-4", relaySync.status === "syncing" ? "animate-spin" : "")} /> Refresh relay
-              </Button>
+              {relaySync.status === "failed" ? (
+                <Button type="button" variant="secondary" size="sm" className="max-sm:w-full" onClick={() => void refreshRelayRooms()} disabled={!relayDraftsForWallet().length}>
+                  <RefreshCw className="size-4" /> Try again
+                </Button>
+              ) : null}
             </div>
+            {relaySync.status === "failed" ? (
+              <div className="rounded-lg border border-rose-400/25 bg-rose-400/10 p-3 text-sm text-rose-100">
+                We could not refresh signature progress. The current information is still visible; try again in a moment.
+              </div>
+            ) : null}
               {walletTxs.length === 0 ? (
                 <div className="rounded-lg border border-white/7 bg-black/20 p-4 text-sm text-zinc-400">
                   {isWatchOnly
@@ -1303,13 +1293,11 @@ export default function WalletDetail() {
                           </div>
                           <div className="mt-1 break-all text-sm text-zinc-400">{tx.recipient || "No recipient address saved"}</div>
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+                            <span className={cn("font-medium", phase === "submitted" ? "text-emerald-300" : nextActionLabel(tx, connected?.keyHash) === "Your signature is needed" ? "text-amber-200" : "text-sky-200")}>
+                              {nextActionLabel(tx, connected?.keyHash)}
+                            </span>
                             <span>{signed}/{tx.requiredSignatures} matched signatures</span>
                             <span>{pending} still needed</span>
-                            {tx.relayRoom ? (
-                              <span className="text-sky-300">
-                                relay {tx.relayRoom.status || "open"} · synced {relativeTime(tx.relayRoom.lastSyncAt)}
-                              </span>
-                            ) : null}
                             {pending === 0 && optional.length ? (
                               <span className="text-emerald-300">{optional.length} optional signer{optional.length === 1 ? "" : "s"} unsigned</span>
                             ) : null}
@@ -1403,11 +1391,11 @@ export default function WalletDetail() {
                                   ? "Submission already recorded for this transaction."
                                     : missing.length
                                       ? tx.relayRoom
-                                        ? "Copy one shared signer link and send it to every signer. Returned witnesses merge into this room automatically; the manual package import remains available as a fallback."
-                                        : "Copy the invite link, send it privately to a missing signer, then import the returned witness package. The invite carries unsigned transaction details in the URL fragment."
+                                        ? "Share the signer link with the remaining people. Their signatures will appear here automatically."
+                                        : "Create a signer link and send it privately to the remaining people."
                                     : providerStatus?.services.submit
-                                      ? `All required witnesses are present. Relay submit runs automatically; use manual submit here only as a fallback.`
-                                      : "All required witnesses are present, but this deployment still has submit disabled."}
+                                      ? "All required signatures are present. Submission runs automatically."
+                                      : "All required signatures are present. Submission is not currently available."}
                               </div>
                           </div>
 
@@ -1415,7 +1403,7 @@ export default function WalletDetail() {
                             <Card>
                               <CardContent className="p-4">
                                 <div className="font-medium text-foreground">Ready to submit</div>
-                                <div className="mt-1 text-sm text-muted-foreground">The required threshold is met. The relay will submit automatically; keep this page open or use manual submit if it does not complete.</div>
+                                <div className="mt-1 text-sm text-muted-foreground">All required signatures are present. Submission completes automatically; use Advanced recovery only if it does not finish.</div>
                               </CardContent>
                             </Card>
                           ) : null}
@@ -1462,31 +1450,33 @@ export default function WalletDetail() {
 
                           {!canSign ? (
                             <Card>
-                              <CardContent className="p-4 text-sm text-muted-foreground">Missing unsigned tx CBOR — rebuild or recreate the transaction before asking signers to approve it.</CardContent>
+                              <CardContent className="p-4 text-sm text-muted-foreground">This transaction is incomplete. Recreate it before asking signers to approve it.</CardContent>
                             </Card>
                           ) : null}
                         </div>
 
                         <div className="min-w-0 space-y-2">
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copyInvite(tx)} disabled={phase === "submitted"}>
-                            <Copy className="size-4" /> {tx.relayRoom ? "Copy signer link" : "Create signer link"}
+                            <Copy className="size-4" /> {tx.relayRoom ? "Share with signers" : "Create signer link"}
                           </Button>
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign || phase === "submitted"}>
                             <ShieldCheck className="size-4" /> Sign with connected wallet
                           </Button>
-                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
-                            <Copy className="size-4" /> Copy witness package fallback
-                          </Button>
-                          <Button
-                            className={cn(
-                              "h-auto min-h-10 w-full whitespace-normal px-3 py-2",
-                              phase === "ready" ? "bg-emerald-300 text-emerald-950 hover:bg-emerald-200" : "",
-                            )}
-                            onClick={() => void submitTransaction(tx)}
-                            disabled={phase !== "ready" || !providerStatus?.services.submit}
-                          >
-                            <ShieldCheck className="size-4" /> {phase === "submitted" ? "Submitted" : "Submit signed transaction"}
-                          </Button>
+                          <Collapsible className="rounded-lg border border-white/8 bg-black/20">
+                            <CollapsibleTrigger asChild>
+                              <Button type="button" variant="ghost" className="h-auto min-h-10 w-full justify-between whitespace-normal px-3 py-2">
+                                Advanced recovery <ChevronDown className="size-4" />
+                              </Button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="space-y-2 border-t border-white/8 p-2">
+                              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
+                                <Copy className="size-4" /> Copy signature backup
+                              </Button>
+                              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void submitTransaction(tx)} disabled={phase !== "ready" || !providerStatus?.services.submit}>
+                                <ShieldCheck className="size-4" /> Submit manually
+                              </Button>
+                            </CollapsibleContent>
+                          </Collapsible>
                         </div>
                       </div>
                       </CollapsibleContent>
@@ -1499,25 +1489,35 @@ export default function WalletDetail() {
 
         <div className="min-w-0 space-y-6">
           {!isWatchOnly ? (
-            <Card className="glass-panel">
-              <CardHeader>
-                <CardTitle>Import returned witness package</CardTitle>
-                <CardDescription>
-                  Paste a signature package from a signer. Both the old single-signature format and the new multi-signature format are accepted. Imported witnesses stay in this browser's local storage until you clear site data.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Textarea
-                  className="min-h-48 min-w-0 font-mono text-sm text-slate-100"
-                  value={signaturePackageInput}
-                  onChange={(event) => setSignaturePackageInput(event.target.value)}
-                  placeholder="Paste the witness package JSON here"
-                />
-                <Button className="w-full" onClick={importReturnedSignatures}>
-                  <FileUp className="size-4" /> Import witness package
-                </Button>
-              </CardContent>
-            </Card>
+            <Collapsible>
+              <Card className="glass-panel">
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>Advanced signature recovery</CardTitle>
+                      <CardDescription>Use this only when automatic signature delivery is unavailable.</CardDescription>
+                    </div>
+                    <CollapsibleTrigger asChild>
+                      <Button type="button" variant="ghost" size="sm"><ChevronDown className="size-4" /> Open</Button>
+                    </CollapsibleTrigger>
+                  </div>
+                </CardHeader>
+                <CollapsibleContent>
+                  <CardContent className="space-y-3 border-t border-border pt-4">
+                    <p className="text-sm text-muted-foreground">Paste a returned signature backup. Valid signatures are verified, merged into the transaction, and saved to your account.</p>
+                    <Textarea
+                      className="min-h-48 min-w-0 font-mono text-sm text-slate-100"
+                      value={signaturePackageInput}
+                      onChange={(event) => setSignaturePackageInput(event.target.value)}
+                      placeholder="Paste signature backup JSON here"
+                    />
+                    <Button className="w-full" onClick={importReturnedSignatures}>
+                      <FileUp className="size-4" /> Import signature backup
+                    </Button>
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
           ) : null}
 
           <Card className="glass-panel">

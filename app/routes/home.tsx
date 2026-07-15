@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   Clock,
   Copy,
   Download,
@@ -19,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/home";
-import { cn, stableJsonStringify } from "../lib/utils";
+import { cn, stableJsonStringify, userFacingError } from "../lib/utils";
 import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
@@ -605,7 +606,6 @@ export default function Home() {
   const {
     account,
     accountState,
-    accountSyncState,
     connected,
     refreshConnectedWallet,
     refreshServerState,
@@ -659,7 +659,7 @@ export default function Home() {
     });
     const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
     if (!response.ok || !body.ok || body.role !== "signer") {
-      throw new Error(("error" in body && body.error) || "Could not load the relay signer room.");
+      throw new Error(("error" in body && body.error) || "Could not load the signing request.");
     }
     setRelayInviteToken(token);
     setRelayInviteRoom(body.room);
@@ -669,8 +669,8 @@ export default function Home() {
     if (!options.quiet) {
       setStatus(
         body.room.signer.alreadyDelivered
-          ? "Signature already delivered to the coordinator. You can close this page or sign again to replace it."
-          : "Relay invite loaded. Review the transaction below, connect a signer wallet, then click Sign.",
+          ? "Your signature was already sent. You can close this page or sign again to replace it."
+          : "Review the transaction below, connect your signer wallet, then approve it.",
       );
     }
     return body.room;
@@ -683,11 +683,11 @@ export default function Home() {
       const room = await loadRelayInvite(relayInviteToken, { quiet: true });
       setStatus(
         room.signer.alreadyDelivered
-          ? "Signature already delivered to the coordinator. The live relay state is up to date."
-          : "Relay signer room refreshed.",
+          ? "Your signature was already sent. You can close this page."
+          : "Signature progress refreshed.",
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not refresh the relay signer room.");
+      setStatus(userFacingError(error, "Signature progress could not be refreshed."));
     } finally {
       setRelayInviteSyncing(false);
     }
@@ -699,27 +699,23 @@ export default function Home() {
     const invite = hashParams.get("invite");
     if (relay) {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-      setStatus("Loading relay signer room…");
+      setStatus("Loading signing request…");
       void loadRelayInvite(relay).catch((error) => {
         setRelayInviteToken(null);
         setRelayInviteRoom(null);
-        setStatus(
-          error instanceof Error
-            ? `${error.message} If needed, ask the coordinator for a fresh relay link or the advanced witness package fallback.`
-            : "Could not load the relay signer room.",
-        );
+        setStatus(`${userFacingError(error, "The signing request could not be loaded.")} Ask the sender for a fresh link if this continues.`);
       });
       setHydrated(true);
       return;
     }
     const restoredRelay = readRelayInviteSession();
     if (restoredRelay?.token) {
-      setStatus("Restoring relay signer room...");
+      setStatus("Restoring signing request…");
       void loadRelayInvite(restoredRelay.token).catch((error) => {
         clearRelayInviteSession();
         setRelayInviteToken(null);
         setRelayInviteRoom(null);
-        setStatus(error instanceof Error ? error.message : "Could not restore the relay signer room.");
+        setStatus(userFacingError(error, "The signing request could not be restored."));
       });
       setHydrated(true);
       return;
@@ -759,7 +755,7 @@ export default function Home() {
         })
         .catch((error) => {
           if (cancelled) return;
-          setStatus(error instanceof Error ? error.message : "Could not load the authenticated account state.");
+          setStatus(userFacingError(error, "We could not load your account."));
           setHydrated(true);
         });
       return () => {
@@ -784,7 +780,7 @@ export default function Home() {
       pendingServerSaveKeyRef.current = nextKey;
       void saveServerState({ wallets, transactions: drafts })
         .catch((error) => {
-          const message = error instanceof Error ? error.message : "Could not sync the authenticated account state.";
+          const message = userFacingError(error, "We could not save your latest changes.");
           setStatus(message);
           toast.error("Could not sync account state", { description: message });
         })
@@ -814,7 +810,7 @@ export default function Home() {
           setStatus("Threshold reached. You can close this page.");
         }
       } catch (error) {
-        if (!cancelled) setStatus(error instanceof Error ? error.message : "Could not refresh the relay signer room.");
+        if (!cancelled) setStatus(userFacingError(error, "Signature progress could not be refreshed."));
       } finally {
         relayInviteSyncInFlightRef.current = false;
       }
@@ -1014,7 +1010,7 @@ export default function Home() {
   async function importWallet() {
     if (!canImport) return;
     if (!account.authenticated) {
-      toast.error("Sign in required", { description: "Wallets are saved only to the server-backed account." });
+      toast.error("Sign in required", { description: "Sign in to save this wallet to your account." });
       return;
     }
     const handle = normalizeHandleInput(importHandle);
@@ -1140,7 +1136,7 @@ export default function Home() {
 
   function saveAddressDiscovery() {
     if (!account.authenticated) {
-      toast.error("Sign in required", { description: "Wallets are saved only to the server-backed account." });
+      toast.error("Sign in required", { description: "Sign in to save this wallet to your account." });
       return;
     }
     if (!addressDiscovery?.address) {
@@ -1192,7 +1188,7 @@ export default function Home() {
   function saveCreatedWallet() {
     if (!canSave) return;
     if (!account.authenticated) {
-      toast.error("Sign in required", { description: "Wallets are saved only to the server-backed account." });
+      toast.error("Sign in required", { description: "Sign in to save this wallet to your account." });
       return;
     }
     const wallet: MultisigWallet = {
@@ -1322,9 +1318,9 @@ export default function Home() {
         description: "Send the same link to every signer.",
       });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not create the short signer link.");
+      setStatus(userFacingError(error, "The signer link could not be created."));
       toast.error("Could not copy signer link", {
-        description: error instanceof Error ? error.message : "Could not create the short signer link.",
+        description: userFacingError(error, "The signer link could not be created."),
       });
     } finally {
       setCopyingInviteId(null);
@@ -1351,8 +1347,8 @@ export default function Home() {
       return;
     }
     if (!visibleDraft.unsignedTxCbor.trim()) {
-      setStatus("This invite is missing unsigned transaction CBOR, so a wallet cannot sign it yet.");
-      toast.error("Unsigned transaction missing");
+      setStatus("This signing request is incomplete. Ask the sender to create a new link.");
+      toast.error("Signing request incomplete");
       return;
     }
     try {
@@ -1381,38 +1377,36 @@ export default function Home() {
         const refreshed = await loadRelayInvite(relayInviteToken);
         setSignaturePackage("");
         if (body.matchStatus === "unmatched") {
-          setStatus(
-            "Witness delivered to the coordinator, but it did not match the expected signer key hash for this invite. The coordinator will see it as non-counting.",
-          );
-          toast.warning("Witness delivered but unmatched", {
-            description: "The coordinator will see it as non-counting.",
+          setStatus("Your signature was sent, but this wallet is not one of the expected signers. It will not count toward approval.");
+          toast.warning("Signer not recognized", {
+            description: "The signature was sent but will not count toward approval.",
           });
           return;
         }
         if (body.submission?.txHash || refreshed.status === "submitted") {
           setStatus(`Signature delivered. Transaction submitted${body.submission?.txHash ? `: ${body.submission.txHash}` : "."}`);
           toast.success("Transaction submitted", {
-            description: body.submission?.txHash || "Threshold reached and relay submit completed.",
+            description: body.submission?.txHash || "The required signatures were collected.",
           });
           return;
         }
         if (body.autoSubmitError) {
-          setStatus(`Signature delivered, but automatic submit failed: ${body.autoSubmitError}`);
-          toast.warning("Signature delivered", {
-            description: `Automatic submit failed: ${body.autoSubmitError}`,
+          setStatus("Your signature was sent, but the transaction could not be submitted automatically. The coordinator can retry.");
+          toast.warning("Signature sent", {
+            description: "The coordinator can retry transaction submission.",
           });
           return;
         }
         setStatus(
           body.thresholdReached || refreshed.progress.matchedCount >= refreshed.progress.requiredSignatures
-            ? "Threshold reached. The coordinator can submit manually if automatic relay submit has not completed yet."
-            : "Signature delivered to the coordinator. You can close this page.",
+            ? "All required signatures are present. You can close this page."
+            : "Your signature was sent. You can close this page.",
         );
         toast.success("Signature delivered", {
           description:
             body.thresholdReached || refreshed.progress.matchedCount >= refreshed.progress.requiredSignatures
               ? "Threshold reached."
-              : "The coordinator room updated automatically.",
+              : "Signature progress updated automatically.",
         });
         return;
       }
@@ -1434,16 +1428,16 @@ export default function Home() {
       setSignaturePackage(createSignaturePackage(visibleDraft.id, [signature]));
       setStatus(
         connected.keyHash
-          ? "Witness captured. Copy the witness package and send it back to the coordinator."
-          : "Witness captured, but the signer key hash could not be verified automatically. The coordinator will see it as unmatched until they confirm the signer.",
+          ? "Signature created. Copy the signature backup and send it to the coordinator."
+          : "Signature created, but this wallet could not be matched automatically to an expected signer.",
       );
-      toast.success("Witness captured", {
-        description: connected.keyHash ? "Copy the witness package fallback if needed." : "Signer key hash could not be verified automatically.",
+      toast.success("Signature created", {
+        description: connected.keyHash ? "Copy the signature backup to return it." : "The signer could not be matched automatically.",
       });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Wallet refused to sign.");
+      setStatus(userFacingError(error, "The wallet did not approve the signature."));
       toast.error("Wallet refused to sign", {
-        description: error instanceof Error ? error.message : "The signing request was cancelled or rejected.",
+        description: userFacingError(error, "The signing request was cancelled or rejected."),
       });
     }
   }
@@ -1496,24 +1490,9 @@ export default function Home() {
 
   return (
     <div id="home" className="flex scroll-mt-24 flex-col gap-6">
-      {!visibleDraft && account.authenticated ? (
-        <AppWindow title="Authenticated account state">
-          <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="text-sm text-zinc-300">
-                {account.session ? `Server-backed ${account.session.identity.kind} account active for ${account.network}.` : "Server-backed account active."}
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                Sync state: {accountSyncState}. PostgreSQL is the source of truth for wallets and transactions.
-              </div>
-            </div>
-          </div>
-        </AppWindow>
-      ) : null}
-
       {visibleDraft ? (
         <div ref={signaturePanelRef}>
-        <AppWindow title="Pending signature request" className="border-emerald-400/25">
+        <AppWindow title="Review and sign" className="border-emerald-400/25">
           <div className="px-5 pt-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-4">
@@ -1521,7 +1500,7 @@ export default function Home() {
                   <ShieldCheck className="size-6" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="break-words text-2xl font-semibold leading-tight text-zinc-50">Sign {visibleDraft.title}</h2>
+                  <h2 className="break-words text-2xl font-semibold leading-tight text-zinc-50">{visibleDraft.title}</h2>
                   <p className="mt-1 text-sm text-zinc-400">
                     {visibleDraft.walletName} · {visibleDraft.requiredSignatures}-of-{visibleDraft.signerKeyHashes.length || visibleDraft.requiredSignatures}
                   </p>
@@ -1534,7 +1513,7 @@ export default function Home() {
                   </Badge>
                 ) : null}
                 <Badge variant="secondary">
-                  <Clock className="size-3" /> {pendingSignatureCount(visibleDraft) <= 0 ? "ready" : `${pendingSignatureCount(visibleDraft)} more`}
+                    <Clock className="size-3" /> {pendingSignatureCount(visibleDraft) <= 0 ? "Signatures complete" : `${pendingSignatureCount(visibleDraft)} more needed`}
                 </Badge>
               </div>
             </div>
@@ -1559,7 +1538,13 @@ export default function Home() {
                   </div>
                   <Progress value={signatureCount(visibleDraft)} max={visibleDraft.requiredSignatures} />
                 </div>
-                <div className="mt-5 space-y-3">
+                <Collapsible className="mt-5 rounded-lg border border-white/8 bg-black/20">
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" variant="ghost" className="h-auto min-h-10 w-full justify-between px-3 py-2">
+                      Signature progress <span className="text-xs text-zinc-400">{signatureCount(visibleDraft)}/{visibleDraft.requiredSignatures}</span>
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-3 border-t border-white/8 p-3">
                   {visibleDraft.signerKeyHashes.map((hash, index) => {
                     const signed = hasMatchedSignature(visibleDraft, hash);
                     const isConnectedSigner = Boolean(connected?.keyHash && normalizeKeyHash(connected.keyHash) === normalizeKeyHash(hash));
@@ -1598,7 +1583,8 @@ export default function Home() {
                       </div>
                     );
                   })}
-                </div>
+                  </CollapsibleContent>
+                </Collapsible>
                 {visibleDraft.note ? <div className="mt-4 break-words text-sm text-zinc-300">Coordinator note: {visibleDraft.note}</div> : null}
               </div>
               {optionalSignerKeyHashes(visibleDraft).length && pendingSignatureCount(visibleDraft) === 0 ? (
@@ -1630,16 +1616,16 @@ export default function Home() {
               ) : null}
               {relayInviteActive ? (
                 <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-                  <div className="font-semibold">Automatic relay is active</div>
+                  <div className="font-semibold">Automatic delivery is ready</div>
                   <div className="mt-1">
                     {relayInviteRoom?.signer.alreadyDelivered
-                      ? "Your witness is already delivered to the coordinator. You can close this page or sign again to replace it."
-                      : "This invite keeps the unsigned transaction details on the server and delivers the witness back automatically after signing."}
+                      ? "Your signature was sent. You can safely close this page."
+                      : "After you approve, your signature will be sent back automatically."}
                   </div>
                 </div>
               ) : (
                 <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-                  Privacy note: this invite carries the recipient, asset amounts, coordinator note, signer list, and unsigned tx CBOR in the URL fragment. After load it is kept only in this browser's local storage, so use a trusted device and clear site data when the signing handoff is complete.
+                  This is a legacy signing link. Use a trusted device and return the signature backup to the coordinator after signing.
                 </div>
               )}
             </div>
@@ -1647,19 +1633,15 @@ export default function Home() {
             <div className="min-w-0 space-y-3">
               <Card className="border-border bg-slate-950/60">
                 <CardHeader>
-                  <CardTitle className="text-base">{relayInviteActive ? "Automatic relay" : "Next signer step"}</CardTitle>
+                  <CardTitle className="text-base">Before you sign</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm text-slate-300">
-                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">1. Connect the signer wallet above.</div>
-                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">2. Confirm the wallet is on {formatTargetNetwork(visibleDraft.network)}.</div>
-                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">
-                    {relayInviteActive
-                      ? "3. Click Sign. Your witness is delivered back to the coordinator automatically."
-                      : "3. Click Sign, then copy the witness package back to the coordinator."}
-                  </div>
+                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">Check the recipient and amounts on this page.</div>
+                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">Use a signer wallet on {formatTargetNetwork(visibleDraft.network)}.</div>
+                  <div className="rounded-lg border border-border bg-slate-900/70 p-3">Your wallet will show the final approval request.</div>
                   {relayInviteActive ? (
                     <div className="rounded-lg border border-border bg-slate-900/70 p-3">
-                      Live status: {signatureCount(visibleDraft)} of {visibleDraft.requiredSignatures} required signatures synced {relativeTime(relayInviteSyncedAt || undefined)}.
+                      Progress: {signatureCount(visibleDraft)} of {visibleDraft.requiredSignatures} required signatures received.
                     </div>
                   ) : null}
                 </CardContent>
@@ -1667,8 +1649,9 @@ export default function Home() {
               {activeNetworkWarning ? (
                 <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{activeNetworkWarning}</div>
               ) : null}
-              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" onClick={() => void signActiveDraft()} disabled={!connected || !visibleDraft.unsignedTxCbor.trim()}>
-                <ShieldCheck className="size-4" /> {relayInviteRoom?.signer.alreadyDelivered ? "Sign again and replace" : relayInviteActive ? "Sign and deliver" : "Sign loaded invite"}
+              {!connected ? <div className="rounded-lg border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">Connect a signer wallet from the account menu above to continue.</div> : null}
+              <Button className="h-auto min-h-11 w-full whitespace-normal px-3 py-2" variant={relayInviteRoom?.signer.alreadyDelivered ? "secondary" : "default"} onClick={() => void signActiveDraft()} disabled={!connected || !visibleDraft.unsignedTxCbor.trim()}>
+                <ShieldCheck className="size-4" /> {relayInviteRoom?.signer.alreadyDelivered ? "Sign again" : "Review and sign"}
               </Button>
               {relayInviteActive ? (
                 <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void refreshRelayInvite()} disabled={relayInviteSyncing}>
@@ -1676,9 +1659,16 @@ export default function Home() {
                 </Button>
               ) : null}
               {!relayInviteActive ? (
-                <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={copySignaturePackage} disabled={!signaturePackage.trim()}>
-                  <Copy className="size-4" /> Copy witness package
-                </Button>
+                <Collapsible className="rounded-lg border border-white/8 bg-black/20">
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" variant="ghost" className="h-auto min-h-10 w-full justify-between px-3 py-2">Advanced fallback <ChevronDown className="size-4" /></Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="border-t border-white/8 p-2">
+                    <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={copySignaturePackage} disabled={!signaturePackage.trim()}>
+                      <Copy className="size-4" /> Copy signature backup
+                    </Button>
+                  </CollapsibleContent>
+                </Collapsible>
               ) : null}
             </div>
           </div>
@@ -2181,11 +2171,11 @@ export default function Home() {
           <CardHeader className="border-b border-white/8 px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <CardTitle className="text-xl">Transaction rooms</CardTitle>
-                <CardDescription>Continue signature collection and witness handoff for saved transactions.</CardDescription>
+                <CardTitle className="text-xl">Transactions</CardTitle>
+                <CardDescription>Continue signing and review progress for saved transactions.</CardDescription>
               </div>
               <Badge variant="secondary">
-                {drafts.length} room{drafts.length === 1 ? "" : "s"}
+                {drafts.length} transaction{drafts.length === 1 ? "" : "s"}
               </Badge>
             </div>
           </CardHeader>

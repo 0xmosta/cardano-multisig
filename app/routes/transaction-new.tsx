@@ -32,6 +32,7 @@ import {
   SelectTrigger,
 } from "../components/ui/select";
 import { Textarea } from "../components/ui/textarea";
+import { userFacingError } from "../lib/utils";
 import {
   type AssetLine,
   type MultisigWallet as Wallet,
@@ -260,7 +261,7 @@ export default function NewTransaction() {
   const [multisigAssets, setMultisigAssets] = useState<AssetOption[]>([]);
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
   const [handleConflict, setHandleConflict] = useState("");
-  const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
+  const [assetStatus, setAssetStatus] = useState("Loading available assets…");
   const [title, setTitle] = useState("Treasury payment");
   const [recipient, setRecipient] = useState("");
   const [assets, setAssets] = useState<SelectedAsset[]>([
@@ -318,7 +319,7 @@ export default function NewTransaction() {
     if (!target) return;
     setResolvedHandle(null);
     setHandleConflict("");
-    setAssetStatus("Loading multisig assets from the configured Cardano provider…");
+    setAssetStatus("Loading available assets…");
     try {
       const result = await fetchMultisigAssets(target);
       const fetched = result.assets;
@@ -334,12 +335,12 @@ export default function NewTransaction() {
       const prefix = result.handle ? `Resolved ${handleLabel(result.handle)} · ` : "";
       setAssetStatus(
         fetched.length
-          ? `${prefix}Loaded ${fetched.length} multisig asset${fetched.length === 1 ? "" : "s"} from ${result.source || "server"}.`
+          ? `${prefix}${fetched.length} asset${fetched.length === 1 ? "" : "s"} available.`
           : `${prefix}No spendable multisig assets found yet.`,
       );
     } catch (error) {
       setMultisigAssets([DEFAULT_ASSET]);
-      setAssetStatus(error instanceof Error ? error.message : "Could not fetch multisig assets.");
+      setAssetStatus(userFacingError(error, "We could not load available assets. Try again."));
     }
   }
 
@@ -400,7 +401,7 @@ export default function NewTransaction() {
     if (!account.authenticated || !account.session) throw new Error("Sign in with a wallet before building a transaction.");
     if (!recipient.trim()) throw new Error("Enter a recipient address.");
 
-    setStatus("Building balanced unsigned transaction from multisig UTxOs…");
+    setStatus("Preparing your transaction…");
     const response = await fetch("/api/cardano/build-tx", {
       method: "POST",
       headers: {
@@ -422,8 +423,8 @@ export default function NewTransaction() {
     setBuildInfo(
       `Built from ${body.inputCount} UTxO${body.inputCount === 1 ? "" : "s"}; fee ${formatRawQuantity(String(body.fee || "0"), "lovelace", 6)}.${minAdaNote}`,
     );
-    toast.success("Transaction built", {
-      description: `${body.inputCount} UTxO${body.inputCount === 1 ? "" : "s"} selected.`,
+    toast.success("Transaction prepared", {
+      description: "Review the wallet approval request to continue.",
     });
     return { cbor: String(body.unsignedTxCbor || ""), assets: Array.isArray(body.assets) ? body.assets : txAssets };
   }
@@ -431,7 +432,7 @@ export default function NewTransaction() {
   async function createAndMaybeSign() {
     if (!wallet) return;
     if (!account.authenticated || !accountState) {
-      setStatus("Sign in before creating a transaction. PostgreSQL is the source of truth.");
+      setStatus("Sign in before creating a transaction.");
       toast.error("Sign in required");
       return;
     }
@@ -461,9 +462,9 @@ export default function NewTransaction() {
       builtCbor = built.cbor;
       builtAssets = built.assets;
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not build transaction.");
+      setStatus(userFacingError(error, "We could not prepare the transaction."));
       toast.error("Could not build transaction", {
-        description: error instanceof Error ? error.message : "The server could not balance the transaction.",
+        description: userFacingError(error, "We could not prepare the transaction."),
       });
       return;
     }
@@ -489,23 +490,23 @@ export default function NewTransaction() {
         ];
         setStatus(
           connected.keyHash
-            ? "Transaction built and signed by the connected wallet. The coordinator can share invite links immediately."
-            : "Transaction built and signed, but the signer key hash could not be verified. The coordinator may need to confirm the signer manually.",
+            ? "Transaction created and your signature was added."
+            : "Transaction created and signed, but we could not match the signing key automatically.",
         );
         toast.success("Transaction signed", {
-          description: connected.keyHash ? "The first witness is saved in the room." : "Signer key hash could not be verified.",
+          description: connected.keyHash ? "Your signature is saved." : "The signer key could not be matched automatically.",
         });
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Wallet refused to sign.");
+        setStatus(userFacingError(error, "The wallet did not approve the signature."));
         toast.error("Wallet refused to sign", {
-          description: error instanceof Error ? error.message : "The signing request was cancelled or rejected.",
+          description: userFacingError(error, "The signing request was cancelled or rejected."),
         });
         return;
       }
     } else {
-      setStatus("Transaction built as pending. Next step: open the wallet page and copy the signer invite link.");
-      toast("Transaction room created", {
-        description: "Open the wallet page to copy the signer invite link.",
+      setStatus("Transaction created. Open it from the wallet to invite signers.");
+      toast("Transaction created", {
+        description: "Open the wallet to share it with signers.",
       });
     }
 
@@ -538,13 +539,13 @@ export default function NewTransaction() {
       const saved = await saveServerState({ wallets: accountState.wallets, transactions: nextTransactions });
       if (!saved) throw new Error("The server did not save the transaction.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not save the transaction to the server.";
+      const message = userFacingError(error, "We could not save the transaction.");
       setStatus(message);
       toast.error("Could not save transaction", { description: message });
       return;
     }
     toast.success("Transaction saved", {
-      description: "Saved to the signed-in server account. Open the wallet coordinator to share signer invites.",
+      description: "It is now available from your wallet on every signed-in device.",
     });
     navigate(`/wallets/${encodeURIComponent(wallet.id)}?draft=${encodeURIComponent(tx.id)}`);
   }
@@ -595,9 +596,7 @@ export default function NewTransaction() {
           </Link>
           <div>
             <h1 className="text-2xl font-semibold text-slate-50 sm:text-4xl">Create transaction</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-              Select treasury assets, set the recipient, then build a signer-ready transaction room.
-            </p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Choose what to send, review the recipient, then create the request for your signers.</p>
           </div>
         </div>
         <div className="flex w-full min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400 sm:w-auto">
@@ -621,25 +620,25 @@ export default function NewTransaction() {
       ) : null}
 
       <section className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <AppWindow title="Transaction composer" className="max-w-full" contentClassName="space-y-5 p-3 sm:p-5">
+        <AppWindow title="1. Payment details" className="max-w-full" contentClassName="space-y-5 p-3 sm:p-5">
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-lg border border-white/8 bg-black/20 p-3">
-              <div className="text-xs font-medium uppercase text-slate-500">1. Assets</div>
-              <div className="mt-1 text-sm font-semibold text-slate-100">{assets.length} selected</div>
+              <div className="text-xs font-medium uppercase text-slate-500">1. Details</div>
+              <div className="mt-1 text-sm font-semibold text-slate-100">{recipient.trim() ? "Recipient ready" : "Add recipient"}</div>
             </div>
             <div className="rounded-lg border border-white/8 bg-black/20 p-3">
-              <div className="text-xs font-medium uppercase text-slate-500">2. Recipient</div>
-              <div className="mt-1 truncate text-sm font-semibold text-slate-100">{recipient.trim() ? "Ready" : "Not set"}</div>
+              <div className="text-xs font-medium uppercase text-slate-500">2. Assets</div>
+              <div className="mt-1 truncate text-sm font-semibold text-slate-100">{assets.length} selected</div>
             </div>
             <div className="rounded-lg border border-white/8 bg-black/20 p-3">
-              <div className="text-xs font-medium uppercase text-slate-500">3. Signatures</div>
-              <div className="mt-1 text-sm font-semibold text-slate-100">{wallet.threshold}-of-{wallet.signers.length}</div>
+              <div className="text-xs font-medium uppercase text-slate-500">3. Review</div>
+              <div className="mt-1 text-sm font-semibold text-slate-100">{wallet.threshold} signature{wallet.threshold === 1 ? "" : "s"} required</div>
             </div>
           </div>
 
           <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
             <div className="min-w-0 space-y-2">
-              <Label>Title</Label>
+              <Label>Transaction name</Label>
               <Input value={title} onChange={(event) => setTitle(event.target.value)} className="h-11" />
             </div>
             <div className="min-w-0 space-y-2">
@@ -665,7 +664,7 @@ export default function NewTransaction() {
           <div className="min-w-0 space-y-3 rounded-lg border border-white/8 bg-black/15 p-3">
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
-                <Label>Assets</Label>
+                <Label>2. Assets</Label>
                 <div className="mt-1 text-xs text-slate-500">
                   {assetOptions.length} spendable option{assetOptions.length === 1 ? "" : "s"}
                   {totalAssetCount ? `, ${totalAssetCount} native asset${totalAssetCount === 1 ? "" : "s"}` : ""}.
@@ -777,8 +776,8 @@ export default function NewTransaction() {
         <div className="min-w-0 space-y-4 xl:sticky xl:top-6">
           <Card className="glass-panel min-w-0 overflow-hidden rounded-lg">
             <CardHeader className="border-b border-white/8 px-4 py-4 sm:px-5">
-              <CardTitle className="text-lg">Ready check</CardTitle>
-              <CardDescription>Confirm the spend before creating the signer room.</CardDescription>
+              <CardTitle className="text-lg">3. Review and create</CardTitle>
+              <CardDescription>Confirm the recipient and amounts before continuing.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 p-4 sm:p-5">
               <div className="space-y-3">
@@ -820,11 +819,11 @@ export default function NewTransaction() {
 
               <Button className="h-11 w-full rounded-md" onClick={() => void createAndMaybeSign()} disabled={!readyToBuild}>
                 {connected ? <ShieldCheck className="size-4" /> : <Send className="size-4" />}
-                {connected ? "Build, sign, and save" : "Build and save transaction"}
+                {connected ? "Create and sign" : "Create transaction"}
               </Button>
 
               <div className="text-xs leading-relaxed text-slate-500">
-                After saving, the wallet page becomes the coordinator room for invite links, witness imports, and submit.
+                After creation, you can share one link with the remaining signers and follow progress from the wallet.
               </div>
             </CardContent>
           </Card>

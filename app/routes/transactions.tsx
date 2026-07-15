@@ -13,8 +13,11 @@ import { DataTable } from "../components/ui/data-table";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { Input } from "../components/ui/input";
 import { Progress } from "../components/ui/progress";
+import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import {
   type TxDraft,
+  hasMatchedSignature,
+  normalizeKeyHash,
   pendingSignatureCount,
   signatureCount,
   sortTransactionDraftsNewestFirst,
@@ -27,7 +30,9 @@ import {
   type RelayRoomSessionResponse,
   type RelayRoomViewResponse,
 } from "../lib/relay-room";
-import { cn } from "../lib/utils";
+import { cn, userFacingError } from "../lib/utils";
+
+type InboxFilter = "all" | "needs-you" | "waiting" | "ready" | "completed";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Transactions · Cardano Multisig" }];
@@ -43,6 +48,27 @@ function statusBadgeVariant(state: ReturnType<typeof transactionState>) {
   if (state === "submitted") return "default" as const;
   if (state === "ready") return "secondary" as const;
   return "outline" as const;
+}
+
+function transactionStateLabel(state: ReturnType<typeof transactionState>) {
+  if (state === "submitted") return "Completed";
+  if (state === "ready") return "Ready";
+  return "Waiting";
+}
+
+function transactionInboxState(tx: TxDraft, connectedKeyHash?: string | null): Exclude<InboxFilter, "all"> {
+  const state = transactionState(tx);
+  if (state === "submitted") return "completed";
+  if (state === "ready") return "ready";
+  const connectedSigner = normalizeKeyHash(connectedKeyHash || "");
+  if (
+    connectedSigner &&
+    tx.signerKeyHashes.some((keyHash) => normalizeKeyHash(keyHash) === connectedSigner) &&
+    !hasMatchedSignature(tx, connectedSigner)
+  ) {
+    return "needs-you";
+  }
+  return "waiting";
 }
 
 function transactionHref(tx: TxDraft) {
@@ -77,7 +103,7 @@ function TransactionMobileCard({ tx }: { tx: TxDraft }) {
             <span>{tx.walletName}</span>
             <span>·</span>
             <span>{tx.network}</span>
-            <Badge variant={statusBadgeVariant(state)}>{state}</Badge>
+            <Badge variant={statusBadgeVariant(state)}>{transactionStateLabel(state)}</Badge>
           </div>
         </div>
       </div>
@@ -108,9 +134,10 @@ function TransactionMobileCard({ tx }: { tx: TxDraft }) {
 
 export default function TransactionsRoute() {
   const navigate = useNavigate();
-  const { account, accountState, refreshServerState, saveServerState } = useAppShell();
+  const { account, accountState, connected, refreshServerState, saveServerState } = useAppShell();
   const [transactions, setTransactions] = useState<TxDraft[]>([]);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<InboxFilter>("all");
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -198,7 +225,7 @@ export default function TransactionsRoute() {
           }
         })
         .catch((error) => {
-          if (!cancelled) setLoadError(error instanceof Error ? error.message : "Could not load server transactions.");
+          if (!cancelled) setLoadError(userFacingError(error, "We could not load your transactions."));
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -231,7 +258,7 @@ export default function TransactionsRoute() {
 
   const visibleTransactions = useMemo(() => {
     const value = query.trim().toLowerCase();
-    const filtered = value
+    const matchingQuery = value
       ? transactions.filter((tx) =>
           [
             tx.title,
@@ -248,8 +275,17 @@ export default function TransactionsRoute() {
             .includes(value),
         )
       : transactions;
-    return sortTransactionDraftsNewestFirst(filtered);
-  }, [query, transactions]);
+    const matchingInbox = filter === "all"
+      ? matchingQuery
+      : matchingQuery.filter((tx) => transactionInboxState(tx, connected?.keyHash) === filter);
+    return sortTransactionDraftsNewestFirst(matchingInbox);
+  }, [connected?.keyHash, filter, query, transactions]);
+
+  const inboxCounts = useMemo(() => {
+    const counts: Record<InboxFilter, number> = { all: transactions.length, "needs-you": 0, waiting: 0, ready: 0, completed: 0 };
+    for (const tx of transactions) counts[transactionInboxState(tx, connected?.keyHash)] += 1;
+    return counts;
+  }, [connected?.keyHash, transactions]);
 
   const readyCount = transactions.filter((tx) => transactionState(tx) === "ready").length;
   const submittedCount = transactions.filter((tx) => transactionState(tx) === "submitted").length;
@@ -299,7 +335,7 @@ export default function TransactionsRoute() {
           const state = transactionState(tx);
           return (
             <div className="space-y-1">
-              <Badge variant={statusBadgeVariant(state)}>{state}</Badge>
+              <Badge variant={statusBadgeVariant(state)}>{transactionStateLabel(state)}</Badge>
               {tx.txHash ? <div className="max-w-40 truncate font-mono text-xs text-muted-foreground">{tx.txHash}</div> : null}
             </div>
           );
@@ -330,45 +366,62 @@ export default function TransactionsRoute() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-zinc-50 sm:text-3xl">Transactions</h1>
-          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open a transaction to review its recipient, assets, signatures, relay status, and next action.</p>
+          <p className="mt-2 max-w-2xl text-sm text-zinc-400">See what needs your attention, what is waiting for others, and what is complete.</p>
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          <Badge variant="secondary">
-            {transactions.length} room{transactions.length === 1 ? "" : "s"}
-          </Badge>
+          <Badge variant="secondary">{transactions.length} transaction{transactions.length === 1 ? "" : "s"}</Badge>
           {readyCount ? <Badge className="bg-emerald-300 text-emerald-950">{readyCount} ready</Badge> : null}
-          {submittedCount ? <Badge variant="secondary">{submittedCount} submitted</Badge> : null}
+          {submittedCount ? <Badge variant="secondary">{submittedCount} completed</Badge> : null}
           <Button type="button" size="sm" variant="secondary" className="max-sm:flex-1" onClick={() => void refreshRelayRooms()} disabled={syncing}>
-            <RefreshCw className={cn("size-4", syncing ? "animate-spin" : "")} /> Sync
+            <RefreshCw className={cn("size-4", syncing ? "animate-spin" : "")} /> Refresh
           </Button>
         </div>
       </div>
 
       <AccountSyncPanel />
 
-      <AppWindow title="Transaction rooms" contentClassName="p-0">
-        <div className="flex flex-wrap items-center gap-3 border-b border-white/8 p-4 sm:p-5">
-          <div className="relative min-w-full flex-1 sm:min-w-0">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search transaction, wallet, recipient, signer..."
-              className="pl-9"
-            />
+      <AppWindow title="Transactions" contentClassName="p-0">
+        <div className="space-y-3 border-b border-white/8 p-4 sm:p-5">
+          <Tabs value={filter} onValueChange={(value) => setFilter(value as InboxFilter)} className="min-w-0">
+            <div className="overflow-x-auto pb-1">
+              <TabsList className="h-auto min-w-max">
+                {([
+                  ["all", "All"],
+                  ["needs-you", "Needs you"],
+                  ["waiting", "Waiting"],
+                  ["ready", "Ready"],
+                  ["completed", "Completed"],
+                ] as Array<[InboxFilter, string]>).map(([value, label]) => (
+                  <TabsTrigger key={value} value={value}>
+                    {label} <span className="text-[11px] opacity-70">{inboxCounts[value]}</span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </div>
+          </Tabs>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-full flex-1 sm:min-w-0">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search transaction, wallet, recipient, signer..."
+                className="pl-9"
+              />
+            </div>
+            <Badge variant="secondary" className="max-sm:w-full max-sm:justify-center">
+              <span>{visibleTransactions.length}</span>
+              <span>shown</span>
+            </Badge>
           </div>
-          <Badge variant="secondary" className="max-sm:w-full max-sm:justify-center">
-            <span>{visibleTransactions.length}</span>
-            <span>shown</span>
-          </Badge>
         </div>
         <div className="p-3 sm:p-5">
           {loading ? (
             <Empty>
               <EmptyHeader>
                 <Loader2 className="size-5 animate-spin text-sky-200" />
-                <EmptyTitle>Loading server transactions</EmptyTitle>
-                <EmptyDescription>Fetching transaction rooms for your authenticated account.</EmptyDescription>
+                <EmptyTitle>Loading transactions</EmptyTitle>
+                <EmptyDescription>Loading your saved transaction requests.</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : loadError ? (
@@ -387,7 +440,7 @@ export default function TransactionsRoute() {
             <DataTable
               columns={columns}
               data={visibleTransactions}
-              emptyLabel="No transaction matches."
+              emptyLabel={filter === "all" ? "No transaction matches." : "Nothing in this section."}
               renderMobileRow={(tx) => <TransactionMobileCard tx={tx} />}
               onRowClick={(tx) => navigate(transactionHref(tx))}
             />
@@ -395,8 +448,8 @@ export default function TransactionsRoute() {
             <Empty>
               <EmptyHeader>
                 {account ? <Cloud className="size-5 text-sky-200" /> : <Clock className="size-5 text-muted-foreground" />}
-                <EmptyTitle>{account ? "No server transaction rooms yet" : "Sign in to load transactions"}</EmptyTitle>
-                <EmptyDescription>{account ? "Create a transaction from a synced wallet to open a coordinator room." : "Use the account menu to authenticate; PostgreSQL is the source of truth for transaction rooms."}</EmptyDescription>
+                <EmptyTitle>{account ? "No transactions yet" : "Sign in to load transactions"}</EmptyTitle>
+                <EmptyDescription>{account ? "Create a transaction from a wallet to start collecting signatures." : "Sign in from the account menu to access your transactions on this device."}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}

@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { createIdentity, createSession, loadAccountSnapshot, loadSession, replaceAccountSnapshot } from "../app/lib/server/account-store.ts";
 import { query } from "../app/lib/server/postgres.ts";
 import { createRelayRoom, readRelayRoom, resolveRelayTokenSession, writeRelayRoom } from "../app/lib/server/relay-room-store.ts";
+import { action as accountStateAction } from "../app/routes/api.account.state.ts";
 
 const execFile = promisify(execFileCallback);
 
@@ -168,12 +169,20 @@ async function main() {
   assert.equal(accountSnapshot.wallets.length, 1);
   assert.equal(accountSnapshot.transactions.length, 1);
 
+  await query(
+    `update cm_accounts
+     set updated_at = date_trunc('second', updated_at) + interval '654321 microseconds'
+     where network = $1 and subject = $2`,
+    [loadedSession.network, loadedSession.subject],
+  );
+
   const reloadedSnapshot = await loadAccountSnapshot(loadedSession);
   assert.equal(reloadedSnapshot.wallets.length, 1);
   assert.equal(reloadedSnapshot.transactions.length, 1);
   assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.coordinatorToken, relayCapability);
   assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.signerInvites?.[0]?.inviteUrl, `http://localhost/sign#r=${relayCapability}`);
   assert(reloadedSnapshot.updatedAt, "expected a server snapshot version");
+  assert.match(reloadedSnapshot.updatedAt, /\.\d{6}Z$/, "expected the account version to preserve PostgreSQL microseconds");
   const versionedSnapshot = await replaceAccountSnapshot(
     loadedSession,
     { wallets: reloadedSnapshot.wallets, transactions: reloadedSnapshot.transactions },
@@ -189,6 +198,24 @@ async function main() {
     ),
     /Server account state changed in another tab/,
   );
+  const conflictResponse = await accountStateAction({
+    request: new Request("http://localhost/api/account/state", {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: "http://localhost",
+        "content-type": "application/json",
+        "x-cardano-multisig-csrf": loadedSession.csrfToken,
+      },
+      body: JSON.stringify({
+        intent: "replace",
+        baseUpdatedAt: reloadedSnapshot.updatedAt,
+        wallets: reloadedSnapshot.wallets,
+        transactions: reloadedSnapshot.transactions,
+      }),
+    }),
+  });
+  assert.equal(conflictResponse.status, 409, "expected stale account writes to return HTTP 409");
   const storedAccountTx = await query<{ tx_json: { signatures?: Array<{ witnessCiphertext?: string; witnessCbor?: string }>; relayRoom?: { capabilityCiphertext?: string; coordinatorToken?: string; sharedInviteUrl?: string; signerInvites?: unknown[] } } }>(
     `select tx_json from cm_account_transactions where network = $1 and subject = $2 and tx_id = $3`,
     [loadedSession.network, loadedSession.subject, txId],
@@ -297,6 +324,8 @@ async function main() {
         walletCount: versionedSnapshot.wallets.length,
         transactionCount: versionedSnapshot.transactions.length,
         staleSnapshotRejected: true,
+        staleSnapshotReturnsConflict: true,
+        postgresVersionPrecisionPreserved: true,
         importedTransactionEncrypted: true,
         relayCapabilitiesEncrypted: true,
         mixedNetworkImportRejected: true,

@@ -1,4 +1,5 @@
 import {
+  AccountStateConflictError,
   accountSessionResponse,
   assertSessionMutationRequest,
   loadAccountSnapshot,
@@ -106,6 +107,9 @@ export async function action({ request }: { request: Request }) {
     const limited = rateLimitErrorResponse(error);
     if (limited) return limited;
     const message = error instanceof Error ? error.message : "Could not save authenticated account state.";
-    return Response.json({ ok: false, error: message }, { status: 400, headers: NO_STORE_HEADERS });
+    return Response.json(
+      { ok: false, error: message },
+      { status: error instanceof AccountStateConflictError ? 409 : 400, headers: NO_STORE_HEADERS },
+    );
   }
 }

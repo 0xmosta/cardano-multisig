@@ -97,8 +97,27 @@ const ACCOUNT_COOKIE = "cardano_multisig_account_session";
 const MAX_AUDIT_EVENTS = 200;
 const RELAY_CAPABILITY_PURPOSE = "account-relay-capabilities";
 
+export class AccountStateConflictError extends Error {
+  constructor() {
+    super("Server account state changed in another tab. Refresh before saving.");
+    this.name = "AccountStateConflictError";
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
+}
+
+function accountVersionIso(milliseconds = Date.now()) {
+  return new Date(milliseconds).toISOString().replace(/(\.\d{3})Z$/, "$1000Z");
+}
+
+function accountVersionFromDatabase(value: Date | string) {
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(text)) return text;
+  const milliseconds = value instanceof Date ? value.getTime() : Date.parse(value);
+  if (!Number.isFinite(milliseconds)) throw new Error("Stored account version timestamp is invalid.");
+  return accountVersionIso(milliseconds);
 }
 
 function dataDir() {
@@ -413,7 +432,7 @@ async function migrateAccountSensitiveState(account: StoredAccount) {
   const next: StoredAccount = {
     ...account,
     transactions: migrated.transactions,
-    updatedAt: new Date(Math.max(Date.now(), Date.parse(account.updatedAt) + 1)).toISOString(),
+    updatedAt: accountVersionIso(Math.max(Date.now(), Date.parse(account.updatedAt) + 1)),
     auditEvents: [...(account.auditEvents || []), auditEvent("security.sensitive-state-encrypted")].slice(-MAX_AUDIT_EVENTS),
   };
   try {
@@ -458,14 +477,16 @@ function accountFromRows(args: {
       details: parseJson<Record<string, unknown> | undefined>(row.details_json, undefined),
     })),
     createdAt: new Date(args.accountRow.created_at).toISOString(),
-    updatedAt: new Date(args.accountRow.updated_at).toISOString(),
+    updatedAt: accountVersionFromDatabase(args.accountRow.updated_at),
   };
 }
 
 async function readAccountPostgres(network: Network, subject: string) {
   return withClient(async (client) => {
     const account = await client.query<{ created_at: Date | string; updated_at: Date | string }>(
-      `select created_at, updated_at from cm_accounts where network = $1 and subject = $2`,
+      `select created_at,
+              to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as updated_at
+       from cm_accounts where network = $1 and subject = $2`,
       [network, subject],
     );
     if (!account.rowCount) return null;
@@ -510,7 +531,7 @@ async function writeAccountPostgres(account: StoredAccount, expectedUpdatedAt?: 
         [account.network, account.subject, account.createdAt, account.updatedAt, expectedUpdatedAt],
       );
       if (updated.rowCount !== 1) {
-        throw new Error("Server account state changed in another tab. Refresh before saving.");
+        throw new AccountStateConflictError();
       }
     } else {
       await client.query(
@@ -782,7 +803,7 @@ export async function getOrCreateAccount(identity: AccountIdentity, network: Net
     const next: StoredAccount = {
       ...existing,
       identities: mergeIdentities(existing.identities || [], identity),
-      updatedAt: nowIso(),
+      updatedAt: accountVersionIso(),
     };
     await writeAccount(next);
     return next;
@@ -863,7 +884,7 @@ export async function createSession(identity: AccountIdentity, network: string) 
   const updatedAccount: StoredAccount = {
     ...account,
     identities: mergeIdentities(account.identities, identity),
-    updatedAt: new Date(Math.max(Date.now(), Date.parse(account.updatedAt) + 1)).toISOString(),
+    updatedAt: accountVersionIso(Math.max(Date.now(), Date.parse(account.updatedAt) + 1)),
     auditEvents: [...(account.auditEvents || []), auditEvent("auth.session.created", { identityKind: identity.kind, keyHash: identity.keyHash })].slice(-MAX_AUDIT_EVENTS),
   };
   await writeAccount(updatedAccount);
@@ -918,7 +939,7 @@ export async function replaceAccountSnapshot(
 ) {
   const current = (await readAccount(session.network, session.subject)) || (await getOrCreateAccount(session.identity, session.network));
   if (expectedUpdatedAt && current.updatedAt !== expectedUpdatedAt) {
-    throw new Error("Server account state changed in another tab. Refresh before saving.");
+    throw new AccountStateConflictError();
   }
   const sanitized = sanitizeAccountSnapshotInput(snapshot, session.network);
   const transactions = sanitizeTransactions(sanitized.transactions, session.network);
@@ -928,7 +949,7 @@ export async function replaceAccountSnapshot(
     identities: mergeIdentities(current.identities || [], session.identity),
     wallets: recoveredWallets,
     transactions,
-    updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
+    updatedAt: accountVersionIso(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)),
     auditEvents: [
       ...(current.auditEvents || []),
       auditEvent(reason, {

@@ -315,8 +315,14 @@ export function AppShell() {
       });
       const body = (await response.json()) as AccountStateResponse;
       if (!response.ok || !body.ok || !body.snapshot) {
-        setAccountSyncState("error");
-        throw new Error(body.error || "Could not save authenticated account state.");
+        const message = body.error || "Could not save authenticated account state.";
+        const conflict = response.status === 409 || message.includes("changed in another tab");
+        if (conflict) {
+          await refreshServerState().catch(() => undefined);
+        } else {
+          setAccountSyncState("error");
+        }
+        throw new Error(message);
       }
       applyServerSnapshot(body);
       setAccountSyncState("synced");

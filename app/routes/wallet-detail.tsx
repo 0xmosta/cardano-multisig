@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Coins,
   Copy,
@@ -24,6 +25,7 @@ import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { DataTable } from "../components/ui/data-table";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -455,6 +457,7 @@ export default function WalletDetail() {
   const txsRef = useRef<TxDraft[]>([]);
   const relaySyncInFlightRef = useRef(false);
   const assetRequestIdRef = useRef(0);
+  const previousPendingSignaturesRef = useRef(new Map<string, number>());
   const [signStatus, setSignStatus] = useState("");
   const [walletAssets, setWalletAssets] = useState<AssetOption[]>([]);
   const [resolvedHandle, setResolvedHandle] = useState<HandleInfo | null>(null);
@@ -464,6 +467,7 @@ export default function WalletDetail() {
   const [assetStatus, setAssetStatus] = useState("Loading multisig assets…");
   const [signaturePackageInput, setSignaturePackageInput] = useState("");
   const [relaySync, setRelaySync] = useState<RelaySyncState>({ status: "idle" });
+  const [expandedTransactions, setExpandedTransactions] = useState<Record<string, boolean>>({});
 
   txsRef.current = txs;
 
@@ -540,6 +544,32 @@ export default function WalletDetail() {
       .sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
   }, [txs, wallet, walletId]);
   const isWatchOnly = wallet ? !wallet.paymentScript : false;
+
+  useEffect(() => {
+    if (!draftIdFromQuery) return;
+    setExpandedTransactions((current) =>
+      current[draftIdFromQuery] === true ? current : { ...current, [draftIdFromQuery]: true },
+    );
+  }, [draftIdFromQuery]);
+
+  useEffect(() => {
+    const nextPendingSignatures = new Map<string, number>();
+    const expansionChanges = new Map<string, boolean>();
+    for (const tx of walletTxs) {
+      const pending = pendingSignatureCount(tx);
+      const previous = previousPendingSignaturesRef.current.get(tx.id);
+      nextPendingSignatures.set(tx.id, pending);
+      if (previous === undefined || (previous > 0) === (pending > 0)) continue;
+      expansionChanges.set(tx.id, pending > 0);
+    }
+    previousPendingSignaturesRef.current = nextPendingSignatures;
+    if (!expansionChanges.size) return;
+    setExpandedTransactions((current) => {
+      const next = { ...current };
+      for (const [txId, expanded] of expansionChanges) next[txId] = expanded;
+      return next;
+    });
+  }, [walletTxs]);
 
   useEffect(() => {
     if (wallet) void refreshAssets(wallet);
@@ -1243,9 +1273,15 @@ export default function WalletDetail() {
                   const optional = optionalSignerKeyHashes(tx);
                   const highlighted = draftIdFromQuery === tx.id;
                   const canSign = Boolean(tx.unsignedTxCbor?.trim());
+                  const pending = pendingSignatureCount(tx);
+                  const expanded = expandedTransactions[tx.id] ?? (highlighted || pending > 0);
                   return (
-                    <article
+                    <Collapsible
                       key={tx.id}
+                      open={expanded}
+                      onOpenChange={(open) =>
+                        setExpandedTransactions((current) => ({ ...current, [tx.id]: open }))
+                      }
                       className={cn(
                         "min-w-0 overflow-hidden rounded-xl border p-4",
                         highlighted ? "border-sky-400/50 bg-sky-400/10" : "border-white/7 bg-white/[0.02]",
@@ -1268,13 +1304,13 @@ export default function WalletDetail() {
                           <div className="mt-1 break-all text-sm text-zinc-400">{tx.recipient || "No recipient address saved"}</div>
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
                             <span>{signed}/{tx.requiredSignatures} matched signatures</span>
-                            <span>{pendingSignatureCount(tx)} still needed</span>
+                            <span>{pending} still needed</span>
                             {tx.relayRoom ? (
                               <span className="text-sky-300">
                                 relay {tx.relayRoom.status || "open"} · synced {relativeTime(tx.relayRoom.lastSyncAt)}
                               </span>
                             ) : null}
-                            {pendingSignatureCount(tx) === 0 && optional.length ? (
+                            {pending === 0 && optional.length ? (
                               <span className="text-emerald-300">{optional.length} optional signer{optional.length === 1 ? "" : "s"} unsigned</span>
                             ) : null}
                             {unmatched ? <span className="text-amber-300">{unmatched} unmatched signature{unmatched === 1 ? "" : "s"}</span> : null}
@@ -1282,11 +1318,18 @@ export default function WalletDetail() {
                           </div>
                           </div>
                         </div>
-                        <div className="flex w-full min-w-0 items-center gap-2 text-sm text-zinc-300 sm:w-auto">
-                          {phaseIcon(phase)} {new Date(tx.createdAt).toLocaleString()}
+                        <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2 text-sm text-zinc-300 sm:w-auto sm:justify-end">
+                          <span className="flex items-center gap-2">{phaseIcon(phase)} {new Date(tx.createdAt).toLocaleString()}</span>
+                          <CollapsibleTrigger asChild>
+                            <Button type="button" variant="ghost" size="sm" aria-label={`${expanded ? "Collapse" : "Expand"} transaction ${tx.title}`}>
+                              {expanded ? "Hide details" : "Show details"}
+                              <ChevronDown className={cn("size-4 transition-transform", expanded ? "rotate-180" : "")} />
+                            </Button>
+                          </CollapsibleTrigger>
                         </div>
                       </div>
 
+                      <CollapsibleContent>
                       <div className="mt-4 space-y-2">
                         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-zinc-400">
                           <span>Required signatures</span>
@@ -1446,7 +1489,8 @@ export default function WalletDetail() {
                           </Button>
                         </div>
                       </div>
-                    </article>
+                      </CollapsibleContent>
+                    </Collapsible>
                   );
                 })
               )}

@@ -1,4 +1,5 @@
 import { Check, CircleUserRound, LogIn, ShieldCheck, WalletCards } from "lucide-react";
+import { Link } from "react-router";
 import { Avatar } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -73,7 +74,12 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
     <header className="fixed inset-x-0 top-0 z-50 flex h-16 items-center justify-between gap-3 border-b border-border bg-[#111113]/95 px-4 shadow-2xl shadow-black/30 backdrop-blur-xl sm:px-6">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <h1 className="truncate text-lg font-semibold leading-tight text-zinc-50 sm:mr-2 sm:text-xl">Cardano multisig</h1>
+          <Link to="/wallets" className="mr-1 flex min-w-0 items-center gap-2.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Cardano multisig wallets">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-100">
+              <ShieldCheck className="size-4" />
+            </span>
+            <h1 className="truncate text-lg font-semibold leading-tight text-zinc-50 sm:text-xl">Cardano multisig</h1>
+          </Link>
           <Badge variant="outline" className="hidden border-emerald-400/30 bg-emerald-400/10 text-emerald-200 sm:inline-flex">
             {providerStatus?.network || account?.network || connected?.networkLabel || "Cardano"}
           </Badge>
@@ -84,19 +90,6 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
           ) : null}
           {providerStatus && !providerStatus.ready ? <Badge variant="outline" className="hidden border-amber-400/30 text-amber-200 sm:inline-flex">Network unavailable</Badge> : null}
         </div>
-        {typeof walletCount === "number" || typeof roomCount === "number" ? (
-          <div className="mt-0.5 hidden items-center gap-2 text-xs text-zinc-500 sm:flex">
-            {typeof walletCount === "number" ? <span>{walletCount} wallet{walletCount === 1 ? "" : "s"}</span> : null}
-            {typeof walletCount === "number" && typeof roomCount === "number" ? <span>·</span> : null}
-            {typeof roomCount === "number" ? <span>{roomCount} room{roomCount === 1 ? "" : "s"}</span> : null}
-            {account ? (
-              <>
-                <span>·</span>
-                <span>saved across devices</span>
-              </>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       <DropdownMenu>

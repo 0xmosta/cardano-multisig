@@ -84,6 +84,18 @@ function errorMessage(error: unknown, fallback: string) {
   return userFacingError(error, fallback);
 }
 
+function footerSaveLabel(
+  authenticated: boolean,
+  state: AppShellContext["accountSyncState"],
+) {
+  if (!authenticated) return "Not signed in";
+  if (state === "authenticating") return "Signing in…";
+  if (state === "hydrating") return "Loading…";
+  if (state === "syncing") return "Saving…";
+  if (state === "error") return "Save needs attention";
+  return "Saved across devices";
+}
+
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -548,8 +560,20 @@ export function AppShell() {
         onSignIn={() => void signInConnectedWallet()}
         onSignOut={() => void signOutAccount()}
       />
-      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 overflow-x-hidden px-3 pb-24 pt-20 text-foreground sm:gap-6 sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
+      <main className="mx-auto flex min-h-dvh w-full max-w-[1800px] flex-col gap-4 overflow-x-hidden px-3 pb-24 pt-20 text-foreground sm:gap-6 sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
         <Outlet context={context} />
+        <footer className="mt-auto hidden justify-end pt-2 text-xs text-zinc-600 md:flex" aria-live="polite">
+          <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+            <span>{walletCount} wallet{walletCount === 1 ? "" : "s"}</span>
+            <span aria-hidden="true">·</span>
+            <span>{roomCount} transaction{roomCount === 1 ? "" : "s"}</span>
+            <span aria-hidden="true">·</span>
+            <span className={accountSyncState === "error" ? "text-rose-300" : account.authenticated ? "text-zinc-500" : ""}>
+              <span className={`mr-1.5 inline-block size-1.5 rounded-full ${accountSyncState === "error" ? "bg-rose-400" : account.authenticated ? "bg-emerald-400" : "bg-zinc-600"}`} />
+              {footerSaveLabel(account.authenticated, accountSyncState)}
+            </span>
+          </div>
+        </footer>
       </main>
     </>
   );

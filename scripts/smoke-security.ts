@@ -40,6 +40,7 @@ const normal = sanitizeAccountSnapshotInput(
         signerKeyHashes: [keyHash],
         signatures: [],
         createdAt: new Date().toISOString(),
+        archivedAt: "2026-07-15T12:00:00.000Z",
         relayRoom: {
           roomId: "room-security",
           coordinatorToken: token,
@@ -59,6 +60,7 @@ assert.equal((normal.wallets[0] as unknown as Record<string, unknown>).ignored, 
 assert.equal((normal.wallets[0].paymentScript as Record<string, unknown>).ignored, undefined);
 assert.equal((normal.transactions[0] as unknown as Record<string, unknown>).ignored, undefined);
 assert.equal(normal.transactions[0].relayRoom?.coordinatorToken, token);
+assert.equal(normal.transactions[0].archivedAt, "2026-07-15T12:00:00.000Z");
 
 assert.throws(
   () => sanitizeAccountSnapshotInput({ wallets: [{ rootKey: "xprv_private" }], transactions: [] }, "preprod"),
@@ -108,4 +110,4 @@ await assert.rejects(
   RateLimitError,
 );
 
-console.log(JSON.stringify({ ok: true, strictSnapshotValidation: true, sensitiveEnvelopeRoundTrip: true, relayProgressPersistenceSafe: true, rateLimitEnforced: true }));
+console.log(JSON.stringify({ ok: true, strictSnapshotValidation: true, archivedStatePreserved: true, sensitiveEnvelopeRoundTrip: true, relayProgressPersistenceSafe: true, rateLimitEnforced: true }));

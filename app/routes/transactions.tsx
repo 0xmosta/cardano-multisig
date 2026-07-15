@@ -1,4 +1,4 @@
-import { ArrowRight, CheckCircle2, ChevronRight, Clock, Cloud, Loader2, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
+import { Archive, ArrowRight, CheckCircle2, ChevronRight, Clock, Cloud, Copy, CopyPlus, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, Users } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -31,8 +31,10 @@ import {
   type RelayRoomViewResponse,
 } from "../lib/relay-room";
 import { cn, userFacingError } from "../lib/utils";
+import { toast } from "sonner";
 
-type InboxFilter = "all" | "needs-you" | "waiting" | "ready" | "completed";
+type InboxFilter = "action" | "all" | "needs-you" | "waiting" | "ready" | "completed" | "archived";
+type SignerAttention = "needs-you" | "signed" | "not-signer" | "not-connected";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Transactions · Cardano Multisig" }];
@@ -56,23 +58,51 @@ function transactionStateLabel(state: ReturnType<typeof transactionState>) {
   return "Waiting";
 }
 
-function transactionInboxState(tx: TxDraft, connectedKeyHash?: string | null): Exclude<InboxFilter, "all"> {
+function connectedSignerAttention(tx: TxDraft, connectedKeyHash?: string | null): SignerAttention {
+  const connectedSigner = normalizeKeyHash(connectedKeyHash || "");
+  if (!connectedSigner) return "not-connected";
+  if (!tx.signerKeyHashes.some((keyHash) => normalizeKeyHash(keyHash) === connectedSigner)) return "not-signer";
+  return hasMatchedSignature(tx, connectedSigner) ? "signed" : "needs-you";
+}
+
+function transactionInboxState(tx: TxDraft, connectedKeyHash?: string | null): "needs-you" | "waiting" | "ready" | "completed" {
   const state = transactionState(tx);
   if (state === "submitted") return "completed";
   if (state === "ready") return "ready";
-  const connectedSigner = normalizeKeyHash(connectedKeyHash || "");
-  if (
-    connectedSigner &&
-    tx.signerKeyHashes.some((keyHash) => normalizeKeyHash(keyHash) === connectedSigner) &&
-    !hasMatchedSignature(tx, connectedSigner)
-  ) {
-    return "needs-you";
-  }
+  if (connectedSignerAttention(tx, connectedKeyHash) === "needs-you") return "needs-you";
   return "waiting";
+}
+
+function matchesInboxFilter(tx: TxDraft, filter: InboxFilter, connectedKeyHash?: string | null) {
+  if (filter === "archived") return Boolean(tx.archivedAt);
+  if (tx.archivedAt) return false;
+  if (filter === "all") return true;
+  const state = transactionInboxState(tx, connectedKeyHash);
+  if (filter === "action") return state === "needs-you" || state === "ready";
+  return state === filter;
 }
 
 function transactionHref(tx: TxDraft) {
   return `/transactions/${encodeURIComponent(tx.id)}`;
+}
+
+function manageTransactionHref(tx: TxDraft) {
+  return tx.walletId
+    ? `/wallets/${encodeURIComponent(tx.walletId)}?draft=${encodeURIComponent(tx.id)}`
+    : transactionHref(tx);
+}
+
+function newSimilarHref(tx: TxDraft) {
+  return tx.walletId
+    ? `/wallets/${encodeURIComponent(tx.walletId)}/transactions/new?from=${encodeURIComponent(tx.id)}`
+    : transactionHref(tx);
+}
+
+function primaryTransactionAction(tx: TxDraft, connectedKeyHash?: string | null) {
+  const state = transactionInboxState(tx, connectedKeyHash);
+  if (state === "needs-you") return { label: "Sign", href: manageTransactionHref(tx), icon: ShieldCheck };
+  if (state === "ready") return { label: "Submit", href: manageTransactionHref(tx), icon: ArrowRight };
+  return { label: "View", href: transactionHref(tx), icon: ChevronRight };
 }
 
 function relayTokenFromInviteUrl(inviteUrl: string) {
@@ -85,25 +115,38 @@ function relayTokenFromInviteUrl(inviteUrl: string) {
   }
 }
 
-function TransactionMobileCard({ tx }: { tx: TxDraft }) {
+function TransactionMobileCard({
+  tx,
+  connectedKeyHash,
+  busy,
+  onCopyLink,
+  onToggleArchive,
+}: {
+  tx: TxDraft;
+  connectedKeyHash?: string | null;
+  busy: boolean;
+  onCopyLink: (tx: TxDraft) => void;
+  onToggleArchive: (tx: TxDraft) => void;
+}) {
   const signed = signatureCount(tx);
   const missing = pendingSignatureCount(tx);
   const state = transactionState(tx);
+  const signerAttention = connectedSignerAttention(tx, connectedKeyHash);
+  const primary = primaryTransactionAction(tx, connectedKeyHash);
+  const PrimaryIcon = primary.icon;
   return (
-    <Link
-      to={transactionHref(tx)}
-      aria-label={`Open transaction ${tx.title}`}
-      className="group block min-w-0 rounded-xl border border-border bg-black/20 p-4 transition-colors hover:border-sky-300/30 hover:bg-sky-300/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
+    <article className="min-w-0 rounded-xl border border-border bg-black/20 p-4">
       <div className="flex min-w-0 items-start gap-3">
         <Avatar label={tx.walletName} tone={missing ? "primary" : "success"} />
         <div className="min-w-0 flex-1">
-          <div className="break-words font-semibold text-foreground">{tx.title}</div>
+          <Link to={transactionHref(tx)} className="break-words font-semibold text-foreground underline-offset-4 hover:text-sky-200 hover:underline">{tx.title}</Link>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{tx.walletName}</span>
             <span>·</span>
             <span>{tx.network}</span>
             <Badge variant={statusBadgeVariant(state)}>{transactionStateLabel(state)}</Badge>
+            {signerAttention === "needs-you" ? <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">Your signature</Badge> : null}
+            {signerAttention === "signed" ? <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">You signed</Badge> : null}
           </div>
         </div>
       </div>
@@ -124,11 +167,24 @@ function TransactionMobileCard({ tx }: { tx: TxDraft }) {
         {tx.txHash ? `Transaction ${tx.txHash}` : tx.recipient || "No recipient saved"}
       </div>
 
-      <div className="mt-4 flex items-center justify-between border-t border-white/8 pt-3 text-sm font-medium text-sky-200">
-        <span>View transaction details</span>
-        <ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/8 pt-3">
+        <Button asChild size="sm" className="col-span-2">
+          <Link to={primary.href}><PrimaryIcon className="size-4" /> {primary.label}</Link>
+        </Button>
+        {tx.relayRoom?.sharedInviteUrl && state !== "submitted" ? (
+          <Button type="button" size="sm" variant="secondary" onClick={() => onCopyLink(tx)}><Copy className="size-4" /> Copy link</Button>
+        ) : tx.walletId ? (
+          <Button asChild size="sm" variant="secondary"><Link to={newSimilarHref(tx)}><CopyPlus className="size-4" /> Similar</Link></Button>
+        ) : <span />}
+        {state === "submitted" || tx.archivedAt ? (
+          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => onToggleArchive(tx)}>
+            {tx.archivedAt ? <RotateCcw className="size-4" /> : <Archive className="size-4" />} {tx.archivedAt ? "Restore" : "Archive"}
+          </Button>
+        ) : tx.walletId && tx.relayRoom?.sharedInviteUrl ? (
+          <Button asChild size="sm" variant="ghost"><Link to={newSimilarHref(tx)}><CopyPlus className="size-4" /> Similar</Link></Button>
+        ) : null}
       </div>
-    </Link>
+    </article>
   );
 }
 
@@ -137,8 +193,9 @@ export default function TransactionsRoute() {
   const { account, accountState, connected, refreshServerState, saveServerState } = useAppShell();
   const [transactions, setTransactions] = useState<TxDraft[]>([]);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<InboxFilter>("all");
+  const [filter, setFilter] = useState<InboxFilter>("action");
   const [syncing, setSyncing] = useState(false);
+  const [mutatingId, setMutatingId] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const transactionsRef = useRef<TxDraft[]>([]);
@@ -256,6 +313,41 @@ export default function TransactionsRoute() {
     };
   }, [account.authenticated, Boolean(accountState), relaySyncKey]);
 
+  async function copySignerLink(tx: TxDraft) {
+    const link = tx.relayRoom?.sharedInviteUrl;
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success("Signer link copied", { description: "Share it privately with the transaction signers." });
+    } catch {
+      toast.error("Could not copy signer link");
+    }
+  }
+
+  async function toggleArchived(tx: TxDraft) {
+    if (!account.authenticated || !accountStateRef.current || mutatingId) return;
+    const previous = transactionsRef.current;
+    const archivedAt = tx.archivedAt ? undefined : new Date().toISOString();
+    const next = previous.map((item) =>
+      item.id === tx.id
+        ? { ...item, archivedAt, updatedAt: new Date().toISOString() }
+        : item,
+    );
+    setMutatingId(tx.id);
+    setTransactions(next);
+    try {
+      await saveServerState({ wallets: accountStateRef.current.wallets, transactions: next });
+      toast.success(archivedAt ? "Transaction archived" : "Transaction restored");
+    } catch (error) {
+      setTransactions(previous);
+      toast.error(archivedAt ? "Could not archive transaction" : "Could not restore transaction", {
+        description: userFacingError(error, "Try again in a moment."),
+      });
+    } finally {
+      setMutatingId("");
+    }
+  }
+
   const visibleTransactions = useMemo(() => {
     const value = query.trim().toLowerCase();
     const matchingQuery = value
@@ -275,20 +367,27 @@ export default function TransactionsRoute() {
             .includes(value),
         )
       : transactions;
-    const matchingInbox = filter === "all"
-      ? matchingQuery
-      : matchingQuery.filter((tx) => transactionInboxState(tx, connected?.keyHash) === filter);
+    const matchingInbox = matchingQuery.filter((tx) => matchesInboxFilter(tx, filter, connected?.keyHash));
     return sortTransactionDraftsNewestFirst(matchingInbox);
   }, [connected?.keyHash, filter, query, transactions]);
 
   const inboxCounts = useMemo(() => {
-    const counts: Record<InboxFilter, number> = { all: transactions.length, "needs-you": 0, waiting: 0, ready: 0, completed: 0 };
-    for (const tx of transactions) counts[transactionInboxState(tx, connected?.keyHash)] += 1;
+    const counts: Record<InboxFilter, number> = { action: 0, all: 0, "needs-you": 0, waiting: 0, ready: 0, completed: 0, archived: 0 };
+    for (const tx of transactions) {
+      if (tx.archivedAt) {
+        counts.archived += 1;
+        continue;
+      }
+      counts.all += 1;
+      const state = transactionInboxState(tx, connected?.keyHash);
+      counts[state] += 1;
+      if (state === "needs-you" || state === "ready") counts.action += 1;
+    }
     return counts;
   }, [connected?.keyHash, transactions]);
 
-  const readyCount = transactions.filter((tx) => transactionState(tx) === "ready").length;
-  const submittedCount = transactions.filter((tx) => transactionState(tx) === "submitted").length;
+  const readyCount = transactions.filter((tx) => !tx.archivedAt && transactionState(tx) === "ready").length;
+  const submittedCount = transactions.filter((tx) => !tx.archivedAt && transactionState(tx) === "submitted").length;
   const columns = useMemo<ColumnDef<TxDraft>[]>(
     () => [
       {
@@ -299,7 +398,11 @@ export default function TransactionsRoute() {
             <div className="flex min-w-0 items-start gap-3">
               <Avatar label={tx.walletName} tone={pendingSignatureCount(tx) ? "primary" : "success"} />
               <div className="min-w-0">
-                <div className="break-words font-semibold text-foreground">{tx.title}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="break-words font-semibold text-foreground">{tx.title}</span>
+                  {connectedSignerAttention(tx, connected?.keyHash) === "needs-you" ? <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">Your signature</Badge> : null}
+                  {connectedSignerAttention(tx, connected?.keyHash) === "signed" ? <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">You signed</Badge> : null}
+                </div>
                 <div className="mt-1 text-xs text-muted-foreground">{tx.walletName} · {tx.network}</div>
                 <div className="mt-2 line-clamp-1 max-w-md break-all text-xs text-muted-foreground">{tx.recipient || "No recipient saved"}</div>
               </div>
@@ -346,19 +449,31 @@ export default function TransactionsRoute() {
         header: () => <div className="text-right">Actions</div>,
         cell: ({ row }) => {
           const tx = row.original;
+          const primary = primaryTransactionAction(tx, connected?.keyHash);
+          const PrimaryIcon = primary.icon;
+          const state = transactionState(tx);
           return (
             <div className="flex justify-end gap-2">
               <Button asChild size="sm">
-                <Link to={transactionHref(tx)}>
-                  View details <ArrowRight className="size-4" />
-                </Link>
+                <Link to={primary.href}><PrimaryIcon className="size-4" /> {primary.label}</Link>
               </Button>
+              {tx.relayRoom?.sharedInviteUrl && state !== "submitted" ? (
+                <Button type="button" size="icon-sm" variant="secondary" title="Copy signer link" aria-label={`Copy signer link for ${tx.title}`} onClick={() => void copySignerLink(tx)}><Copy className="size-4" /></Button>
+              ) : null}
+              {tx.walletId ? (
+                <Button asChild size="icon-sm" variant="ghost" title="Create a similar transaction"><Link to={newSimilarHref(tx)} aria-label={`Create a transaction similar to ${tx.title}`}><CopyPlus className="size-4" /></Link></Button>
+              ) : null}
+              {state === "submitted" || tx.archivedAt ? (
+                <Button type="button" size="icon-sm" variant="ghost" disabled={mutatingId === tx.id} title={tx.archivedAt ? "Restore transaction" : "Archive completed transaction"} aria-label={`${tx.archivedAt ? "Restore" : "Archive"} ${tx.title}`} onClick={() => void toggleArchived(tx)}>
+                  {tx.archivedAt ? <RotateCcw className="size-4" /> : <Archive className="size-4" />}
+                </Button>
+              ) : null}
             </div>
           );
         },
       },
     ],
-    [],
+    [connected?.keyHash, mutatingId],
   );
 
   return (
@@ -369,7 +484,7 @@ export default function TransactionsRoute() {
           <p className="mt-2 max-w-2xl text-sm text-zinc-400">See what needs your attention, what is waiting for others, and what is complete.</p>
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          <Badge variant="secondary">{transactions.length} transaction{transactions.length === 1 ? "" : "s"}</Badge>
+          <Badge variant="secondary">{inboxCounts.all} active</Badge>
           {readyCount ? <Badge className="bg-emerald-300 text-emerald-950">{readyCount} ready</Badge> : null}
           {submittedCount ? <Badge variant="secondary">{submittedCount} completed</Badge> : null}
           <Button type="button" size="sm" variant="secondary" className="max-sm:flex-1" onClick={() => void refreshRelayRooms()} disabled={syncing}>
@@ -386,11 +501,13 @@ export default function TransactionsRoute() {
             <div className="overflow-x-auto pb-1">
               <TabsList className="h-auto min-w-max">
                 {([
+                  ["action", "Action needed"],
                   ["all", "All"],
                   ["needs-you", "Needs you"],
                   ["waiting", "Waiting"],
                   ["ready", "Ready"],
                   ["completed", "Completed"],
+                  ["archived", "Archived"],
                 ] as Array<[InboxFilter, string]>).map(([value, label]) => (
                   <TabsTrigger key={value} value={value}>
                     {label} <span className="text-[11px] opacity-70">{inboxCounts[value]}</span>
@@ -440,16 +557,16 @@ export default function TransactionsRoute() {
             <DataTable
               columns={columns}
               data={visibleTransactions}
-              emptyLabel={filter === "all" ? "No transaction matches." : "Nothing in this section."}
-              renderMobileRow={(tx) => <TransactionMobileCard tx={tx} />}
+              emptyLabel={filter === "all" ? "No transaction matches." : filter === "action" ? "Nothing needs your attention." : "Nothing in this section."}
+              renderMobileRow={(tx) => <TransactionMobileCard tx={tx} connectedKeyHash={connected?.keyHash} busy={mutatingId === tx.id} onCopyLink={(item) => void copySignerLink(item)} onToggleArchive={(item) => void toggleArchived(item)} />}
               onRowClick={(tx) => navigate(transactionHref(tx))}
             />
           ) : (
             <Empty>
               <EmptyHeader>
-                {account ? <Cloud className="size-5 text-sky-200" /> : <Clock className="size-5 text-muted-foreground" />}
-                <EmptyTitle>{account ? "No transactions yet" : "Sign in to load transactions"}</EmptyTitle>
-                <EmptyDescription>{account ? "Create a transaction from a wallet to start collecting signatures." : "Sign in from the account menu to access your transactions on this device."}</EmptyDescription>
+                {account.authenticated ? <Cloud className="size-5 text-sky-200" /> : <Clock className="size-5 text-muted-foreground" />}
+                <EmptyTitle>{account.authenticated ? "No transactions yet" : "Sign in to load transactions"}</EmptyTitle>
+                <EmptyDescription>{account.authenticated ? "Create a transaction from a wallet to start collecting signatures." : "Sign in from the account menu to access your transactions on this device."}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}

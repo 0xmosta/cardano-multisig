@@ -1,5 +1,5 @@
-import { Link, useNavigate, useParams } from "react-router";
-import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -20,6 +20,7 @@ import {
 import { AccountSyncPanel } from "../components/account-sync-panel";
 import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
@@ -45,6 +46,7 @@ import {
   formatTargetNetwork,
   mergeTransactionDrafts,
   networkLabel,
+  normalizeKeyHash,
   nowIso,
 } from "../lib/multisig";
 
@@ -88,6 +90,18 @@ type AssetFetch = {
   outputs?: number;
 };
 
+type PreparedTransaction = {
+  cbor: string;
+  assets: AssetLine[];
+  fee: string;
+  inputCount: number;
+  sourceAddress: string;
+  adjustedMinAda: boolean;
+  minAda: string;
+  fingerprint: string;
+  preparedAt: string;
+};
+
 const DEFAULT_ASSET: AssetOption = {
   unit: "lovelace",
   label: "ADA",
@@ -122,6 +136,24 @@ function toRawQuantity(display: string, decimals = 0) {
   const whole = BigInt(wholeRaw || "0");
   const frac = (fracRaw + "0".repeat(decimals)).slice(0, decimals);
   return (whole * 10n ** BigInt(decimals) + BigInt(frac || "0")).toString();
+}
+
+function toDisplayQuantity(quantity: string, decimals = 0) {
+  const raw = BigInt(quantity || "0");
+  if (!decimals) return raw.toString();
+  const scale = 10n ** BigInt(decimals);
+  const whole = raw / scale;
+  const fraction = raw % scale;
+  const fractionText = fraction ? `.${fraction.toString().padStart(decimals, "0").replace(/0+$/, "")}` : "";
+  return `${whole}${fractionText}`;
+}
+
+function preparationFingerprint(walletId: string, recipient: string, assets: AssetLine[]) {
+  return JSON.stringify({
+    walletId,
+    recipient: recipient.trim(),
+    assets: assets.map(({ unit, quantity, decimals }) => ({ unit, quantity, decimals: decimals || 0 })),
+  });
 }
 
 function defaultDisplayAmount(asset: { unit: string; decimals?: number }) {
@@ -255,7 +287,9 @@ async function fetchMultisigAssets(wallet: Wallet): Promise<AssetFetch> {
 export default function NewTransaction() {
   const { walletId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { account, accountState, connected, saveServerState } = useAppShell();
+  const prefilledFromRef = useRef("");
 
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [multisigAssets, setMultisigAssets] = useState<AssetOption[]>([]);
@@ -268,6 +302,7 @@ export default function NewTransaction() {
     { id: createId("asset"), unit: "lovelace", label: "ADA", quantity: "2", decimals: 6 },
   ]);
   const [unsignedTxCbor, setUnsignedTxCbor] = useState("");
+  const [prepared, setPrepared] = useState<PreparedTransaction | null>(null);
   const [buildInfo, setBuildInfo] = useState("");
   const [note, setNote] = useState("");
   const [status, setStatus] = useState("");
@@ -281,6 +316,7 @@ export default function NewTransaction() {
   }, [account.authenticated, accountState]);
 
   const wallet = wallets.find((item) => item.id === walletId);
+  const sourceTransactionId = searchParams.get("from") || "";
   const isWatchOnly = wallet ? !wallet.paymentScript : false;
   const assetOptions = useMemo(
     () =>
@@ -296,6 +332,11 @@ export default function NewTransaction() {
     connected && wallet && connected.networkId >= 0 && connected.networkId !== expectedNetworkId(wallet.network)
       ? `Connected wallet is on ${networkLabel(connected.networkId)}, but this multisig wallet is on ${formatTargetNetwork(wallet.network)}. Switch the wallet network before signing.`
       : "";
+  const connectedKeyHash = normalizeKeyHash(connected?.keyHash || "");
+  const connectedIsSigner = Boolean(
+    connectedKeyHash && wallet?.signers.some((signer) => normalizeKeyHash(signer.keyHash) === connectedKeyHash),
+  );
+  const willSignWhenCreated = Boolean(connectedIsSigner && !walletNetworkWarning);
   const requestedAssetSummary = assets.map((asset) => {
     const option = assetOptions.find((item) => item.unit === asset.unit);
     return {
@@ -307,13 +348,58 @@ export default function NewTransaction() {
       available: option?.quantity,
     };
   });
+  const currentPreparationFingerprint = wallet ? preparationFingerprint(wallet.id, recipient, assets) : "";
+  const preparedIsCurrent = Boolean(prepared && prepared.fingerprint === currentPreparationFingerprint);
+  const reviewAssetSummary = preparedIsCurrent && prepared
+    ? prepared.assets.map((asset) => {
+        const requested = requestedAssetSummary.find((item) => item.unit === asset.unit);
+        return {
+          ...asset,
+          image: requested?.image,
+          fingerprint: requested?.fingerprint,
+          policyId: requested?.policyId,
+          assetName: requested?.assetName,
+          quantity: toDisplayQuantity(asset.quantity, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0)),
+        };
+      })
+    : requestedAssetSummary;
   const readyToBuild = !handleConflict && Boolean(recipient.trim()) && assets.some((asset) => Number(asset.quantity || "0") > 0);
   const totalAssetCount = assetOptions.filter((asset) => asset.unit !== "lovelace").length;
+
+  useEffect(() => {
+    if (!wallet || !accountState || !sourceTransactionId || prefilledFromRef.current === sourceTransactionId) return;
+    const source = accountState.transactions.find(
+      (tx) => tx.id === sourceTransactionId && (tx.walletId === wallet.id || (!tx.walletId && tx.walletName === wallet.name)),
+    );
+    if (!source) return;
+    const sourceAssets = source.assets?.length
+      ? source.assets
+      : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: source.lovelace || "0", decimals: 6 }];
+    prefilledFromRef.current = sourceTransactionId;
+    setTitle(`${source.title} copy`);
+    setRecipient(source.recipient || "");
+    setAssets(sourceAssets.map((asset) => ({
+      ...asset,
+      id: createId("asset"),
+      quantity: toDisplayQuantity(asset.quantity, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0)),
+    })));
+    setNote(source.note || "");
+    setUnsignedTxCbor("");
+    setPrepared(null);
+    setStatus("Payment details copied. A fresh transaction will be built from current wallet UTxOs before signing.");
+  }, [accountState, sourceTransactionId, wallet]);
 
   useEffect(() => {
     if (!wallet || isWatchOnly) return;
     void refreshMultisigAssets(wallet);
   }, [wallet?.id, isWatchOnly]);
+
+  useEffect(() => {
+    if (!prepared || prepared.fingerprint === currentPreparationFingerprint) return;
+    setPrepared(null);
+    setUnsignedTxCbor("");
+    setBuildInfo("");
+  }, [currentPreparationFingerprint, prepared]);
 
   async function refreshMultisigAssets(target = wallet) {
     if (!target) return;
@@ -396,7 +482,7 @@ export default function NewTransaction() {
     setAssets((current) => (current.length > 1 ? current.filter((item) => item.id !== id) : current));
   }
 
-  async function buildUnsignedTx(txAssets: AssetLine[]) {
+  async function buildUnsignedTx(txAssets: AssetLine[], fingerprint: string) {
     if (!wallet) throw new Error("Wallet not loaded.");
     if (!account.authenticated || !account.session) throw new Error("Sign in with a wallet before building a transaction.");
     if (!recipient.trim()) throw new Error("Enter a recipient address.");
@@ -423,10 +509,36 @@ export default function NewTransaction() {
     setBuildInfo(
       `Built from ${body.inputCount} UTxO${body.inputCount === 1 ? "" : "s"}; fee ${formatRawQuantity(String(body.fee || "0"), "lovelace", 6)}.${minAdaNote}`,
     );
-    toast.success("Transaction prepared", {
-      description: "Review the wallet approval request to continue.",
-    });
-    return { cbor: String(body.unsignedTxCbor || ""), assets: Array.isArray(body.assets) ? body.assets : txAssets };
+    const result: PreparedTransaction = {
+      cbor: String(body.unsignedTxCbor || ""),
+      assets: Array.isArray(body.assets) ? body.assets : txAssets,
+      fee: String(body.fee || "0"),
+      inputCount: Number(body.inputCount || 0),
+      sourceAddress: String(body.sourceAddress || ""),
+      adjustedMinAda: Boolean(body.adjustedMinAda),
+      minAda: String(body.minAda || "0"),
+      fingerprint,
+      preparedAt: nowIso(),
+    };
+    setPrepared(result);
+    setStatus("Transaction prepared. Check the final fee, outputs, network, and signer wallet before confirming.");
+    toast.success("Transaction prepared", { description: "Review the final summary before confirming." });
+    return result;
+  }
+
+  async function prepareTransaction() {
+    if (!wallet) return;
+    try {
+      const txAssets = assets.map((asset) => ({
+        ...asset,
+        quantity: toRawQuantity(asset.quantity, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0)),
+      }));
+      await buildUnsignedTx(txAssets, currentPreparationFingerprint);
+    } catch (error) {
+      const message = userFacingError(error, "We could not prepare the transaction.");
+      setStatus(message);
+      toast.error("Could not prepare transaction", { description: message });
+    }
   }
 
   async function createAndMaybeSign() {
@@ -448,53 +560,35 @@ export default function NewTransaction() {
     }
 
     const now = nowIso();
-    const txAssets = assets.map((asset) => ({
-      ...asset,
-      quantity: toRawQuantity(asset.quantity, asset.decimals ?? (asset.unit === "lovelace" ? 6 : 0)),
-    }));
-
-    let builtCbor = unsignedTxCbor.trim();
-    let builtAssets = txAssets;
-    let signatures: SignatureRecord[] = [];
-
-    try {
-      const built = await buildUnsignedTx(txAssets);
-      builtCbor = built.cbor;
-      builtAssets = built.assets;
-    } catch (error) {
-      setStatus(userFacingError(error, "We could not prepare the transaction."));
-      toast.error("Could not build transaction", {
-        description: userFacingError(error, "We could not prepare the transaction."),
-      });
+    if (!prepared || !preparedIsCurrent) {
+      await prepareTransaction();
       return;
     }
 
-    if (connected) {
-      if (walletNetworkWarning) {
-        setStatus(walletNetworkWarning);
-        toast.warning("Wrong wallet network", { description: walletNetworkWarning });
-        return;
-      }
+    const builtCbor = prepared.cbor;
+    const builtAssets = prepared.assets;
+    let signatures: SignatureRecord[] = [];
 
+    if (connected && willSignWhenCreated) {
       try {
         setStatus(`Requesting ${connected.name} signature…`);
         const witnessCbor = await connected.api.signTx(builtCbor, true);
         signatures = [
           {
-            signerKeyHash: connected.keyHash?.toLowerCase() || `unknown-${connected.id}`,
-            signerName: connected.keyHash ? connected.keyHash.toLowerCase() : connected.name,
+            signerKeyHash: connectedKeyHash,
+            matchedSignerKeyHash: connectedKeyHash,
+            matchStatus: "matched",
+            signerName: connectedKeyHash,
             walletName: connected.name,
             witnessCbor,
             signedAt: nowIso(),
           },
         ];
         setStatus(
-          connected.keyHash
-            ? "Transaction created and your signature was added."
-            : "Transaction created and signed, but we could not match the signing key automatically.",
+          "Transaction created and your signature was added.",
         );
         toast.success("Transaction signed", {
-          description: connected.keyHash ? "Your signature is saved." : "The signer key could not be matched automatically.",
+          description: "Your signature is saved.",
         });
       } catch (error) {
         setStatus(userFacingError(error, "The wallet did not approve the signature."));
@@ -506,7 +600,11 @@ export default function NewTransaction() {
     } else {
       setStatus("Transaction created. Open it from the wallet to invite signers.");
       toast("Transaction created", {
-        description: "Open the wallet to share it with signers.",
+        description: connected && !connectedIsSigner
+          ? `${connected.name} is not a signer for this wallet, so the transaction was saved unsigned.`
+          : walletNetworkWarning
+            ? "The connected wallet is on another network, so the transaction was saved unsigned."
+            : "Open the wallet to share it with signers.",
       });
     }
 
@@ -607,6 +705,7 @@ export default function NewTransaction() {
           <span className="rounded-md border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-emerald-100">
             {wallet.threshold}-of-{wallet.signers.length}
           </span>
+          {sourceTransactionId && prefilledFromRef.current === sourceTransactionId ? <Badge variant="outline">fresh copy</Badge> : null}
         </div>
       </div>
 
@@ -765,8 +864,8 @@ export default function NewTransaction() {
               <Textarea
                 className="min-h-32 font-mono text-sm text-slate-100"
                 value={unsignedTxCbor}
-                onChange={(event) => setUnsignedTxCbor(event.target.value)}
-                placeholder="The server will fill this after Build transaction."
+                readOnly
+                placeholder="The server will fill this after Prepare transaction."
               />
               {buildInfo ? <div className="text-xs text-slate-400">{buildInfo}</div> : null}
             </CollapsibleContent>
@@ -781,7 +880,7 @@ export default function NewTransaction() {
             </CardHeader>
             <CardContent className="space-y-4 p-4 sm:p-5">
               <div className="space-y-3">
-                {requestedAssetSummary.map((asset) => (
+                {reviewAssetSummary.map((asset) => (
                   <div key={asset.id} className="flex min-w-0 items-center gap-3 rounded-md border border-white/8 bg-black/20 p-3">
                     <AssetThumb asset={asset} className="size-10" />
                     <div className="min-w-0 flex-1">
@@ -794,36 +893,72 @@ export default function NewTransaction() {
               </div>
 
               <div className="grid gap-2 text-sm">
+                <div className="rounded-md border border-white/8 bg-black/20 px-3 py-2">
+                  <div className="text-slate-500">Recipient</div>
+                  <div className="mt-1 break-all font-mono text-xs text-slate-200">{recipient.trim() || "Not set"}</div>
+                </div>
                 <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
-                  <span className="text-slate-500">Recipient</span>
-                  <span className="max-w-44 truncate text-slate-200">{recipient.trim() || "Not set"}</span>
+                  <span className="text-slate-500">Network</span>
+                  <Badge variant="outline" className="uppercase">{wallet.network}</Badge>
                 </div>
                 <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
                   <span className="text-slate-500">Signer wallet</span>
-                  <span className="inline-flex max-w-44 items-center gap-1.5 truncate text-slate-200">
-                    {connected ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-300" /> : null}
-                    <span className="truncate">{connected ? connected.name : "Optional"}</span>
+                  <span className="inline-flex max-w-48 flex-wrap items-center justify-end gap-1.5 text-slate-200">
+                    {willSignWhenCreated ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-300" /> : null}
+                    <span className="truncate">{connected ? connected.name : "Not connected"}</span>
+                    {connected ? <Badge variant="outline" className={connectedIsSigner ? "border-emerald-400/30 text-emerald-200" : "border-amber-400/30 text-amber-200"}>{connectedIsSigner ? "signer" : "not a signer"}</Badge> : null}
                   </span>
                 </div>
                 <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
                   <span className="text-slate-500">Required</span>
                   <span className="text-slate-200">{wallet.threshold} signature{wallet.threshold === 1 ? "" : "s"}</span>
                 </div>
+                {preparedIsCurrent && prepared ? (
+                  <>
+                    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-emerald-400/20 bg-emerald-400/[0.08] px-3 py-2">
+                      <span className="text-emerald-100/70">Network fee</span>
+                      <span className="font-semibold text-emerald-100">{formatRawQuantity(prepared.fee, "lovelace", 6)}</span>
+                    </div>
+                    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-white/8 bg-black/20 px-3 py-2">
+                      <span className="text-slate-500">Inputs</span>
+                      <span className="text-slate-200">{prepared.inputCount} UTxO{prepared.inputCount === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="rounded-md border border-white/8 bg-black/20 px-3 py-2">
+                      <div className="text-slate-500">Change returns to multisig wallet</div>
+                      <div className="mt-1 break-all font-mono text-[11px] text-slate-300">{prepared.sourceAddress || "Wallet source address"}</div>
+                    </div>
+                    {prepared.adjustedMinAda ? (
+                      <div className="rounded-md border border-amber-400/20 bg-amber-400/[0.08] px-3 py-2 text-amber-100">
+                        Output ADA adjusted to the required minimum of {formatRawQuantity(prepared.minAda, "lovelace", 6)}.
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
               </div>
 
               {walletNetworkWarning ? (
                 <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
-                  <AlertTriangle className="mr-2 inline size-4" /> {walletNetworkWarning}
+                  <AlertTriangle className="mr-2 inline size-4" /> {walletNetworkWarning} You can still create the request unsigned.
                 </div>
               ) : null}
 
-              <Button className="h-11 w-full rounded-md" onClick={() => void createAndMaybeSign()} disabled={!readyToBuild}>
-                {connected ? <ShieldCheck className="size-4" /> : <Send className="size-4" />}
-                {connected ? "Create and sign" : "Create transaction"}
+              {connected && !connectedIsSigner ? (
+                <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
+                  <AlertTriangle className="mr-2 inline size-4" /> {connected.name} is not part of this multisig policy. The request will be saved without its signature.
+                </div>
+              ) : null}
+
+              <Button className="h-11 w-full rounded-md" onClick={() => void (preparedIsCurrent ? createAndMaybeSign() : prepareTransaction())} disabled={!readyToBuild}>
+                {!preparedIsCurrent ? <FileCode2 className="size-4" /> : willSignWhenCreated ? <ShieldCheck className="size-4" /> : <Send className="size-4" />}
+                {!preparedIsCurrent ? "Prepare transaction" : willSignWhenCreated ? "Confirm and sign" : "Confirm and create"}
               </Button>
 
               <div className="text-xs leading-relaxed text-slate-500">
-                After creation, you can share one link with the remaining signers and follow progress from the wallet.
+                {!preparedIsCurrent
+                  ? "Preparing does not sign or save anything. It calculates the final fee and outputs for your review."
+                  : willSignWhenCreated
+                    ? `Prepared ${new Date(prepared?.preparedAt || "").toLocaleTimeString()}. The next click opens ${connected?.name || "your wallet"} for the signature. Nothing is submitted until the multisig threshold is reached.`
+                    : `Prepared ${new Date(prepared?.preparedAt || "").toLocaleTimeString()}. The request will be saved unsigned. You can then share one private link with the signers.`}
               </div>
             </CardContent>
           </Card>

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Clock3,
   Copy,
+  CopyPlus,
   ExternalLink,
   Loader2,
   RefreshCw,
@@ -121,7 +122,7 @@ function signerLabel(wallet: MultisigWallet | undefined, keyHash: string, index:
 
 export default function TransactionDetailRoute() {
   const { transactionId = "" } = useParams();
-  const { account, accountState, refreshServerState } = useAppShell();
+  const { account, accountState, connected, refreshServerState } = useAppShell();
   const [transaction, setTransaction] = useState<TxDraft | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -230,6 +231,10 @@ export default function TransactionDetailRoute() {
   const signed = signatureCount(transaction);
   const missing = pendingSignatureCount(transaction);
   const optional = new Set(optionalSignerKeyHashes(transaction).map(normalizeKeyHash));
+  const connectedKeyHash = normalizeKeyHash(connected?.keyHash || "");
+  const connectedIsSigner = Boolean(connectedKeyHash && transaction.signerKeyHashes.some((keyHash) => normalizeKeyHash(keyHash) === connectedKeyHash));
+  const connectedHasSigned = connectedIsSigner && hasMatchedSignature(transaction, connectedKeyHash);
+  const connectedNeedsSignature = connectedIsSigner && !connectedHasSigned && state === "pending";
   const assets = transaction.assets?.length
     ? transaction.assets
     : [{ id: "ada", unit: "lovelace", label: "ADA", quantity: transaction.lovelace || "0", decimals: 6 }];
@@ -253,6 +258,8 @@ export default function TransactionDetailRoute() {
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="break-words text-2xl font-semibold text-zinc-50 sm:text-3xl">{transaction.title}</h1>
                 <Badge variant={state === "submitted" ? "default" : state === "ready" ? "secondary" : "outline"}>{stateLabel(state)}</Badge>
+                {connectedNeedsSignature ? <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">Your signature is needed</Badge> : null}
+                {connectedHasSigned ? <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">You signed</Badge> : null}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-400">
                 <span>{transaction.walletName}</span><span>·</span><span>{transaction.network}</span>
@@ -292,6 +299,7 @@ export default function TransactionDetailRoute() {
               const handle = signerHandles[normalizeKeyHash(keyHash)];
               const handleLabel = signerHandleLabel(handle);
               const label = signerLabel(wallet, keyHash, index);
+              const isYou = Boolean(connectedKeyHash && normalizeKeyHash(keyHash) === connectedKeyHash);
               return (
                 <div key={keyHash} className={cn("flex min-w-0 items-center justify-between gap-3 rounded-lg border p-3", hasSigned ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/8 bg-black/20")}>
                   <div className="flex min-w-0 items-center gap-3">
@@ -300,6 +308,7 @@ export default function TransactionDetailRoute() {
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <span className="font-medium text-zinc-100">{label}</span>
                         {handleLabel ? <Badge variant="outline" className="border-sky-400/25 bg-sky-400/10 text-sky-200" title="ADA Handle associated with this signer">{handleLabel}</Badge> : null}
+                        {isYou ? <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">you</Badge> : null}
                       </div>
                       <div className="truncate font-mono text-xs text-zinc-500" title={keyHash}>{keyHash}</div>
                     </div>
@@ -321,9 +330,12 @@ export default function TransactionDetailRoute() {
           <Card>
             <CardHeader><CardTitle>Next action</CardTitle><CardDescription>{state === "pending" ? "Open the wallet to sign or share this request with others." : state === "ready" ? "All required signatures are present; submission can complete automatically." : "This transaction is complete. You can review the wallet or create another one."}</CardDescription></CardHeader>
             <CardContent className="space-y-2">
-              <Button asChild className="w-full"><Link to={walletHref(transaction, true)}><ShieldCheck className="size-4" /> Manage signatures</Link></Button>
+              <Button asChild className="w-full"><Link to={walletHref(transaction, true)}><ShieldCheck className="size-4" /> {connectedNeedsSignature ? "Sign this transaction" : state === "ready" ? "Review submission" : "Manage signatures"}</Link></Button>
+              {transaction.relayRoom?.sharedInviteUrl && state !== "submitted" ? (
+                <Button type="button" variant="secondary" className="w-full" onClick={() => { void navigator.clipboard.writeText(transaction.relayRoom?.sharedInviteUrl || ""); toast.success("Signer link copied"); }}><Copy className="size-4" /> Copy signer link</Button>
+              ) : null}
               <Button asChild variant="secondary" className="w-full"><Link to={walletHref(transaction)}><WalletCards className="size-4" /> View wallet</Link></Button>
-              <Button asChild variant="outline" className="w-full"><Link to={newTransactionHref(transaction)}>New transaction <ArrowRight className="size-4" /></Link></Button>
+              <Button asChild variant="outline" className="w-full"><Link to={`${newTransactionHref(transaction)}?from=${encodeURIComponent(transaction.id)}`}><CopyPlus className="size-4" /> Create similar</Link></Button>
             </CardContent>
           </Card>
           <Card>

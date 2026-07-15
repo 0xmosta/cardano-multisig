@@ -49,6 +49,10 @@ export function DataTable<TData, TValue>({
   const filter = filterColumn ? table.getColumn(filterColumn) : null;
   const rows = table.getRowModel().rows;
 
+  function isInteractiveTarget(target: EventTarget | null) {
+    return target instanceof Element && Boolean(target.closest("a, button, input, select, textarea, [role='button'], [role='menuitem']"));
+  }
+
   return (
     <div className="space-y-4">
       {filter ? (
@@ -91,10 +95,14 @@ export function DataTable<TData, TValue>({
                   data-state={row.getIsSelected() && "selected"}
                   className={cn(onRowClick ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset" : "")}
                   tabIndex={onRowClick ? 0 : undefined}
-                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onClick={onRowClick ? (event) => {
+                    if (isInteractiveTarget(event.target)) return;
+                    onRowClick(row.original);
+                  } : undefined}
                   onKeyDown={
                     onRowClick
                       ? (event) => {
+                          if (event.target !== event.currentTarget) return;
                           if (event.key !== "Enter" && event.key !== " ") return;
                           event.preventDefault();
                           onRowClick(row.original);

@@ -86,6 +86,7 @@ export type TxDraft = {
   updatedAt?: string;
   txHash?: string;
   failureReason?: string;
+  archivedAt?: string;
   relayRoom?: RelayRoomRef;
 };
 

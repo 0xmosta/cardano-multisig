@@ -237,6 +237,13 @@ function nextActionLabel(tx: TxDraft, connectedKeyHash?: string | null) {
   return `Waiting for ${pending} signature${pending === 1 ? "" : "s"}`;
 }
 
+function connectedSignerStatus(tx: TxDraft, connectedKeyHash?: string | null) {
+  const keyHash = normalizeKeyHash(connectedKeyHash || "");
+  if (!keyHash) return "not-connected" as const;
+  if (!tx.signerKeyHashes.some((signerKeyHash) => normalizeKeyHash(signerKeyHash) === keyHash)) return "not-signer" as const;
+  return hasMatchedSignature(tx, keyHash) ? "signed" as const : "can-sign" as const;
+}
+
 function shortHash(value?: string | null, edge = 8) {
   if (!value) return "";
   return value.length > edge * 2 ? `${value.slice(0, edge)}…${value.slice(-edge)}` : value;
@@ -486,6 +493,7 @@ export default function WalletDetail() {
   const [signaturePackageInput, setSignaturePackageInput] = useState("");
   const [relaySync, setRelaySync] = useState<RelaySyncState>({ status: "idle" });
   const [expandedTransactions, setExpandedTransactions] = useState<Record<string, boolean>>({});
+  const [showArchivedTransactions, setShowArchivedTransactions] = useState(false);
 
   txsRef.current = txs;
 
@@ -557,11 +565,16 @@ export default function WalletDetail() {
     }
   }, [wallet?.id]);
 
-  const walletTxs = useMemo(() => {
+  const allWalletTxs = useMemo(() => {
     return txs
       .filter((tx) => tx.walletId === walletId || (!tx.walletId && wallet && tx.walletName === wallet.name))
       .sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
   }, [txs, wallet, walletId]);
+  const archivedTransactionCount = allWalletTxs.filter((tx) => Boolean(tx.archivedAt)).length;
+  const walletTxs = useMemo(
+    () => allWalletTxs.filter((tx) => !tx.archivedAt || showArchivedTransactions || tx.id === draftIdFromQuery),
+    [allWalletTxs, draftIdFromQuery, showArchivedTransactions],
+  );
   const isWatchOnly = wallet ? !wallet.paymentScript : false;
 
   useEffect(() => {
@@ -805,6 +818,16 @@ export default function WalletDetail() {
     }
     if (connectWarning) {
       setSignStatus(connectWarning);
+      return;
+    }
+    const signerStatus = connectedSignerStatus(tx, connected.keyHash);
+    if (signerStatus === "not-signer") {
+      setSignStatus(`${connected.name} is connected, but its payment key is not part of this multisig policy. Choose one of the listed signer wallets.`);
+      toast.warning("Connected wallet is not a signer");
+      return;
+    }
+    if (signerStatus === "signed") {
+      setSignStatus(`${connected.name} has already signed this transaction.`);
       return;
     }
     if (!tx.unsignedTxCbor?.trim()) {
@@ -1239,11 +1262,18 @@ export default function WalletDetail() {
                   Open what needs attention or share a pending transaction with the remaining signers.
                 </p>
               </div>
-              {relaySync.status === "failed" ? (
-                <Button type="button" variant="secondary" size="sm" className="max-sm:w-full" onClick={() => void refreshRelayRooms()} disabled={!relayDraftsForWallet().length}>
-                  <RefreshCw className="size-4" /> Try again
-                </Button>
-              ) : null}
+              <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+                {archivedTransactionCount ? (
+                  <Button type="button" variant="ghost" size="sm" className="max-sm:flex-1" onClick={() => setShowArchivedTransactions((current) => !current)}>
+                    {showArchivedTransactions ? "Hide" : "Show"} archived ({archivedTransactionCount})
+                  </Button>
+                ) : null}
+                {relaySync.status === "failed" ? (
+                  <Button type="button" variant="secondary" size="sm" className="max-sm:flex-1" onClick={() => void refreshRelayRooms()} disabled={!relayDraftsForWallet().length}>
+                    <RefreshCw className="size-4" /> Try again
+                  </Button>
+                ) : null}
+              </div>
             </div>
             {relaySync.status === "failed" ? (
               <div className="rounded-lg border border-rose-400/25 bg-rose-400/10 p-3 text-sm text-rose-100">
@@ -1265,6 +1295,7 @@ export default function WalletDetail() {
                   const optional = optionalSignerKeyHashes(tx);
                   const highlighted = draftIdFromQuery === tx.id;
                   const canSign = Boolean(tx.unsignedTxCbor?.trim());
+                  const signerStatus = connectedSignerStatus(tx, connected?.keyHash);
                   const pending = pendingSignatureCount(tx);
                   const expanded = expandedTransactions[tx.id] ?? (highlighted || pending > 0);
                   return (
@@ -1291,6 +1322,7 @@ export default function WalletDetail() {
                               {tx.title}
                             </Link>
                             <Badge variant={phaseBadge(phase)}>{phaseLabel(phase)}</Badge>
+                            {tx.archivedAt ? <Badge variant="outline">archived</Badge> : null}
                             {highlighted ? <Badge variant="outline">new</Badge> : null}
                           </div>
                           <div className="mt-1 break-all text-sm text-zinc-400">{tx.recipient || "No recipient address saved"}</div>
@@ -1366,7 +1398,7 @@ export default function WalletDetail() {
                                           <Badge variant="outline" className="border-sky-400/25 bg-sky-400/10 text-sky-200" title="ADA Handle associated with this signer">{handleLabel}</Badge>
                                         ) : null}
                                         {signer.isConnected ? (
-                                          <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">connected</Badge>
+                                          <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">you · connected</Badge>
                                         ) : null}
                                       </div>
                                       <div className="truncate font-mono text-xs text-zinc-500" title={keyHash}>{shortHash(keyHash)}</div>
@@ -1465,8 +1497,20 @@ export default function WalletDetail() {
                           <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copyInvite(tx)} disabled={phase === "submitted"}>
                             <Copy className="size-4" /> {tx.relayRoom ? "Share with signers" : "Create signer link"}
                           </Button>
-                          <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void signTransaction(tx)} disabled={!canSign || phase === "submitted"}>
-                            <ShieldCheck className="size-4" /> Sign with connected wallet
+                          <Button
+                            className="h-auto min-h-10 w-full whitespace-normal px-3 py-2"
+                            variant="secondary"
+                            onClick={() => void signTransaction(tx)}
+                            disabled={!canSign || phase === "submitted" || signerStatus === "not-signer" || signerStatus === "signed"}
+                          >
+                            <ShieldCheck className="size-4" />
+                            {signerStatus === "signed"
+                              ? "You already signed"
+                              : signerStatus === "not-signer"
+                                ? "Connected wallet is not a signer"
+                                : signerStatus === "not-connected"
+                                  ? "Connect a signer wallet"
+                                  : "Sign this transaction"}
                           </Button>
                           <Collapsible className="rounded-lg border border-white/8 bg-black/20">
                             <CollapsibleTrigger asChild>

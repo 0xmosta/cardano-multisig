@@ -298,6 +298,7 @@ function sanitizeTransaction(raw: unknown, index: number, network: Network): TxD
     ...(optionalString(raw.updatedAt, `transactions[${index}].updatedAt`, 64) ? { updatedAt: optionalString(raw.updatedAt, `transactions[${index}].updatedAt`, 64) } : {}),
     ...(txHash ? { txHash: txHash.toLowerCase() } : {}),
     ...(optionalString(raw.failureReason, `transactions[${index}].failureReason`, MAX_NOTE_CHARS) ? { failureReason: optionalString(raw.failureReason, `transactions[${index}].failureReason`, MAX_NOTE_CHARS) } : {}),
+    ...(optionalString(raw.archivedAt, `transactions[${index}].archivedAt`, 64) ? { archivedAt: optionalString(raw.archivedAt, `transactions[${index}].archivedAt`, 64) } : {}),
     ...(sanitizeRelayRoom(raw.relayRoom, `transactions[${index}].relayRoom`) ? { relayRoom: sanitizeRelayRoom(raw.relayRoom, `transactions[${index}].relayRoom`) } : {}),
   };
 }

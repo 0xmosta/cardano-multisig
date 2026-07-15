@@ -416,6 +416,7 @@ function migrateDraft(raw: unknown): TxDraft | null {
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
     txHash: typeof raw.txHash === "string" ? raw.txHash : undefined,
     failureReason: typeof raw.failureReason === "string" ? raw.failureReason : undefined,
+    archivedAt: typeof raw.archivedAt === "string" ? raw.archivedAt : undefined,
     relayRoom: relayRoom?.roomId ? relayRoom : undefined,
   };
 }

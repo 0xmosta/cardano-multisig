@@ -39,6 +39,7 @@ export type AccountSession = {
   lastAuthenticatedAt: string;
   lastSeenAt: string;
   userAgent?: string;
+  label?: string;
   expiresAt: string;
 };
 
@@ -646,8 +647,8 @@ async function writeSessionPostgres(session: AccountSession) {
     await client.query(
       `insert into cm_account_sessions (
         id, network, subject, csrf_token, identity_kind, identity_key_hash, identity_address_hex,
-        created_at, last_authenticated_at, last_seen_at, user_agent, expires_at
-      ) values ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::timestamptz, $11, $12::timestamptz)
+        created_at, last_authenticated_at, last_seen_at, user_agent, label, expires_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::timestamptz, $11, $12, $13::timestamptz)
       on conflict (id) do update set
         network = excluded.network,
         subject = excluded.subject,
@@ -659,6 +660,7 @@ async function writeSessionPostgres(session: AccountSession) {
         last_authenticated_at = excluded.last_authenticated_at,
         last_seen_at = excluded.last_seen_at,
         user_agent = excluded.user_agent,
+        label = excluded.label,
         expires_at = excluded.expires_at`,
       [
         session.id,
@@ -672,6 +674,7 @@ async function writeSessionPostgres(session: AccountSession) {
         session.lastAuthenticatedAt,
         session.lastSeenAt,
         session.userAgent || null,
+        session.label || null,
         session.expiresAt,
       ],
     );
@@ -692,10 +695,11 @@ async function readSessionPostgres(id: string) {
       last_authenticated_at: Date | string;
       last_seen_at: Date | string | null;
       user_agent: string | null;
+      label: string | null;
       expires_at: Date | string;
     }>(
       `select id, network, subject, csrf_token, identity_kind, identity_key_hash, identity_address_hex,
-              created_at, last_authenticated_at, last_seen_at, user_agent, expires_at
+              created_at, last_authenticated_at, last_seen_at, user_agent, label, expires_at
        from cm_account_sessions where id = $1`,
       [id],
     ),
@@ -718,6 +722,7 @@ async function readSessionPostgres(id: string) {
     lastAuthenticatedAt: new Date(row.last_authenticated_at).toISOString(),
     lastSeenAt: new Date(row.last_seen_at || row.last_authenticated_at).toISOString(),
     ...(row.user_agent ? { userAgent: row.user_agent } : {}),
+    ...(row.label ? { label: row.label } : {}),
     expiresAt: new Date(row.expires_at).toISOString(),
   } satisfies AccountSession;
 }
@@ -969,6 +974,7 @@ export type AccountSessionSummary = {
   lastSeenAt: string;
   expiresAt: string;
   userAgent?: string;
+  label?: string;
 };
 
 export async function listAccountSessions(session: AccountSession): Promise<AccountSessionSummary[]> {
@@ -980,8 +986,9 @@ export async function listAccountSessions(session: AccountSession): Promise<Acco
       last_authenticated_at: Date | string;
       expires_at: Date | string;
       user_agent: string | null;
+      label: string | null;
     }>(
-      `select id, created_at, last_seen_at, last_authenticated_at, expires_at, user_agent
+      `select id, created_at, last_seen_at, last_authenticated_at, expires_at, user_agent, label
        from cm_account_sessions
        where network = $1 and subject = $2 and expires_at > now()
        order by coalesce(last_seen_at, last_authenticated_at, created_at) desc`,
@@ -993,6 +1000,7 @@ export async function listAccountSessions(session: AccountSession): Promise<Acco
       lastSeenAt: new Date(row.last_seen_at || row.last_authenticated_at).toISOString(),
       expiresAt: new Date(row.expires_at).toISOString(),
       ...(row.user_agent ? { userAgent: row.user_agent } : {}),
+      ...(row.label ? { label: row.label } : {}),
     }));
   }
   const entries = await readdir(sessionsDir(), { withFileTypes: true }).catch(() => []);
@@ -1005,6 +1013,7 @@ export async function listAccountSessions(session: AccountSession): Promise<Acco
       lastSeenAt: item.lastSeenAt || item.lastAuthenticatedAt,
       expiresAt: item.expiresAt,
       ...(item.userAgent ? { userAgent: item.userAgent } : {}),
+      ...(item.label ? { label: item.label } : {}),
     }))
     .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt));
 }
@@ -1015,6 +1024,40 @@ export async function revokeAccountSession(current: AccountSession, id: string) 
   if (postgresEnabled()) await deleteSessionPostgres(id);
   else await deleteSessionFile(id);
   return true;
+}
+
+export async function renameAccountSession(current: AccountSession, id: string, label: string) {
+  const target = postgresEnabled() ? await readSessionPostgres(id) : await readSessionFile(id);
+  if (!target || target.network !== current.network || target.subject !== current.subject) return false;
+  const normalized = label.trim().slice(0, 80);
+  const next = { ...target, ...(normalized ? { label: normalized } : {}) };
+  if (!normalized) delete next.label;
+  if (postgresEnabled()) await writeSessionPostgres(next);
+  else await writeSessionFile(next);
+  if (id === current.id) current.label = normalized || undefined;
+  return true;
+}
+
+export async function revokeOtherAccountSessions(current: AccountSession) {
+  if (postgresEnabled()) {
+    const result = await withClient((client) => client.query(
+      `delete from cm_account_sessions where network = $1 and subject = $2 and id <> $3`,
+      [current.network, current.subject, current.id],
+    ));
+    return result.rowCount || 0;
+  }
+  const entries = await readdir(sessionsDir(), { withFileTypes: true }).catch(() => []);
+  let revoked = 0;
+  await Promise.all(entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map(async (entry) => {
+    const id = entry.name.slice(0, -5);
+    if (id === current.id) return;
+    const target = await readSessionFile(id);
+    if (target?.network === current.network && target.subject === current.subject) {
+      await deleteSessionFile(id);
+      revoked += 1;
+    }
+  }));
+  return revoked;
 }
 
 export async function loadAccountSnapshot(session: AccountSession): Promise<AccountSnapshot> {

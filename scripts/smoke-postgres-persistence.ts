@@ -5,9 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { createIdentity, createSession, listAccountSessions, loadAccountSnapshot, loadSession, replaceAccountSnapshot, revokeAccountSession } from "../app/lib/server/account-store.ts";
+import { createIdentity, createSession, listAccountSessions, loadAccountSnapshot, loadSession, renameAccountSession, replaceAccountSnapshot, revokeAccountSession, revokeOtherAccountSessions } from "../app/lib/server/account-store.ts";
 import { query } from "../app/lib/server/postgres.ts";
-import { createRelayRoom, readRelayRoom, resolveRelayTokenSession, writeRelayRoom } from "../app/lib/server/relay-room-store.ts";
+import { savePushSubscription } from "../app/lib/server/push-notifications.ts";
+import { coordinatorRoomView, createRelayRoom, readRelayRoom, resolveRelayTokenSession, writeRelayRoom } from "../app/lib/server/relay-room-store.ts";
 import { action as accountStateAction } from "../app/routes/api.account.state.ts";
 
 const execFile = promisify(execFileCallback);
@@ -185,8 +186,17 @@ async function main() {
   const sessions = await listAccountSessions(session);
   assert(sessions.some((item) => item.id === session.id && item.userAgent === "Postgres smoke browser"));
   assert(sessions.some((item) => item.id === second.session.id && item.userAgent === "Second smoke device"));
+  assert.equal(await renameAccountSession(session, second.session.id, "Signing laptop"), true);
+  assert.equal((await listAccountSessions(session)).find((item) => item.id === second.session.id)?.label, "Signing laptop");
+  await savePushSubscription(session.network, session.subject, second.session.id, { endpoint: "https://push.example.test/subscription", keys: { p256dh: "test-p256dh", auth: "test-auth" } });
+  assert.equal((await query<{ count: number }>("select count(*)::int as count from cm_push_subscriptions where session_id = $1", [second.session.id])).rows[0]?.count, 1);
   assert.equal(await revokeAccountSession(session, second.session.id), true);
+  assert.equal((await query<{ count: number }>("select count(*)::int as count from cm_push_subscriptions where session_id = $1", [second.session.id])).rows[0]?.count, 0, "revoked devices must stop receiving push notifications");
   assert.equal((await listAccountSessions(session)).some((item) => item.id === second.session.id), false);
+  await createSession(identity, process.env.CARDANO_NETWORK || "preprod", { userAgent: "Third smoke device" });
+  await createSession(identity, process.env.CARDANO_NETWORK || "preprod", { userAgent: "Fourth smoke device" });
+  assert.equal(await revokeOtherAccountSessions(session), 2);
+  assert.deepEqual((await listAccountSessions(session)).map((item) => item.id), [session.id]);
 
   await query(
     `update cm_accounts
@@ -271,6 +281,7 @@ async function main() {
 
   const relayRoom = await createRelayRoom({
     network: "preprod",
+    ownerSubject: session.subject,
     tx: {
       draftId: txId,
       walletId,
@@ -305,6 +316,8 @@ async function main() {
   assert(coordinatorSession && coordinatorSession.role === "coordinator", "expected coordinator session");
 
   const persistedRoom = await readRelayRoom(relayRoom.room.id);
+  assert.equal(persistedRoom.ownerSubject, session.subject);
+  assert.equal("ownerSubject" in coordinatorRoomView(persistedRoom), false, "account owner must stay server-side");
   assert.equal(persistedRoom.witnesses[0]?.witnessCbor, "84a10081825820cafebabe");
   const storedWitness = await query<{ witness_cbor: string }>(
     `select witness_cbor from cm_relay_room_witnesses where room_id = $1 order by received_at asc limit 1`,

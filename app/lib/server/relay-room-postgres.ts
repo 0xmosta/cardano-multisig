@@ -7,6 +7,7 @@ import { decryptWitness, encryptWitness } from "./witness-crypto";
 type RelayRoomRow = {
   id: string;
   network: string;
+  owner_subject: string | null;
   status: string;
   created_at: Date | string;
   updated_at: Date | string;
@@ -56,6 +57,7 @@ function roomFromRows(room: RelayRoomRow, signers: RelaySignerRow[], witnesses: 
   return {
     id: room.id,
     network: room.network as RelayRoomRecord["network"],
+    ownerSubject: room.owner_subject || undefined,
     status: room.status as RelayRoomRecord["status"],
     createdAt: new Date(room.created_at).toISOString(),
     updatedAt: new Date(room.updated_at).toISOString(),
@@ -146,16 +148,17 @@ export async function writeRelayRoomPostgres(room: RelayRoomRecord) {
   await withTransaction(async (client) => {
     await client.query(
       `insert into cm_relay_rooms (
-        id, network, status, created_at, updated_at, expires_at, tx_json,
+        id, network, owner_subject, status, created_at, updated_at, expires_at, tx_json,
         coordinator_token_hash, coordinator_last_seen_at,
         shared_signer_token_hash, shared_signer_last_seen_at,
         submission_tx_hash, submission_submitted_at,
         submission_failure_error, submission_failure_failed_at
       ) values (
-        $1, $2, $3, $4::timestamptz, $5::timestamptz, $6::timestamptz, $7::jsonb,
-        $8, $9::timestamptz, $10, $11::timestamptz, $12, $13::timestamptz, $14, $15::timestamptz
+        $1, $2, $3, $4, $5::timestamptz, $6::timestamptz, $7::timestamptz, $8::jsonb,
+        $9, $10::timestamptz, $11, $12::timestamptz, $13, $14::timestamptz, $15, $16::timestamptz
       ) on conflict (id) do update set
         network = excluded.network,
+        owner_subject = excluded.owner_subject,
         status = excluded.status,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
@@ -172,6 +175,7 @@ export async function writeRelayRoomPostgres(room: RelayRoomRecord) {
       [
         room.id,
         room.network,
+        room.ownerSubject || null,
         room.status,
         room.createdAt,
         room.updatedAt,

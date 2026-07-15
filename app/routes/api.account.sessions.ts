@@ -2,7 +2,9 @@ import {
   assertSessionMutationRequest,
   listAccountSessions,
   loadSession,
+  renameAccountSession,
   revokeAccountSession,
+  revokeOtherAccountSessions,
 } from "../lib/server/account-store";
 import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
 
@@ -26,13 +28,20 @@ export async function action({ request }: { request: Request }) {
     const session = await loadSession(request);
     if (!session) return Response.json({ ok: false, error: "Sign in first." }, { status: 401, headers: NO_STORE_HEADERS });
     assertSessionMutationRequest(request, session, request.headers.get("x-cardano-multisig-csrf"));
-    const input = await request.json() as { intent?: unknown; sessionId?: unknown };
-    if (input.intent !== "revoke") throw new Error("Unsupported session action.");
+    const input = await request.json() as { intent?: unknown; sessionId?: unknown; label?: unknown };
+    if (input.intent === "revoke_others") {
+      return Response.json({ ok: true, revoked: await revokeOtherAccountSessions(session) }, { headers: NO_STORE_HEADERS });
+    }
     const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
     if (!sessionId || sessionId.length > 128) throw new Error("A valid session id is required.");
+    if (input.intent === "rename") {
+      const label = typeof input.label === "string" ? input.label.trim() : "";
+      if (label.length > 80) throw new Error("Device name must be 80 characters or fewer.");
+      return Response.json({ ok: true, renamed: await renameAccountSession(session, sessionId, label) }, { headers: NO_STORE_HEADERS });
+    }
+    if (input.intent !== "revoke") throw new Error("Unsupported session action.");
     if (sessionId === session.id) throw new Error("Sign out from this device instead of revoking the current session.");
-    const revoked = await revokeAccountSession(session, sessionId);
-    return Response.json({ ok: true, revoked }, { headers: NO_STORE_HEADERS });
+    return Response.json({ ok: true, revoked: await revokeAccountSession(session, sessionId) }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     return rateLimitErrorResponse(error) || Response.json({ ok: false, error: error instanceof Error ? error.message : "Could not revoke session." }, { status: 400, headers: NO_STORE_HEADERS });
   }

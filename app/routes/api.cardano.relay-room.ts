@@ -13,6 +13,7 @@ import { submitErrorMessage, submitSignedTransaction } from "../lib/server/carda
 import { buildSignedRelayTransactionCbor } from "../lib/server/relay-submit";
 import type { RelayRoomRecord } from "../lib/server/relay-room-store";
 import { verifiedWitnessKeyHashes } from "../lib/witness-verification";
+import { sendAccountPush } from "../lib/server/push-notifications";
 import { assertOrigin, assertSessionMutationRequest, loadAccountSnapshot, loadSession } from "../lib/server/account-store";
 import { assertNoCustodialSecrets } from "../lib/server/account-state-validation";
 import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
@@ -246,13 +247,14 @@ async function autoSubmitRelayRoomIfReady(room: RelayRoomRecord) {
   return { room: nextRoom, submitError };
 }
 
-async function handleCreate(request: Request, raw: Record<string, unknown>) {
+async function handleCreate(request: Request, raw: Record<string, unknown>, ownerSubject: string) {
   const { assertRelayCreatePayload, createRelayRoom } = await relayStore();
   const payload = assertRelayCreatePayload(raw as unknown as RelayRoomCreateRequest);
   await configuredNetworkGuard(payload.network);
   CSL.Transaction.from_hex(payload.tx.unsignedTxCbor);
   const created = await createRelayRoom({
     network: payload.network,
+    ownerSubject,
     tx: payload.tx,
     signers: payload.signers,
     witnesses: initialWitnessRecords(raw.witnesses, payload.tx.unsignedTxCbor, payload.tx.signerKeyHashes),
@@ -333,11 +335,15 @@ async function handleSign(raw: Record<string, unknown>) {
     throw new Error("Witness is valid for this transaction, but it does not match any signer in this multisig policy.");
   }
   const deliveredAt = new Date().toISOString();
+  let addedMatchedWitness = false;
 
   const room = await replaceRelayRoomFile(session.room, (current) => {
     if (current.status !== "open") {
       throw new Error(`Relay room is ${current.status}; new witness uploads are disabled.`);
     }
+    addedMatchedWitness = !current.witnesses.some(
+      (witness) => witness.matchStatus === "matched" && normalizeKeyHash(witness.matchedSignerKeyHash || "") === matchedSignerKeyHash,
+    );
     const nextWitness = {
       id: randomRecordId("witness"),
       source: "relay" as const,
@@ -373,6 +379,20 @@ async function handleSign(raw: Record<string, unknown>) {
   });
   const synced = await syncEquivalentRelayRoomWitnesses(room);
   const autoSubmitted = await autoSubmitRelayRoomIfReady(synced);
+
+  if (addedMatchedWitness && autoSubmitted.room.ownerSubject) {
+    const progress = relayProgress(autoSubmitted.room);
+    const submitted = Boolean(autoSubmitted.room.submission?.txHash);
+    const ready = progress.matchedCount >= progress.requiredSignatures;
+    void sendAccountPush(autoSubmitted.room.network, autoSubmitted.room.ownerSubject, {
+      title: submitted ? "Transaction submitted" : ready ? "Ready to submit" : "New multisig signature",
+      body: submitted
+        ? `${autoSubmitted.room.tx.title} was submitted.`
+        : `${autoSubmitted.room.tx.title} now has ${progress.matchedCount}/${progress.requiredSignatures} matched signatures.`,
+      url: `/transactions/${encodeURIComponent(autoSubmitted.room.tx.draftId)}`,
+      tag: `transaction-${autoSubmitted.room.tx.draftId}`,
+    }).catch(() => undefined);
+  }
 
   return Response.json({
     ok: true,
@@ -438,7 +458,7 @@ export async function action({ request }: { request: Request }) {
       if (!savedDraft || savedDraft.unsignedTxCbor.trim().toLowerCase() !== String(draft.unsignedTxCbor || "").trim().toLowerCase()) {
         throw new Error("Signing room transaction does not match this authenticated account.");
       }
-      return noStore(await handleCreate(request, input));
+      return noStore(await handleCreate(request, input, session.subject));
     }
     if (intent === "session") {
       await enforceRateLimit(request, { scope: "relay-session", limit: 180, windowMs: 60_000, actor: `token:${token}` });

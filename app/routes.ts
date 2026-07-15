@@ -2,8 +2,10 @@ import { type RouteConfig, index, route } from "@react-router/dev/routes";
 
 export default [
   index("routes/index.tsx"),
+  route("api/health", "routes/api.health.ts"),
   route("api/account/session", "routes/api.account.session.ts"),
   route("api/account/sessions", "routes/api.account.sessions.ts"),
+  route("api/account/notifications", "routes/api.account.notifications.ts"),
   route("api/account/state", "routes/api.account.state.ts"),
   route("api/cardano/provider", "routes/api.cardano.provider.ts"),
   route("api/cardano/assets", "routes/api.cardano.assets.ts"),

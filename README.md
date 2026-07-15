@@ -66,6 +66,14 @@ DATABASE_URL=postgres://user:password@host:5432/cardano_multisig
 CARDANO_MULTISIG_PUBLIC_ORIGIN=https://your-domain.example
 ```
 
+Opt-in background progress notifications additionally require a server-side VAPID keypair:
+
+```bash
+CARDANO_MULTISIG_VAPID_PUBLIC_KEY=...
+CARDANO_MULTISIG_VAPID_PRIVATE_KEY=...
+CARDANO_MULTISIG_VAPID_SUBJECT=https://your-domain.example
+```
+
 Session cookies are marked `Secure` automatically in production or when `CARDANO_MULTISIG_PUBLIC_ORIGIN` uses HTTPS. For local HTTP-only testing, leave `NODE_ENV` unset or set `CARDANO_MULTISIG_COOKIE_SECURE=0`.
 
 Optional provider overrides:
@@ -127,6 +135,7 @@ See [docs/postgresql-server-state-migration.md](docs/postgresql-server-state-mig
 ```bash
 npm run typecheck
 npm run build
+npm run smoke:cip30
 ```
 
 Smoke-check a running app:
@@ -135,7 +144,7 @@ Smoke-check a running app:
 BASE_URL=http://localhost:5173 npm run smoke:app
 ```
 
-The smoke script checks the main routes, favicon, and provider endpoint. Signing still needs a real wallet extension or a documented test harness because CIP-30 wallet behavior is browser-extension specific.
+The app smoke script checks the main routes, health, favicon, and provider endpoint. The deterministic CIP-30 harness covers the browser-wallet boundary; signing releases should still be checked with a real test-network wallet extension. See [docs/cip30-test-harness.md](docs/cip30-test-harness.md) and [docs/operations.md](docs/operations.md).
 
 ## Docker
 

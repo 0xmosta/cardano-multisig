@@ -55,6 +55,7 @@ type RelayRoomStoredSigner = RelayRoomSignerRecord & {
 export type RelayRoomRecord = {
   id: string;
   network: Network;
+  ownerSubject?: string;
   status: RelayRoomStatus;
   createdAt: string;
   updatedAt: string;
@@ -290,6 +291,7 @@ function assertRelayRoomRecord(raw: unknown): RelayRoomRecord {
   return {
     id: assertString(raw.id, "room.id"),
     network: normalizeNetwork(assertString(raw.network, "room.network")),
+    ownerSubject: assertOptionalBoundedString(raw.ownerSubject, "room.ownerSubject", MAX_TEXT_FIELD_CHARS),
     status,
     createdAt: assertString(raw.createdAt, "room.createdAt"),
     updatedAt: assertString(raw.updatedAt, "room.updatedAt"),
@@ -461,6 +463,7 @@ export async function cleanupExpiredRelayRooms() {
 
 export async function createRelayRoom(input: {
   network: Network;
+  ownerSubject?: string;
   tx: RelayRoomTx;
   signers: Array<{ keyHash: string; label?: string }>;
   witnesses?: RelayRoomWitnessRecord[];
@@ -480,6 +483,7 @@ export async function createRelayRoom(input: {
   const room: RelayRoomRecord = {
     id: roomId(),
     network: input.network,
+    ownerSubject: input.ownerSubject,
     status: "open",
     createdAt,
     updatedAt: createdAt,

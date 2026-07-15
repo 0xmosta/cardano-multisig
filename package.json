@@ -13,9 +13,12 @@
     "db:migrate": "node scripts/postgres-migrate.mjs",
     "db:import-file-store": "node scripts/import-file-store.mjs",
     "db:harden-sensitive-state": "node scripts/harden-sensitive-state.mjs",
+    "db:backup": "node scripts/postgres-backup.mjs",
+    "db:backup:verify": "node scripts/postgres-restore-check.mjs",
     "smoke:app": "node scripts/smoke-app.mjs",
     "smoke:postgres": "tsx scripts/smoke-postgres-persistence.ts",
     "smoke:security": "tsx scripts/smoke-security.ts",
+    "smoke:cip30": "tsx scripts/smoke-cip30-harness.ts",
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc"
   },
@@ -44,7 +47,8 @@
     "react-dom": "^19.2.7",
     "react-router": "8.0.1",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@react-router/dev": "8.0.1",
@@ -53,6 +57,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "^3.6.4",
     "tailwindcss": "^4.2.2",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3",

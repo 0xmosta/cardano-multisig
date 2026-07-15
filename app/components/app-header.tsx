@@ -80,9 +80,6 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
             </span>
             <h1 className="truncate text-lg font-semibold leading-tight text-zinc-50 sm:text-xl">Cardano multisig</h1>
           </Link>
-          <Badge variant="outline" className="hidden border-emerald-400/30 bg-emerald-400/10 text-emerald-200 sm:inline-flex">
-            {providerStatus?.network || account?.network || connected?.networkLabel || "Cardano"}
-          </Badge>
           {accountSyncState !== "idle" && accountSyncState !== "synced" ? (
             <Badge variant={accountSyncState === "error" ? "outline" : "secondary"} className={`hidden sm:inline-flex ${accountSyncState === "error" ? "border-rose-400/30 bg-rose-400/10 text-rose-200" : ""}`}>
               {syncLabel(accountSyncState)}

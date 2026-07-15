@@ -522,6 +522,8 @@ export function AppShell() {
     ).length;
   }, [accountState, connected?.keyHash]);
 
+  const activeNetwork = providerStatus?.network || (connected ? networkLabel(connected.networkId) : account.network || "Cardano");
+
   const context: AppShellContext = {
     providers,
     connected,
@@ -564,6 +566,8 @@ export function AppShell() {
         <Outlet context={context} />
         <footer className="mt-auto hidden justify-end pt-2 text-xs text-zinc-600 md:flex" aria-live="polite">
           <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+            <span className="uppercase tracking-wide text-zinc-500">{activeNetwork}</span>
+            <span aria-hidden="true">·</span>
             <span>{walletCount} wallet{walletCount === 1 ? "" : "s"}</span>
             <span aria-hidden="true">·</span>
             <span>{roomCount} transaction{roomCount === 1 ? "" : "s"}</span>

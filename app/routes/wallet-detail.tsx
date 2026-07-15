@@ -641,7 +641,7 @@ export default function WalletDetail() {
       body: JSON.stringify({ intent: "session", token }),
     });
     const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
-    if (!response.ok || !body.ok || body.role !== "coordinator") {
+    if (!response.ok || !body.ok || (body.role !== "coordinator" && body.role !== "signer")) {
       throw new Error(("error" in body && body.error) || "Could not load relay room state.");
     }
     return body.room;

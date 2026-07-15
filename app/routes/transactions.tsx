@@ -153,7 +153,13 @@ export default function TransactionsRoute() {
             body: JSON.stringify(token ? { intent: "session", token } : { intent: "view", roomId: tx.relayRoom!.roomId }),
           });
           const body = (await response.json()) as RelayRoomSessionResponse | RelayRoomViewResponse | { ok: false; error?: string };
-          if (!response.ok || !body.ok || (body.role !== "coordinator" && body.role !== "viewer")) return null;
+          if (
+            !response.ok ||
+            !body.ok ||
+            (body.role !== "coordinator" && body.role !== "signer" && body.role !== "viewer")
+          ) {
+            return null;
+          }
           return { txId: tx.id, room: body.room };
         }),
       );

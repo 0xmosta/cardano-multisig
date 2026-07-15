@@ -919,7 +919,7 @@ export default function Home() {
             body: JSON.stringify({ intent: "session", token }),
           });
           const body = (await response.json()) as RelayRoomSessionResponse | { ok: false; error?: string };
-          if (!response.ok || !body.ok || body.role !== "coordinator") return null;
+          if (!response.ok || !body.ok || (body.role !== "coordinator" && body.role !== "signer")) return null;
           return { draftId: draft.id, room: body.room };
         }),
       );

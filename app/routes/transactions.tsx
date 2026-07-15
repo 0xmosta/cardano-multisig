@@ -17,6 +17,7 @@ import {
   type TxDraft,
   pendingSignatureCount,
   signatureCount,
+  sortTransactionDraftsNewestFirst,
 } from "../lib/multisig";
 import {
   RELAY_SYNC_INTERVAL_MS,
@@ -230,22 +231,24 @@ export default function TransactionsRoute() {
 
   const visibleTransactions = useMemo(() => {
     const value = query.trim().toLowerCase();
-    if (!value) return transactions;
-    return transactions.filter((tx) =>
-      [
-        tx.title,
-        tx.walletName,
-        tx.recipient,
-        tx.network,
-        transactionState(tx),
-        tx.txHash,
-        ...(tx.signerKeyHashes || []),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(value),
-    );
+    const filtered = value
+      ? transactions.filter((tx) =>
+          [
+            tx.title,
+            tx.walletName,
+            tx.recipient,
+            tx.network,
+            transactionState(tx),
+            tx.txHash,
+            ...(tx.signerKeyHashes || []),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(value),
+        )
+      : transactions;
+    return sortTransactionDraftsNewestFirst(filtered);
   }, [query, transactions]);
 
   const readyCount = transactions.filter((tx) => transactionState(tx) === "ready").length;

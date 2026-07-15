@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mergeSignatures, type SignatureRecord, type TxDraft } from "../app/lib/multisig.ts";
+import { mergeSignatures, sortTransactionDraftsNewestFirst, type SignatureRecord, type TxDraft } from "../app/lib/multisig.ts";
 import { persistableRelayDraft } from "../app/lib/relay-room.ts";
 import { stableJsonStringify } from "../app/lib/utils.ts";
 import { sanitizeAccountSnapshotInput } from "../app/lib/server/account-state-validation.ts";
@@ -96,6 +96,9 @@ assert.equal(mergedSignatures[0].witnessCbor, witnessSignature.witnessCbor);
 const progressDraft = { ...normal.transactions[0], signatures: [progressSignature] } as TxDraft;
 assert.deepEqual(persistableRelayDraft(progressDraft).signatures, []);
 assert.equal(stableJsonStringify({ beta: 2, alpha: { delta: 4, charlie: 3 } }), stableJsonStringify({ alpha: { charlie: 3, delta: 4 }, beta: 2 }));
+const olderDraft = { ...normal.transactions[0], id: "tx-older", createdAt: "2026-07-15T09:00:00.000Z" } as TxDraft;
+const newerDraft = { ...normal.transactions[0], id: "tx-newer", createdAt: "2026-07-15T10:00:00.000Z" } as TxDraft;
+assert.deepEqual(sortTransactionDraftsNewestFirst([olderDraft, newerDraft]).map((draft) => draft.id), ["tx-newer", "tx-older"]);
 
 const request = new Request("http://localhost/security", { headers: { "x-forwarded-for": "192.0.2.1" } });
 await enforceRateLimit(request, { scope: "security-smoke", limit: 2, windowMs: 60_000 });

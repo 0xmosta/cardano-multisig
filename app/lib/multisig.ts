@@ -436,5 +436,13 @@ export function mergeTransactionDrafts(existing: TxDraft[], incoming: TxDraft[])
     const current = merged.get(draft.id);
     merged.set(draft.id, current ? mergeTransactionDraft(current, draft) : draft);
   }
-  return [...merged.values()].sort((left, right) => (right.createdAt || "").localeCompare(left.createdAt || ""));
+  return sortTransactionDraftsNewestFirst([...merged.values()]);
+}
+
+export function sortTransactionDraftsNewestFirst(drafts: TxDraft[]) {
+  return [...drafts].sort((left, right) => {
+    const createdAtDifference = (Date.parse(right.createdAt) || 0) - (Date.parse(left.createdAt) || 0);
+    if (createdAtDifference) return createdAtDifference;
+    return right.id.localeCompare(left.id);
+  });
 }

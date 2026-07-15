@@ -67,6 +67,7 @@ import {
   applyRelayRoomToDraft,
   hasActiveRelayRoom,
   relayDraftFingerprint,
+  relayDraftsPersistenceFingerprint,
 } from "../lib/relay-room";
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
@@ -133,7 +134,7 @@ function stripRelayRoomSecrets(tx: TxDraft): TxDraft {
 }
 
 function stateSnapshotKey(wallets: Wallet[], txs: TxDraft[]) {
-  return JSON.stringify({ wallets, txs });
+  return JSON.stringify({ wallets, txs: relayDraftsPersistenceFingerprint(txs) });
 }
 
 function formatRawQuantity(quantity: string, unit: string, decimals = unit === "lovelace" ? 6 : 0) {

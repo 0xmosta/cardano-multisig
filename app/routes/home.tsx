@@ -79,6 +79,7 @@ import {
   draftFromRelaySignerView,
   hasActiveRelayRoom,
   relayDraftFingerprint,
+  relayDraftsPersistenceFingerprint,
 } from "../lib/relay-room";
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
@@ -418,7 +419,7 @@ function migrateDraft(raw: unknown): TxDraft | null {
 }
 
 function stateSnapshotKey(wallets: MultisigWallet[], drafts: TxDraft[]) {
-  return JSON.stringify({ wallets, drafts });
+  return JSON.stringify({ wallets, drafts: relayDraftsPersistenceFingerprint(drafts) });
 }
 
 

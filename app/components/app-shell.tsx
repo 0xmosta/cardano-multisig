@@ -8,6 +8,7 @@ import { Sidebar, SidebarContent, SidebarMenu, SidebarMenuBadge, SidebarMenuButt
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
 import { LEGACY_STORAGE_KEY, STORAGE_KEY, TX_STORAGE_KEY, networkLabel, type MultisigWallet, type TxDraft } from "../lib/multisig";
+import { persistableRelayDraft } from "../lib/relay-room";
 import { cn } from "../lib/utils";
 
 type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
@@ -305,13 +306,17 @@ export function AppShell() {
         throw new Error("Sign in and refresh the server account before saving.");
       }
       setAccountSyncState("syncing");
+      const persistableState = {
+        wallets: state.wallets,
+        transactions: state.transactions.map(persistableRelayDraft),
+      };
       const response = await fetch("/api/account/state", {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "x-cardano-multisig-csrf": currentAccount.session.csrfToken,
         },
-        body: JSON.stringify({ intent: "replace", baseUpdatedAt: currentState.updatedAt, ...state }),
+        body: JSON.stringify({ intent: "replace", baseUpdatedAt: currentState.updatedAt, ...persistableState }),
       });
       const body = (await response.json()) as AccountStateResponse;
       if (!response.ok || !body.ok || !body.snapshot) {

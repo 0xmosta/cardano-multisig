@@ -252,6 +252,27 @@ export function relayDraftFingerprint(draft: TxDraft) {
   });
 }
 
+export function isRelayProgressSignature(signature: SignatureRecord) {
+  return !signature.witnessCbor.trim() && Boolean(signature.relayWitnessId?.startsWith("relay-progress:"));
+}
+
+export function persistableRelayDraft(draft: TxDraft): TxDraft {
+  const signatures = (draft.signatures || []).filter((signature) => !isRelayProgressSignature(signature));
+  return signatures.length === (draft.signatures || []).length ? draft : { ...draft, signatures };
+}
+
+export function relayDraftsPersistenceFingerprint(drafts: TxDraft[]) {
+  return JSON.stringify(
+    drafts.map((draft) => {
+      const persistable = persistableRelayDraft(draft);
+      const { updatedAt: _updatedAt, relayRoom, ...durableDraft } = persistable;
+      if (!relayRoom) return durableDraft;
+      const { lastSyncAt: _lastSyncAt, ...durableRelayRoom } = relayRoom;
+      return { ...durableDraft, relayRoom: durableRelayRoom };
+    }),
+  );
+}
+
 export function hasActiveRelayRoom(draft: Pick<TxDraft, "relayRoom" | "txHash">) {
   return Boolean(draft.relayRoom?.roomId && (draft.relayRoom.status || "open") === "open" && !draft.txHash);
 }

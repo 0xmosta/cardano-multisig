@@ -393,7 +393,18 @@ export function mergeSignatures(existing: SignatureRecord[], incoming: Signature
         ? normalizeKeyHash(signature.matchedSignerKeyHash)
         : undefined,
     };
-    next.set(signatureStorageKey(normalizedSignature), normalizedSignature);
+    const storageKey = signatureStorageKey(normalizedSignature);
+    const existingSignature = next.get(storageKey);
+    if (!normalizedSignature.witnessCbor.trim() && existingSignature?.witnessCbor.trim()) {
+      next.set(storageKey, {
+        ...normalizedSignature,
+        ...existingSignature,
+        matchStatus: normalizedSignature.matchStatus || existingSignature.matchStatus,
+        matchedSignerKeyHash: normalizedSignature.matchedSignerKeyHash || existingSignature.matchedSignerKeyHash,
+      });
+      continue;
+    }
+    next.set(storageKey, normalizedSignature);
   }
   return [...next.values()];
 }

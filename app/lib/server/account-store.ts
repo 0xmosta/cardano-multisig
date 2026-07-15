@@ -120,6 +120,12 @@ function accountVersionFromDatabase(value: Date | string) {
   return accountVersionIso(milliseconds);
 }
 
+function accountVersionMatches(current: string, expected: string) {
+  if (current === expected) return true;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(expected)) return false;
+  return current.replace(/(\.\d{3})\d{3}Z$/, "$1Z") === expected;
+}
+
 function dataDir() {
   return path.resolve((process.env.CARDANO_MULTISIG_DATA_DIR || "./data/cardano-multisig").trim());
 }
@@ -938,7 +944,7 @@ export async function replaceAccountSnapshot(
   expectedUpdatedAt?: string,
 ) {
   const current = (await readAccount(session.network, session.subject)) || (await getOrCreateAccount(session.identity, session.network));
-  if (expectedUpdatedAt && current.updatedAt !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !accountVersionMatches(current.updatedAt, expectedUpdatedAt)) {
     throw new AccountStateConflictError();
   }
   const sanitized = sanitizeAccountSnapshotInput(snapshot, session.network);
@@ -958,7 +964,7 @@ export async function replaceAccountSnapshot(
       }),
     ].slice(-MAX_AUDIT_EVENTS),
   };
-  await writeAccount(next, expectedUpdatedAt);
+  await writeAccount(next, expectedUpdatedAt ? current.updatedAt : undefined);
   return {
     wallets: next.wallets,
     transactions: hydrateTransactions(next.transactions),

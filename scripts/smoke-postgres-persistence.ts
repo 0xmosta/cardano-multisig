@@ -183,11 +183,12 @@ async function main() {
   assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.signerInvites?.[0]?.inviteUrl, `http://localhost/sign#r=${relayCapability}`);
   assert(reloadedSnapshot.updatedAt, "expected a server snapshot version");
   assert.match(reloadedSnapshot.updatedAt, /\.\d{6}Z$/, "expected the account version to preserve PostgreSQL microseconds");
+  const legacyMillisecondVersion = reloadedSnapshot.updatedAt.replace(/(\.\d{3})\d{3}Z$/, "$1Z");
   const versionedSnapshot = await replaceAccountSnapshot(
     loadedSession,
     { wallets: reloadedSnapshot.wallets, transactions: reloadedSnapshot.transactions },
     "smoke.versioned-replace",
-    reloadedSnapshot.updatedAt,
+    legacyMillisecondVersion,
   );
   await assert.rejects(
     replaceAccountSnapshot(
@@ -326,6 +327,7 @@ async function main() {
         staleSnapshotRejected: true,
         staleSnapshotReturnsConflict: true,
         postgresVersionPrecisionPreserved: true,
+        legacyMillisecondVersionAccepted: true,
         importedTransactionEncrypted: true,
         relayCapabilitiesEncrypted: true,
         mixedNetworkImportRejected: true,

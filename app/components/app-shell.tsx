@@ -531,7 +531,7 @@ export function AppShell() {
   };
 
   return (
-    <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 overflow-x-hidden px-3 pb-24 pt-3 text-foreground sm:gap-6 sm:px-6 sm:pt-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
+    <>
       <AppSidebar walletCount={walletCount} roomCount={roomCount} />
       <AppHeader
         providers={providers}
@@ -548,7 +548,9 @@ export function AppShell() {
         onSignIn={() => void signInConnectedWallet()}
         onSignOut={() => void signOutAccount()}
       />
-      <Outlet context={context} />
-    </main>
+      <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 overflow-x-hidden px-3 pb-24 pt-20 text-foreground sm:gap-6 sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
+        <Outlet context={context} />
+      </main>
+    </>
   );
 }

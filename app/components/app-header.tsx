@@ -1,4 +1,4 @@
-import { CircleUserRound, LogIn, ShieldCheck, WalletCards } from "lucide-react";
+import { Check, CircleUserRound, LogIn, ShieldCheck, WalletCards } from "lucide-react";
 import { Avatar } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -70,22 +70,22 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
   onSignOut?: () => void;
 }) {
   return (
-    <header className="glass-panel flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+    <header className="fixed inset-x-0 top-0 z-50 flex h-16 items-center justify-between gap-3 border-b border-border bg-[#111113]/95 px-4 shadow-2xl shadow-black/30 backdrop-blur-xl sm:px-6">
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="mr-2 text-xl font-semibold leading-tight text-zinc-50 sm:text-2xl">Cardano multisig</h1>
-          <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
+        <div className="flex min-w-0 items-center gap-2">
+          <h1 className="truncate text-lg font-semibold leading-tight text-zinc-50 sm:mr-2 sm:text-xl">Cardano multisig</h1>
+          <Badge variant="outline" className="hidden border-emerald-400/30 bg-emerald-400/10 text-emerald-200 sm:inline-flex">
             {providerStatus?.network || account?.network || connected?.networkLabel || "Cardano"}
           </Badge>
           {accountSyncState !== "idle" && accountSyncState !== "synced" ? (
-            <Badge variant={accountSyncState === "error" ? "outline" : "secondary"} className={accountSyncState === "error" ? "border-rose-400/30 bg-rose-400/10 text-rose-200" : ""}>
+            <Badge variant={accountSyncState === "error" ? "outline" : "secondary"} className={`hidden sm:inline-flex ${accountSyncState === "error" ? "border-rose-400/30 bg-rose-400/10 text-rose-200" : ""}`}>
               {syncLabel(accountSyncState)}
             </Badge>
           ) : null}
-          {providerStatus && !providerStatus.ready ? <Badge variant="outline" className="border-amber-400/30 text-amber-200">Network unavailable</Badge> : null}
+          {providerStatus && !providerStatus.ready ? <Badge variant="outline" className="hidden border-amber-400/30 text-amber-200 sm:inline-flex">Network unavailable</Badge> : null}
         </div>
         {typeof walletCount === "number" || typeof roomCount === "number" ? (
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          <div className="mt-0.5 hidden items-center gap-2 text-xs text-zinc-500 sm:flex">
             {typeof walletCount === "number" ? <span>{walletCount} wallet{walletCount === 1 ? "" : "s"}</span> : null}
             {typeof walletCount === "number" && typeof roomCount === "number" ? <span>·</span> : null}
             {typeof roomCount === "number" ? <span>{roomCount} room{roomCount === 1 ? "" : "s"}</span> : null}
@@ -101,14 +101,45 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant="secondary" className="h-10 shrink-0 self-start px-2.5 sm:self-auto">
-            <CircleUserRound className="size-5 text-zinc-300" />
-            <span className="hidden max-w-28 truncate sm:inline">{connected ? connected.name : account ? "Signed in" : "Sign in"}</span>
-            <Badge variant={account ? "default" : connected ? "secondary" : "outline"}>{account ? account.network : connected ? connected.networkLabel : "off"}</Badge>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon"
+            className="relative size-10 shrink-0 rounded-full"
+            aria-label={connected ? `Connected wallet: ${connected.name}. Choose wallet` : "Choose wallet"}
+            title={connected ? `${connected.name} connected` : "Choose wallet"}
+          >
+            <CircleUserRound className="size-5 text-zinc-200" />
+            <span
+              aria-hidden="true"
+              className={`absolute bottom-0.5 right-0.5 size-2.5 rounded-full border-2 border-[#242426] ${connected ? "bg-emerald-400" : account ? "bg-sky-400" : "bg-zinc-500"}`}
+            />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" sideOffset={8} className="wallet-popover p-3">
-          <DropdownMenuLabel className="sr-only">Signer wallet</DropdownMenuLabel>
+          <DropdownMenuLabel className="px-0 pb-2 pt-0 text-sm font-semibold text-zinc-100">Choose signer wallet</DropdownMenuLabel>
+          <div className="grid gap-2">
+            {providers.length ? (
+              providers.map((provider) => (
+                <Button
+                  key={provider.id}
+                  type="button"
+                  variant={connected?.id === provider.id ? "default" : "secondary"}
+                  disabled={Boolean(connectingId)}
+                  onClick={() => onConnect(provider)}
+                  className="h-11 justify-start"
+                >
+                  {provider.icon ? <img alt="" className="size-5" src={provider.icon} /> : <WalletCards className="size-5" />}
+                  <span className="min-w-0 flex-1 truncate text-left">{connectingId === provider.id ? `Connecting ${provider.name}…` : provider.name}</span>
+                  {connected?.id === provider.id ? <><Check className="size-4" /><span className="sr-only">Connected</span></> : null}
+                </Button>
+              ))
+            ) : (
+              <div className="rounded-lg border border-border bg-black/20 p-3 text-sm text-zinc-400">No browser wallet detected.</div>
+            )}
+          </div>
+
+          <DropdownMenuSeparator className="my-3" />
           <div className="flex items-start gap-3 border-b border-border pb-3">
             <Avatar label={connected?.name || account?.subject || "Signer"} tone={account ? "success" : connected ? "primary" : "muted"} />
             <div className="min-w-0">
@@ -135,25 +166,7 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
             <div>Account: {account ? `${account.identityKind} · ${account.keyHash.slice(0, 10)}…${account.keyHash.slice(-8)}` : "not signed in"}</div>
             <div className="mt-1">Service: {providerStatus?.ready ? "online" : "unavailable"} · Save status: {accountSyncState === "synced" ? "saved" : syncLabel(accountSyncState) || "idle"}</div>
           </div>
-          <DropdownMenuSeparator className="hidden" />
           <div className="mt-3 grid gap-2">
-            {providers.length ? (
-              providers.map((provider) => (
-                <Button
-                  key={provider.id}
-                  type="button"
-                  variant={connected?.id === provider.id ? "default" : "secondary"}
-                  disabled={Boolean(connectingId)}
-                  onClick={() => onConnect(provider)}
-                  className="justify-start"
-                >
-                  {provider.icon ? <img alt="" className="size-4" src={provider.icon} /> : <WalletCards className="size-4" />}
-                  {connectingId === provider.id ? "Waiting..." : provider.name}
-                </Button>
-              ))
-            ) : (
-              <div className="rounded-lg border border-border bg-black/20 p-3 text-sm text-zinc-400">No browser wallet detected.</div>
-            )}
             {connected && !account && onSignIn ? (
               <Button type="button" onClick={onSignIn} className="justify-start">
                 <LogIn className="size-4" /> Sign in with {connected.name}

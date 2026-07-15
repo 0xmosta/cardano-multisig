@@ -11,6 +11,7 @@ export default [
   route("api/cardano/submit", "routes/api.cardano.submit.ts"),
   route("wallets", "routes/wallets.tsx"),
   route("transactions", "routes/transactions.tsx"),
+  route("transactions/:transactionId", "routes/transaction-detail.tsx"),
   route("sign", "routes/home.tsx"),
   route("wallets/import", "routes/wallet-import.tsx"),
   route("wallets/:walletId", "routes/wallet-detail.tsx"),

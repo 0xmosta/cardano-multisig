@@ -1,7 +1,7 @@
-import { ArrowRight, CheckCircle2, Clock, Cloud, Loader2, Plus, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
+import { ArrowRight, CheckCircle2, ChevronRight, Clock, Cloud, Loader2, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type { Route } from "./+types/transactions";
 import { AccountSyncPanel } from "../components/account-sync-panel";
 import { useAppShell } from "../components/app-shell";
@@ -44,12 +44,8 @@ function statusBadgeVariant(state: ReturnType<typeof transactionState>) {
   return "outline" as const;
 }
 
-function walletHref(tx: TxDraft) {
-  return tx.walletId ? `/wallets/${encodeURIComponent(tx.walletId)}` : "/wallets";
-}
-
-function newTransactionHref(tx: TxDraft) {
-  return tx.walletId ? `/wallets/${encodeURIComponent(tx.walletId)}/transactions/new` : "/wallets";
+function transactionHref(tx: TxDraft) {
+  return `/transactions/${encodeURIComponent(tx.id)}`;
 }
 
 function relayTokenFromInviteUrl(inviteUrl: string) {
@@ -67,7 +63,11 @@ function TransactionMobileCard({ tx }: { tx: TxDraft }) {
   const missing = pendingSignatureCount(tx);
   const state = transactionState(tx);
   return (
-    <article className="min-w-0 rounded-lg border border-border bg-black/20 p-4">
+    <Link
+      to={transactionHref(tx)}
+      aria-label={`Open transaction ${tx.title}`}
+      className="group block min-w-0 rounded-xl border border-border bg-black/20 p-4 transition-colors hover:border-sky-300/30 hover:bg-sky-300/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
       <div className="flex min-w-0 items-start gap-3">
         <Avatar label={tx.walletName} tone={missing ? "primary" : "success"} />
         <div className="min-w-0 flex-1">
@@ -97,23 +97,16 @@ function TransactionMobileCard({ tx }: { tx: TxDraft }) {
         {tx.txHash ? `Transaction ${tx.txHash}` : tx.recipient || "No recipient saved"}
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <Button asChild className="min-w-0 px-2">
-          <Link to={walletHref(tx)}>
-            Wallet <ArrowRight className="size-4" />
-          </Link>
-        </Button>
-        <Button asChild variant="secondary" className="min-w-0 px-2">
-          <Link to={newTransactionHref(tx)}>
-            <Plus className="size-4" /> New
-          </Link>
-        </Button>
+      <div className="mt-4 flex items-center justify-between border-t border-white/8 pt-3 text-sm font-medium text-sky-200">
+        <span>View transaction details</span>
+        <ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" />
       </div>
-    </article>
+    </Link>
   );
 }
 
 export default function TransactionsRoute() {
+  const navigate = useNavigate();
   const { account, accountState, refreshServerState, saveServerState } = useAppShell();
   const [transactions, setTransactions] = useState<TxDraft[]>([]);
   const [query, setQuery] = useState("");
@@ -317,13 +310,8 @@ export default function TransactionsRoute() {
           return (
             <div className="flex justify-end gap-2">
               <Button asChild size="sm">
-                <Link to={walletHref(tx)}>
-                  Open wallet <ArrowRight className="size-4" />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="secondary">
-                <Link to={newTransactionHref(tx)}>
-                  <Plus className="size-4" /> New
+                <Link to={transactionHref(tx)}>
+                  View details <ArrowRight className="size-4" />
                 </Link>
               </Button>
             </div>
@@ -339,7 +327,7 @@ export default function TransactionsRoute() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-zinc-50 sm:text-3xl">Transactions</h1>
-          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Track pending signature rooms, open wallet coordinators, and continue transaction work from {account ? "server-synced account state" : "this browser"}.</p>
+          <p className="mt-2 max-w-2xl text-sm text-zinc-400">Open a transaction to review its recipient, assets, signatures, relay status, and next action.</p>
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
           <Badge variant="secondary">
@@ -398,6 +386,7 @@ export default function TransactionsRoute() {
               data={visibleTransactions}
               emptyLabel="No transaction matches."
               renderMobileRow={(tx) => <TransactionMobileCard tx={tx} />}
+              onRowClick={(tx) => navigate(transactionHref(tx))}
             />
           ) : (
             <Empty>

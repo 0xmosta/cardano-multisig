@@ -167,7 +167,7 @@ function AppSidebar({ walletCount, roomCount }: { walletCount: number; roomCount
   const location = useLocation();
   const items = [
     { label: "Wallets", href: "/wallets", icon: WalletCards, active: location.pathname === "/wallets" || location.pathname.startsWith("/wallets/"), count: walletCount },
-    { label: "Transactions", href: "/transactions", icon: ListChecks, active: location.pathname === "/transactions", count: roomCount },
+    { label: "Transactions", href: "/transactions", icon: ListChecks, active: location.pathname === "/transactions" || location.pathname.startsWith("/transactions/"), count: roomCount },
   ];
 
   return (

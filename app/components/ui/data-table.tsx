@@ -21,6 +21,7 @@ interface DataTableProps<TData, TValue> {
   filterPlaceholder?: string;
   emptyLabel?: string;
   renderMobileRow?: (row: TData, index: number) => React.ReactNode;
+  onRowClick?: (row: TData) => void;
 }
 
 export function DataTable<TData, TValue>({
@@ -30,6 +31,7 @@ export function DataTable<TData, TValue>({
   filterPlaceholder = "Filter...",
   emptyLabel = "No results.",
   renderMobileRow,
+  onRowClick,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const table = useReactTable({
@@ -84,7 +86,22 @@ export function DataTable<TData, TValue>({
           <TableBody>
             {rows.length ? (
               rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                  className={cn(onRowClick ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset" : "")}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          onRowClick(row.original);
+                        }
+                      : undefined
+                  }
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
                   ))}

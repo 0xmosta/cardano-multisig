@@ -15,6 +15,7 @@ const checks = [
   { path: "/wallets", expect: ["Wallets"] },
   { path: "/wallets/import", expect: ["Cardano multisig"] },
   { path: "/transactions", expect: ["Transactions"] },
+  { path: "/transactions/tx-smoke", expect: ["Transaction not found"] },
   { path: "/sign", expect: ["Cardano multisig"] },
   { path: "/favicon.svg", contentType: "image/svg+xml" },
   { path: "/api/cardano/provider", json: true, expectJson: ["ready", "network"] },

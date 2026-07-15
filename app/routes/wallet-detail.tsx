@@ -1256,7 +1256,12 @@ export default function WalletDetail() {
                           <Avatar label={tx.title} tone={phase === "submitted" || phase === "ready" ? "success" : "primary"} />
                           <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="break-words text-lg font-semibold text-zinc-50">{tx.title}</h3>
+                            <Link
+                              to={`/transactions/${encodeURIComponent(tx.id)}`}
+                              className="break-words text-lg font-semibold text-zinc-50 underline-offset-4 hover:text-sky-200 hover:underline"
+                            >
+                              {tx.title}
+                            </Link>
                             <Badge variant={phaseBadge(phase)}>{phaseLabel(phase)}</Badge>
                             {highlighted ? <Badge variant="outline">new</Badge> : null}
                           </div>

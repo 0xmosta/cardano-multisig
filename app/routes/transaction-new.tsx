@@ -743,6 +743,19 @@ export default function NewTransaction() {
             <div className="min-w-0 space-y-2">
               <Label>Recipient address</Label>
               <Input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="addr1... or addr_test1..." className="h-11 font-mono text-sm" />
+              {accountState?.contacts.length ? (
+                <Select onValueChange={(contactId) => {
+                  const contact = accountState.contacts.find((item) => item.id === contactId);
+                  if (contact) setRecipient(contact.address);
+                }}>
+                  <SelectTrigger className="h-9"><span className="truncate text-muted-foreground">Choose from address book</span></SelectTrigger>
+                  <SelectContent>
+                    {accountState.contacts.map((contact) => (
+                      <SelectItem key={contact.id} value={contact.id}>{contact.label}{contact.handle ? ` · $${contact.handle.replace(/^\$/, "")}` : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
             </div>
           </div>
 

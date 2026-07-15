@@ -4,13 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { Route } from "./+types/transactions";
 import { AccountSyncPanel } from "../components/account-sync-panel";
+import { ActionError } from "../components/action-error";
 import { useAppShell } from "../components/app-shell";
 import { AppWindow } from "../components/ui/app-window";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { DataTable } from "../components/ui/data-table";
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { Input } from "../components/ui/input";
 import { Progress } from "../components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
@@ -201,9 +202,16 @@ export default function TransactionsRoute() {
   const transactionsRef = useRef<TxDraft[]>([]);
   const accountStateRef = useRef(accountState);
   const relaySyncInFlightRef = useRef(false);
+  const appliedDefaultFilterRef = useRef(false);
 
   transactionsRef.current = transactions;
   accountStateRef.current = accountState;
+
+  useEffect(() => {
+    if (!accountState || appliedDefaultFilterRef.current) return;
+    appliedDefaultFilterRef.current = true;
+    setFilter(accountState.preferences.defaultTransactionFilter as InboxFilter);
+  }, [accountState]);
 
   const relaySyncKey = useMemo(
     () =>
@@ -542,17 +550,7 @@ export default function TransactionsRoute() {
               </EmptyHeader>
             </Empty>
           ) : loadError ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>Could not load transactions</EmptyTitle>
-                <EmptyDescription>{loadError}</EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button type="button" variant="secondary" onClick={() => void refreshServerState()}>
-                  Retry
-                </Button>
-              </EmptyContent>
-            </Empty>
+            <ActionError title="Could not load transactions" message={loadError} details="The server-backed transaction list request failed." onRetry={async () => { await refreshServerState(); }} />
           ) : transactions.length ? (
             <DataTable
               columns={columns}

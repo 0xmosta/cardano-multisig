@@ -7,9 +7,24 @@ import { Badge } from "./ui/badge";
 import { Sidebar, SidebarContent, SidebarMenu, SidebarMenuBadge, SidebarMenuButton } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { watchInstalledBrowserWallets, type BrowserWalletApi, type BrowserWalletProvider } from "../lib/browser-wallets";
-import { LEGACY_STORAGE_KEY, STORAGE_KEY, TX_STORAGE_KEY, networkLabel, normalizeKeyHash, type MultisigWallet, type TxDraft } from "../lib/multisig";
+import {
+  DEFAULT_ACCOUNT_PREFERENCES,
+  LEGACY_STORAGE_KEY,
+  STORAGE_KEY,
+  TX_STORAGE_KEY,
+  networkLabel,
+  normalizeKeyHash,
+  signatureCount,
+  type AccountPreferences,
+  type AddressBookContact,
+  type MultisigWallet,
+  type Network,
+  type TxDraft,
+} from "../lib/multisig";
 import { persistableRelayDraft } from "../lib/relay-room";
 import { cn, userFacingError } from "../lib/utils";
+import { AccountToolsDialog } from "./account-tools-dialog";
+import { GlobalSearchDialog } from "./global-search";
 
 type WalletProvider = BrowserWalletProvider<BrowserWalletApi>;
 
@@ -27,6 +42,14 @@ type AccountSession = {
   transactionCount: number;
 };
 
+type ServerAccountSnapshot = {
+  wallets: MultisigWallet[];
+  transactions: TxDraft[];
+  contacts: AddressBookContact[];
+  preferences: AccountPreferences;
+  updatedAt?: string;
+};
+
 type AccountSessionResponse = {
   authenticated: boolean;
   network: string;
@@ -35,11 +58,7 @@ type AccountSessionResponse = {
 
 type AccountStateResponse = AccountSessionResponse & {
   ok: boolean;
-  snapshot?: {
-    wallets: MultisigWallet[];
-    transactions: TxDraft[];
-    updatedAt?: string;
-  };
+  snapshot?: ServerAccountSnapshot;
   error?: string;
 };
 
@@ -61,13 +80,13 @@ export type AppShellContext = {
   walletCount: number;
   roomCount: number;
   account: AccountSessionResponse;
-  accountState: { wallets: MultisigWallet[]; transactions: TxDraft[]; updatedAt?: string } | null;
+  accountState: ServerAccountSnapshot | null;
   accountSyncState: "idle" | "authenticating" | "hydrating" | "syncing" | "synced" | "error";
   connectWallet: (provider: WalletProvider) => Promise<ShellConnectedWallet | null>;
   disconnectWallet: () => void;
   refreshConnectedWallet: () => Promise<ShellConnectedWallet>;
-  refreshServerState: () => Promise<{ wallets: MultisigWallet[]; transactions: TxDraft[]; updatedAt?: string } | null>;
-  saveServerState: (state: { wallets: MultisigWallet[]; transactions: TxDraft[] }) => Promise<{ wallets: MultisigWallet[]; transactions: TxDraft[]; updatedAt?: string } | null>;
+  refreshServerState: () => Promise<ServerAccountSnapshot | null>;
+  saveServerState: (state: { wallets: MultisigWallet[]; transactions: TxDraft[]; contacts?: AddressBookContact[]; preferences?: AccountPreferences }) => Promise<ServerAccountSnapshot | null>;
   signInConnectedWallet: () => Promise<void>;
   signOutAccount: () => Promise<void>;
   refreshAccount: () => Promise<void>;
@@ -261,6 +280,8 @@ export function AppShell() {
   const [account, setAccount] = useState<AccountSessionResponse>({ authenticated: false, network: "preprod", session: null });
   const [accountState, setAccountState] = useState<NonNullable<AccountStateResponse["snapshot"]> | null>(null);
   const [accountSyncState, setAccountSyncState] = useState<AppShellContext["accountSyncState"]>("idle");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [accountTools, setAccountTools] = useState<{ open: boolean; tab: "contacts" | "preferences" | "sessions" }>({ open: false, tab: "preferences" });
   const accountRef = useRef(account);
   const accountStateRef = useRef(accountState);
   const saveQueueRef = useRef<Promise<NonNullable<AccountStateResponse["snapshot"]> | null>>(Promise.resolve(null));
@@ -331,7 +352,7 @@ export function AppShell() {
     return body.snapshot;
   }
 
-  async function saveServerState(state: { wallets: MultisigWallet[]; transactions: TxDraft[] }) {
+  async function saveServerState(state: { wallets: MultisigWallet[]; transactions: TxDraft[]; contacts?: AddressBookContact[]; preferences?: AccountPreferences }) {
     const run = async () => {
       const currentAccount = accountRef.current;
       const currentState = accountStateRef.current;
@@ -342,6 +363,8 @@ export function AppShell() {
       const persistableState = {
         wallets: state.wallets,
         transactions: state.transactions.map(persistableRelayDraft),
+        contacts: state.contacts ?? currentState.contacts,
+        preferences: state.preferences ?? currentState.preferences,
       };
       const response = await fetch("/api/account/state", {
         method: "POST",
@@ -385,6 +408,46 @@ export function AppShell() {
       stopWatchingWallets();
     };
   }, []);
+
+  useEffect(() => {
+    function shortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, []);
+
+  const previousTransactionsRef = useRef<TxDraft[] | null>(null);
+  useEffect(() => {
+    if (!accountState) {
+      previousTransactionsRef.current = null;
+      return;
+    }
+    const previous = previousTransactionsRef.current;
+    previousTransactionsRef.current = accountState.transactions;
+    if (!previous || !accountState.preferences.notificationsEnabled || !("Notification" in window) || Notification.permission !== "granted") return;
+    const previousById = new Map(previous.map((tx) => [tx.id, tx]));
+    for (const tx of accountState.transactions) {
+      const before = previousById.get(tx.id);
+      if (!before) continue;
+      const beforeSigned = signatureCount(before);
+      const nowSigned = signatureCount(tx);
+      try {
+        if (!before.txHash && tx.txHash) {
+          new Notification("Transaction submitted", { body: `${tx.title} was submitted to ${tx.network}.` });
+        } else if (beforeSigned < tx.requiredSignatures && nowSigned >= tx.requiredSignatures) {
+          new Notification("Ready to submit", { body: `${tx.title} reached ${tx.requiredSignatures} matched signatures.` });
+        } else if (nowSigned > beforeSigned) {
+          new Notification("New multisig signature", { body: `${tx.title} now has ${nowSigned}/${tx.requiredSignatures} matched signatures.` });
+        }
+      } catch {
+        // Some mobile browsers expose Notification permission but only support service-worker notifications.
+      }
+    }
+  }, [accountState]);
 
   async function connectWallet(provider: WalletProvider) {
     if (connectingId) return null;
@@ -561,6 +624,10 @@ export function AppShell() {
         onDisconnect={disconnectWallet}
         onSignIn={() => void signInConnectedWallet()}
         onSignOut={() => void signOutAccount()}
+        onOpenSearch={() => setSearchOpen(true)}
+        onOpenContacts={() => setAccountTools({ open: true, tab: "contacts" })}
+        onOpenSettings={() => setAccountTools({ open: true, tab: "preferences" })}
+        onOpenSessions={() => setAccountTools({ open: true, tab: "sessions" })}
       />
       <main className="mx-auto flex min-h-dvh w-full max-w-[1800px] flex-col gap-4 overflow-x-hidden px-3 pb-24 pt-20 text-foreground sm:gap-6 sm:px-6 md:pb-6 md:pl-24 lg:px-8 xl:pl-28">
         <Outlet context={context} />
@@ -579,6 +646,29 @@ export function AppShell() {
           </div>
         </footer>
       </main>
+      <GlobalSearchDialog open={searchOpen} onOpenChange={setSearchOpen} snapshot={accountState} />
+      {account.authenticated ? (
+        <AccountToolsDialog
+          open={accountTools.open}
+          onOpenChange={(open) => setAccountTools((current) => ({ ...current, open }))}
+          initialTab={accountTools.tab}
+          network={(account.network || "preprod") as Network}
+          wallets={accountState?.wallets || []}
+          contacts={accountState?.contacts || []}
+          preferences={accountState?.preferences || DEFAULT_ACCOUNT_PREFERENCES}
+          csrfToken={account.session?.csrfToken}
+          onSave={async (changes) => {
+            const current = accountStateRef.current;
+            if (!current) throw new Error("Refresh the account before saving preferences.");
+            await saveServerState({
+              wallets: current.wallets,
+              transactions: current.transactions,
+              contacts: changes.contacts ?? current.contacts,
+              preferences: changes.preferences ?? current.preferences,
+            });
+          }}
+        />
+      ) : null}
     </>
   );
 }

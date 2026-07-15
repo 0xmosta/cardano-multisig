@@ -105,6 +105,29 @@ export type MultisigWallet = {
   discovery?: WalletDiscovery;
 };
 
+export type AddressBookContact = {
+  id: string;
+  label: string;
+  address: string;
+  handle?: string;
+  network: Network;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TransactionInboxFilter = "action" | "all" | "needs-you" | "waiting" | "ready" | "completed" | "archived";
+
+export type AccountPreferences = {
+  notificationsEnabled: boolean;
+  defaultTransactionFilter: TransactionInboxFilter;
+  preferredWalletId?: string;
+};
+
+export const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
+  notificationsEnabled: false,
+  defaultTransactionFilter: "action",
+};
+
 export type InvitePayload = {
   type: "cardano-multisig-invite";
   version: 1;

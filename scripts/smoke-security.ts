@@ -52,6 +52,16 @@ const normal = sanitizeAccountSnapshotInput(
         ignored: "removed",
       },
     ],
+    contacts: [{
+      id: "contact-security",
+      label: "Supplier",
+      address: "addr_test1securitycontact",
+      handle: "supplier",
+      network: "preprod",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }],
+    preferences: { notificationsEnabled: true, defaultTransactionFilter: "ready", preferredWalletId: "wallet-security" },
   },
   "preprod",
 );
@@ -61,6 +71,9 @@ assert.equal((normal.wallets[0].paymentScript as Record<string, unknown>).ignore
 assert.equal((normal.transactions[0] as unknown as Record<string, unknown>).ignored, undefined);
 assert.equal(normal.transactions[0].relayRoom?.coordinatorToken, token);
 assert.equal(normal.transactions[0].archivedAt, "2026-07-15T12:00:00.000Z");
+assert.equal(normal.contacts[0].label, "Supplier");
+assert.equal(normal.preferences.defaultTransactionFilter, "ready");
+assert.throws(() => sanitizeAccountSnapshotInput({ wallets: [], transactions: [], contacts: [{ id: "bad", label: "Bad", address: "addr1wrongnetwork", network: "preprod", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] }, "preprod"), /payment address/);
 
 assert.throws(
   () => sanitizeAccountSnapshotInput({ wallets: [{ rootKey: "xprv_private" }], transactions: [] }, "preprod"),

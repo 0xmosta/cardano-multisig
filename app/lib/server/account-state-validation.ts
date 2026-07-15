@@ -1,5 +1,7 @@
 import type {
   AssetLine,
+  AccountPreferences,
+  AddressBookContact,
   MultisigWallet,
   NativeScript,
   Network,
@@ -9,7 +11,7 @@ import type {
   TxDraft,
   WalletDiscovery,
 } from "../multisig";
-import { isKeyHash, isRecord, normalizeKeyHash } from "../multisig";
+import { DEFAULT_ACCOUNT_PREFERENCES, isKeyHash, isRecord, normalizeKeyHash } from "../multisig";
 
 const MAX_WALLETS = 500;
 const MAX_TRANSACTIONS = 2_000;
@@ -23,6 +25,7 @@ const MAX_LABEL_CHARS = 500;
 const MAX_NOTE_CHARS = 2_000;
 const MAX_ADDRESS_CHARS = 512;
 const MAX_CBOR_CHARS = 500_000;
+const MAX_CONTACTS = 250;
 
 const SENSITIVE_KEYS = new Set([
   "rootkey",
@@ -303,14 +306,49 @@ function sanitizeTransaction(raw: unknown, index: number, network: Network): TxD
   };
 }
 
-export function sanitizeAccountSnapshotInput(input: { wallets?: unknown; transactions?: unknown }, network: Network) {
+export function sanitizeAccountSnapshotInput(input: { wallets?: unknown; transactions?: unknown; contacts?: unknown; preferences?: unknown }, network: Network) {
   assertNoCustodialSecrets(input);
   const wallets = input.wallets === undefined ? [] : input.wallets;
   const transactions = input.transactions === undefined ? [] : input.transactions;
   if (!Array.isArray(wallets) || wallets.length > MAX_WALLETS) throw new Error(`wallets cannot contain more than ${MAX_WALLETS} entries.`);
   if (!Array.isArray(transactions) || transactions.length > MAX_TRANSACTIONS) throw new Error(`transactions cannot contain more than ${MAX_TRANSACTIONS} entries.`);
+  const contactsInput = input.contacts === undefined ? [] : input.contacts;
+  const preferencesInput = input.preferences;
+  if (!Array.isArray(contactsInput) || contactsInput.length > MAX_CONTACTS) throw new Error(`contacts cannot contain more than ${MAX_CONTACTS} entries.`);
+  const contacts = contactsInput.map((raw, index): AddressBookContact => {
+    if (!isRecord(raw)) throw new Error(`contacts[${index}] is invalid.`);
+    if (raw.network !== network) throw new Error(`contacts[${index}] targets a different network.`);
+    const address = boundedString(raw.address, `contacts[${index}].address`, MAX_ADDRESS_CHARS);
+    const requiredPrefix = network === "mainnet" ? "addr1" : "addr_test1";
+    if (!address.toLowerCase().startsWith(requiredPrefix)) {
+      throw new Error(`contacts[${index}].address must be a ${network} payment address.`);
+    }
+    return {
+      id: boundedString(raw.id, `contacts[${index}].id`, MAX_ID_CHARS),
+      label: boundedString(raw.label, `contacts[${index}].label`, 128),
+      address,
+      ...(optionalString(raw.handle, `contacts[${index}].handle`, 128) ? { handle: optionalString(raw.handle, `contacts[${index}].handle`, 128) } : {}),
+      network,
+      createdAt: boundedString(raw.createdAt, `contacts[${index}].createdAt`, 64),
+      updatedAt: boundedString(raw.updatedAt, `contacts[${index}].updatedAt`, 64),
+    };
+  });
+  const preferencesRecord = isRecord(preferencesInput) ? preferencesInput : {};
+  const allowedFilters = new Set(["action", "all", "needs-you", "waiting", "ready", "completed", "archived"]);
+  const requestedFilter = typeof preferencesRecord.defaultTransactionFilter === "string" ? preferencesRecord.defaultTransactionFilter : "";
+  const preferences: AccountPreferences = {
+    notificationsEnabled: Boolean(preferencesRecord.notificationsEnabled),
+    defaultTransactionFilter: allowedFilters.has(requestedFilter)
+      ? requestedFilter as AccountPreferences["defaultTransactionFilter"]
+      : DEFAULT_ACCOUNT_PREFERENCES.defaultTransactionFilter,
+    ...(optionalString(preferencesRecord.preferredWalletId, "preferences.preferredWalletId", MAX_ID_CHARS)
+      ? { preferredWalletId: optionalString(preferencesRecord.preferredWalletId, "preferences.preferredWalletId", MAX_ID_CHARS) }
+      : {}),
+  };
   return {
     wallets: wallets.map((wallet, index) => sanitizeWallet(wallet, index, network)),
     transactions: transactions.map((tx, index) => sanitizeTransaction(tx, index, network)),
+    contacts,
+    preferences,
   };
 }

@@ -2,8 +2,8 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PoolClient } from "pg";
-import type { MultisigWallet, Network, RelayRoomRef, SignatureRecord, TxDraft } from "../multisig";
-import { normalizeKeyHash } from "../multisig";
+import type { AccountPreferences, AddressBookContact, MultisigWallet, Network, RelayRoomRef, SignatureRecord, TxDraft } from "../multisig";
+import { DEFAULT_ACCOUNT_PREFERENCES, normalizeKeyHash } from "../multisig";
 import { relayDraftsPersistenceFingerprint } from "../relay-room";
 import { stableJsonStringify } from "../utils";
 import { sanitizeAccountSnapshotInput } from "./account-state-validation";
@@ -37,6 +37,8 @@ export type AccountSession = {
   identity: AccountIdentity;
   createdAt: string;
   lastAuthenticatedAt: string;
+  lastSeenAt: string;
+  userAgent?: string;
   expiresAt: string;
 };
 
@@ -58,6 +60,8 @@ type StoredAccount = {
   identities: AccountIdentity[];
   wallets: MultisigWallet[];
   transactions: StoredTxDraft[];
+  contacts: AddressBookContact[];
+  preferences: AccountPreferences;
   auditEvents: AuditEvent[];
   createdAt: string;
   updatedAt: string;
@@ -90,6 +94,8 @@ type AuditEvent = {
 export type AccountSnapshot = {
   wallets: MultisigWallet[];
   transactions: TxDraft[];
+  contacts?: AddressBookContact[];
+  preferences?: AccountPreferences;
   updatedAt?: string;
 };
 
@@ -463,7 +469,7 @@ function mergeIdentities(current: AccountIdentity[], identity: AccountIdentity) 
 function accountFromRows(args: {
   network: Network;
   subject: string;
-  accountRow: { created_at: Date | string; updated_at: Date | string };
+  accountRow: { created_at: Date | string; updated_at: Date | string; contacts_json: unknown; preferences_json: unknown };
   identityRows: Array<{ kind: string; key_hash: string; address_hex: string; created_at: Date | string; last_authenticated_at: Date | string }>;
   walletRows: Array<{ wallet_json: unknown }>;
   transactionRows: Array<{ tx_json: unknown }>;
@@ -481,6 +487,11 @@ function accountFromRows(args: {
     })),
     wallets: args.walletRows.map((row) => parseJson<MultisigWallet>(row.wallet_json, {} as MultisigWallet)),
     transactions: args.transactionRows.map((row) => parseJson<StoredTxDraft>(row.tx_json, {} as StoredTxDraft)),
+    contacts: parseJson<AddressBookContact[]>(args.accountRow.contacts_json, []),
+    preferences: {
+      ...DEFAULT_ACCOUNT_PREFERENCES,
+      ...parseJson<Partial<AccountPreferences>>(args.accountRow.preferences_json, {}),
+    },
     auditEvents: args.auditRows.map((row) => ({
       id: row.id,
       type: row.event_type,
@@ -494,8 +505,8 @@ function accountFromRows(args: {
 
 async function readAccountPostgres(network: Network, subject: string) {
   return withClient(async (client) => {
-    const account = await client.query<{ created_at: Date | string; updated_at: Date | string }>(
-      `select created_at,
+    const account = await client.query<{ created_at: Date | string; updated_at: Date | string; contacts_json: unknown; preferences_json: unknown }>(
+      `select created_at, contacts_json, preferences_json,
               to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as updated_at
        from cm_accounts where network = $1 and subject = $2`,
       [network, subject],
@@ -537,20 +548,22 @@ async function writeAccountPostgres(account: StoredAccount, expectedUpdatedAt?: 
     if (expectedUpdatedAt) {
       const updated = await client.query(
         `update cm_accounts
-         set created_at = $3::timestamptz, updated_at = $4::timestamptz
+         set created_at = $3::timestamptz, updated_at = $4::timestamptz,
+             contacts_json = $6::jsonb, preferences_json = $7::jsonb
          where network = $1 and subject = $2 and updated_at = $5::timestamptz`,
-        [account.network, account.subject, account.createdAt, account.updatedAt, expectedUpdatedAt],
+        [account.network, account.subject, account.createdAt, account.updatedAt, expectedUpdatedAt, json(account.contacts || []), json(account.preferences || DEFAULT_ACCOUNT_PREFERENCES)],
       );
       if (updated.rowCount !== 1) {
         throw new AccountStateConflictError();
       }
     } else {
       await client.query(
-        `insert into cm_accounts (network, subject, created_at, updated_at)
-         values ($1, $2, $3::timestamptz, $4::timestamptz)
+        `insert into cm_accounts (network, subject, created_at, updated_at, contacts_json, preferences_json)
+         values ($1, $2, $3::timestamptz, $4::timestamptz, $5::jsonb, $6::jsonb)
          on conflict (network, subject)
-         do update set created_at = excluded.created_at, updated_at = excluded.updated_at`,
-        [account.network, account.subject, account.createdAt, account.updatedAt],
+         do update set created_at = excluded.created_at, updated_at = excluded.updated_at,
+                       contacts_json = excluded.contacts_json, preferences_json = excluded.preferences_json`,
+        [account.network, account.subject, account.createdAt, account.updatedAt, json(account.contacts || []), json(account.preferences || DEFAULT_ACCOUNT_PREFERENCES)],
       );
     }
 
@@ -633,8 +646,8 @@ async function writeSessionPostgres(session: AccountSession) {
     await client.query(
       `insert into cm_account_sessions (
         id, network, subject, csrf_token, identity_kind, identity_key_hash, identity_address_hex,
-        created_at, last_authenticated_at, expires_at
-      ) values ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::timestamptz)
+        created_at, last_authenticated_at, last_seen_at, user_agent, expires_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::timestamptz, $11, $12::timestamptz)
       on conflict (id) do update set
         network = excluded.network,
         subject = excluded.subject,
@@ -644,6 +657,8 @@ async function writeSessionPostgres(session: AccountSession) {
         identity_address_hex = excluded.identity_address_hex,
         created_at = excluded.created_at,
         last_authenticated_at = excluded.last_authenticated_at,
+        last_seen_at = excluded.last_seen_at,
+        user_agent = excluded.user_agent,
         expires_at = excluded.expires_at`,
       [
         session.id,
@@ -655,6 +670,8 @@ async function writeSessionPostgres(session: AccountSession) {
         session.identity.addressHex,
         session.createdAt,
         session.lastAuthenticatedAt,
+        session.lastSeenAt,
+        session.userAgent || null,
         session.expiresAt,
       ],
     );
@@ -673,10 +690,12 @@ async function readSessionPostgres(id: string) {
       identity_address_hex: string;
       created_at: Date | string;
       last_authenticated_at: Date | string;
+      last_seen_at: Date | string | null;
+      user_agent: string | null;
       expires_at: Date | string;
     }>(
       `select id, network, subject, csrf_token, identity_kind, identity_key_hash, identity_address_hex,
-              created_at, last_authenticated_at, expires_at
+              created_at, last_authenticated_at, last_seen_at, user_agent, expires_at
        from cm_account_sessions where id = $1`,
       [id],
     ),
@@ -697,6 +716,8 @@ async function readSessionPostgres(id: string) {
     },
     createdAt: new Date(row.created_at).toISOString(),
     lastAuthenticatedAt: new Date(row.last_authenticated_at).toISOString(),
+    lastSeenAt: new Date(row.last_seen_at || row.last_authenticated_at).toISOString(),
+    ...(row.user_agent ? { userAgent: row.user_agent } : {}),
     expiresAt: new Date(row.expires_at).toISOString(),
   } satisfies AccountSession;
 }
@@ -826,6 +847,8 @@ export async function getOrCreateAccount(identity: AccountIdentity, network: Net
     identities: [identity],
     wallets: [],
     transactions: [],
+    contacts: [],
+    preferences: { ...DEFAULT_ACCOUNT_PREFERENCES },
     auditEvents: [auditEvent("account.created", { identityKind: identity.kind, keyHash: identity.keyHash })],
     createdAt,
     updatedAt: createdAt,
@@ -870,7 +893,7 @@ export async function consumeChallenge(id: string) {
   return challenge;
 }
 
-export async function createSession(identity: AccountIdentity, network: string) {
+export async function createSession(identity: AccountIdentity, network: string, metadata?: { userAgent?: string }) {
   const resolvedNetwork = ensureExpectedNetwork(network);
   const account = await getOrCreateAccount(identity, resolvedNetwork);
   const session: AccountSession = {
@@ -881,6 +904,8 @@ export async function createSession(identity: AccountIdentity, network: string) 
     identity,
     createdAt: nowIso(),
     lastAuthenticatedAt: identity.lastAuthenticatedAt,
+    lastSeenAt: nowIso(),
+    ...(metadata?.userAgent?.trim() ? { userAgent: metadata.userAgent.trim().slice(0, 500) } : {}),
     expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
   };
   assertPersistenceMode("Authenticated account session persistence");
@@ -918,6 +943,14 @@ export async function loadSession(request: Request) {
   if (session.network !== configuredNetwork()) {
     throw new Error(`Authenticated session network ${session.network} does not match configured ${configuredNetwork()}.`);
   }
+  if (postgresEnabled() && Date.now() - Date.parse(session.lastSeenAt) >= 60_000) {
+    const seenAt = nowIso();
+    await withClient((client) => client.query(
+      `update cm_account_sessions set last_seen_at = $2::timestamptz where id = $1`,
+      [session.id, seenAt],
+    ));
+    session.lastSeenAt = seenAt;
+  }
   return session;
 }
 
@@ -930,14 +963,70 @@ export async function destroySession(request: Request) {
   return clearSessionCookie();
 }
 
+export type AccountSessionSummary = {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  userAgent?: string;
+};
+
+export async function listAccountSessions(session: AccountSession): Promise<AccountSessionSummary[]> {
+  if (postgresEnabled()) {
+    const result = await withClient((client) => client.query<{
+      id: string;
+      created_at: Date | string;
+      last_seen_at: Date | string | null;
+      last_authenticated_at: Date | string;
+      expires_at: Date | string;
+      user_agent: string | null;
+    }>(
+      `select id, created_at, last_seen_at, last_authenticated_at, expires_at, user_agent
+       from cm_account_sessions
+       where network = $1 and subject = $2 and expires_at > now()
+       order by coalesce(last_seen_at, last_authenticated_at, created_at) desc`,
+      [session.network, session.subject],
+    ));
+    return result.rows.map((row) => ({
+      id: row.id,
+      createdAt: new Date(row.created_at).toISOString(),
+      lastSeenAt: new Date(row.last_seen_at || row.last_authenticated_at).toISOString(),
+      expiresAt: new Date(row.expires_at).toISOString(),
+      ...(row.user_agent ? { userAgent: row.user_agent } : {}),
+    }));
+  }
+  const entries = await readdir(sessionsDir(), { withFileTypes: true }).catch(() => []);
+  const sessions = await Promise.all(entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => readSessionFile(entry.name.slice(0, -5))));
+  return sessions
+    .filter((item): item is AccountSession => Boolean(item && item.network === session.network && item.subject === session.subject && Date.parse(item.expiresAt) > Date.now()))
+    .map((item) => ({
+      id: item.id,
+      createdAt: item.createdAt,
+      lastSeenAt: item.lastSeenAt || item.lastAuthenticatedAt,
+      expiresAt: item.expiresAt,
+      ...(item.userAgent ? { userAgent: item.userAgent } : {}),
+    }))
+    .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt));
+}
+
+export async function revokeAccountSession(current: AccountSession, id: string) {
+  const target = postgresEnabled() ? await readSessionPostgres(id) : await readSessionFile(id);
+  if (!target || target.network !== current.network || target.subject !== current.subject) return false;
+  if (postgresEnabled()) await deleteSessionPostgres(id);
+  else await deleteSessionFile(id);
+  return true;
+}
+
 export async function loadAccountSnapshot(session: AccountSession): Promise<AccountSnapshot> {
   const stored = await readAccount(session.network, session.subject);
   const account = stored ? await migrateAccountSensitiveState(stored) : null;
-  if (!account) return { wallets: [], transactions: [] };
+  if (!account) return { wallets: [], transactions: [], contacts: [], preferences: { ...DEFAULT_ACCOUNT_PREFERENCES } };
   const transactions = hydrateTransactions(account.transactions || []);
   return {
     wallets: recoverWalletsFromTransactions(account.wallets || [], transactions, session.network),
     transactions,
+    contacts: account.contacts || [],
+    preferences: { ...DEFAULT_ACCOUNT_PREFERENCES, ...(account.preferences || {}) },
     updatedAt: account.updatedAt,
   };
 }
@@ -953,21 +1042,31 @@ export async function replaceAccountSnapshot(
     throw new AccountStateConflictError();
   }
   const sanitized = sanitizeAccountSnapshotInput(snapshot, session.network);
+  const contacts = snapshot.contacts === undefined ? current.contacts || [] : sanitized.contacts;
+  const preferences = snapshot.preferences === undefined
+    ? { ...DEFAULT_ACCOUNT_PREFERENCES, ...(current.preferences || {}) }
+    : sanitized.preferences;
   const currentTransactions = hydrateTransactions(current.transactions || []);
   const currentWallets = recoverWalletsFromTransactions(current.wallets || [], currentTransactions, session.network);
   const recoveredWallets = recoverWalletsFromTransactions(sanitized.wallets, sanitized.transactions, session.network);
   const currentFingerprint = stableJsonStringify({
     wallets: currentWallets,
     transactions: relayDraftsPersistenceFingerprint(currentTransactions),
+    contacts: current.contacts || [],
+    preferences: current.preferences || DEFAULT_ACCOUNT_PREFERENCES,
   });
   const nextFingerprint = stableJsonStringify({
     wallets: recoveredWallets,
     transactions: relayDraftsPersistenceFingerprint(sanitized.transactions),
+    contacts,
+    preferences,
   });
   if (currentFingerprint === nextFingerprint) {
     return {
       wallets: currentWallets,
       transactions: currentTransactions,
+      contacts: current.contacts || [],
+      preferences: { ...DEFAULT_ACCOUNT_PREFERENCES, ...(current.preferences || {}) },
       updatedAt: current.updatedAt,
     } satisfies AccountSnapshot;
   }
@@ -977,12 +1076,15 @@ export async function replaceAccountSnapshot(
     identities: mergeIdentities(current.identities || [], session.identity),
     wallets: recoveredWallets,
     transactions,
+    contacts,
+    preferences,
     updatedAt: accountVersionIso(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)),
     auditEvents: [
       ...(current.auditEvents || []),
       auditEvent(reason, {
         walletCount: snapshot.wallets?.length || 0,
         transactionCount: snapshot.transactions?.length || 0,
+        contactCount: snapshot.contacts?.length || 0,
       }),
     ].slice(-MAX_AUDIT_EVENTS),
   };
@@ -990,6 +1092,8 @@ export async function replaceAccountSnapshot(
   return {
     wallets: next.wallets,
     transactions: hydrateTransactions(next.transactions),
+    contacts: next.contacts,
+    preferences: next.preferences,
     updatedAt: next.updatedAt,
   } satisfies AccountSnapshot;
 }

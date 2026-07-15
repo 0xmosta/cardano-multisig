@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { createIdentity, createSession, loadAccountSnapshot, loadSession, replaceAccountSnapshot } from "../app/lib/server/account-store.ts";
+import { createIdentity, createSession, listAccountSessions, loadAccountSnapshot, loadSession, replaceAccountSnapshot, revokeAccountSession } from "../app/lib/server/account-store.ts";
 import { query } from "../app/lib/server/postgres.ts";
 import { createRelayRoom, readRelayRoom, resolveRelayTokenSession, writeRelayRoom } from "../app/lib/server/relay-room-store.ts";
 import { action as accountStateAction } from "../app/routes/api.account.state.ts";
@@ -110,7 +110,7 @@ async function main() {
     addressHex: "01".repeat(57),
   });
 
-  const { session, cookie } = await createSession(identity, process.env.CARDANO_NETWORK || "preprod");
+  const { session, cookie } = await createSession(identity, process.env.CARDANO_NETWORK || "preprod", { userAgent: "Postgres smoke browser" });
   const loadedSession = await loadSession(new Request("http://localhost/api/account/state", { headers: { cookie } }));
   assert(loadedSession, "expected session to load back from signed cookie");
   assert.equal(loadedSession.subject, session.subject);
@@ -165,9 +165,28 @@ async function main() {
         },
       },
     ],
+    contacts: [{
+      id: `contact-${Date.now()}`,
+      label: "Smoke supplier",
+      address: "addr_test1smokesupplier000000000000000000000000000000000000000000",
+      handle: "smokesupplier",
+      network: "preprod",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    }],
+    preferences: { notificationsEnabled: true, defaultTransactionFilter: "ready", preferredWalletId: walletId },
   });
   assert.equal(accountSnapshot.wallets.length, 1);
   assert.equal(accountSnapshot.transactions.length, 1);
+  assert.equal(accountSnapshot.contacts?.length, 1);
+  assert.equal(accountSnapshot.preferences?.defaultTransactionFilter, "ready");
+
+  const second = await createSession(identity, process.env.CARDANO_NETWORK || "preprod", { userAgent: "Second smoke device" });
+  const sessions = await listAccountSessions(session);
+  assert(sessions.some((item) => item.id === session.id && item.userAgent === "Postgres smoke browser"));
+  assert(sessions.some((item) => item.id === second.session.id && item.userAgent === "Second smoke device"));
+  assert.equal(await revokeAccountSession(session, second.session.id), true);
+  assert.equal((await listAccountSessions(session)).some((item) => item.id === second.session.id), false);
 
   await query(
     `update cm_accounts
@@ -179,6 +198,8 @@ async function main() {
   const reloadedSnapshot = await loadAccountSnapshot(loadedSession);
   assert.equal(reloadedSnapshot.wallets.length, 1);
   assert.equal(reloadedSnapshot.transactions.length, 1);
+  assert.equal(reloadedSnapshot.contacts?.[0]?.label, "Smoke supplier");
+  assert.equal(reloadedSnapshot.preferences?.preferredWalletId, walletId);
   assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.coordinatorToken, relayCapability);
   assert.equal(reloadedSnapshot.transactions[0]?.relayRoom?.signerInvites?.[0]?.inviteUrl, `http://localhost/sign#r=${relayCapability}`);
   assert.equal(

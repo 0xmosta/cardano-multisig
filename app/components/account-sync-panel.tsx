@@ -1,7 +1,7 @@
-import { AlertTriangle, Loader2, LogIn, RefreshCw } from "lucide-react";
+import { Loader2, LogIn } from "lucide-react";
 import { useAppShell } from "./app-shell";
-import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
+import { ActionError } from "./action-error";
 
 export function AccountSyncPanel({ compact = false }: { compact?: boolean }) {
   const { account, accountState, accountSyncState, refreshAccount } = useAppShell();
@@ -24,22 +24,13 @@ export function AccountSyncPanel({ compact = false }: { compact?: boolean }) {
 
   if (accountSyncState === "error") {
     return (
-      <Card className="border-rose-400/25 bg-rose-400/5">
-        <CardContent className={compact ? "p-4" : "p-4 sm:p-5"}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-rose-200" />
-              <div>
-                <div className="text-sm font-semibold text-rose-100">We could not refresh your account</div>
-                <p className="mt-1 text-sm text-rose-100/70">Your current screen is unchanged. Check the connection and try again.</p>
-              </div>
-            </div>
-            <Button type="button" variant="secondary" size="sm" onClick={() => void refreshAccount().catch(() => undefined)}>
-              <RefreshCw className="size-4" /> Try again
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <ActionError
+        title="Account sync paused"
+        message="Your current screen is unchanged. Check the connection, then retry; no wallet data was discarded."
+        details="The latest server account request did not complete."
+        onRetry={() => refreshAccount().catch(() => undefined)}
+        className={compact ? "p-4" : undefined}
+      />
     );
   }
 

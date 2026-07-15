@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { Route } from "./+types/wallets";
 import { AccountSyncPanel } from "../components/account-sync-panel";
+import { ActionError } from "../components/action-error";
 import { useAppShell } from "../components/app-shell";
 import { userFacingError } from "../lib/utils";
 import { AppWindow } from "../components/ui/app-window";
@@ -132,8 +133,7 @@ export default function WalletsRoute() {
 
   const visibleWallets = useMemo(() => {
     const value = query.trim().replace(/^\$/, "").toLowerCase();
-    if (!value) return wallets;
-    return wallets.filter((wallet) =>
+    const filtered = !value ? wallets : wallets.filter((wallet) =>
       [
         walletTitle(wallet),
         wallet.name,
@@ -149,7 +149,9 @@ export default function WalletsRoute() {
         .toLowerCase()
         .includes(value),
     );
-  }, [query, wallets]);
+    const preferredId = accountState?.preferences.preferredWalletId;
+    return [...filtered].sort((left, right) => Number(right.id === preferredId) - Number(left.id === preferredId));
+  }, [accountState?.preferences.preferredWalletId, query, wallets]);
 
   const columns = useMemo<ColumnDef<MultisigWallet>[]>(
     () => [
@@ -169,6 +171,7 @@ export default function WalletsRoute() {
                     {title}
                   </Link>
                   <Badge variant="outline">{wallet.network}</Badge>
+                  {wallet.id === accountState?.preferences.preferredWalletId ? <Badge variant="secondary">preferred</Badge> : null}
                 </div>
                 <div className="mt-1 max-w-md truncate text-xs text-muted-foreground">
                   {!wallet.paymentScript ? wallet.discovery?.address : wallet.handle ? wallet.name : wallet.id}
@@ -232,7 +235,7 @@ export default function WalletsRoute() {
         ),
       },
     ],
-    [],
+    [accountState?.preferences.preferredWalletId],
   );
 
   return (
@@ -277,17 +280,7 @@ export default function WalletsRoute() {
               </EmptyHeader>
             </Empty>
           ) : loadError ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>Could not load wallets</EmptyTitle>
-                <EmptyDescription>{loadError}</EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button type="button" variant="secondary" onClick={() => void refreshServerState()}>
-                  Retry
-                </Button>
-              </EmptyContent>
-            </Empty>
+            <ActionError title="Could not load wallets" message={loadError} details="The server-backed wallet list request failed." onRetry={async () => { await refreshServerState(); }} />
           ) : wallets.length ? (
             <DataTable
               columns={columns}

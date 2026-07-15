@@ -1,4 +1,4 @@
-import { Check, CircleUserRound, LogIn, ShieldCheck, WalletCards } from "lucide-react";
+import { BookUser, Check, CircleUserRound, Laptop, LogIn, Search, Settings2, ShieldCheck, WalletCards } from "lucide-react";
 import { Link } from "react-router";
 import { Avatar } from "./ui/avatar";
 import { Badge } from "./ui/badge";
@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -55,6 +56,10 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
   onDisconnect,
   onSignIn,
   onSignOut,
+  onOpenSearch,
+  onOpenContacts,
+  onOpenSettings,
+  onOpenSessions,
 }: {
   providers: TProvider[];
   connected: AppHeaderConnectedWallet;
@@ -69,6 +74,10 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
   onDisconnect?: () => void;
   onSignIn?: () => void;
   onSignOut?: () => void;
+  onOpenSearch?: () => void;
+  onOpenContacts?: () => void;
+  onOpenSettings?: () => void;
+  onOpenSessions?: () => void;
 }) {
   return (
     <header className="fixed inset-x-0 top-0 z-50 flex h-16 items-center justify-between gap-3 border-b border-border bg-[#111113]/95 px-4 shadow-2xl shadow-black/30 backdrop-blur-xl sm:px-6">
@@ -89,7 +98,11 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
         </div>
       </div>
 
-      <DropdownMenu>
+      <div className="flex shrink-0 items-center gap-2">
+        <Button type="button" variant="ghost" size="icon" className="size-10" onClick={onOpenSearch} aria-label="Search wallets and transactions" title="Search (Ctrl K)">
+          <Search className="size-5" />
+        </Button>
+        <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             type="button"
@@ -157,6 +170,13 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
             <div className="mt-1">Service: {providerStatus?.ready ? "online" : "unavailable"} · Save status: {accountSyncState === "synced" ? "saved" : syncLabel(accountSyncState) || "idle"}</div>
           </div>
           <div className="mt-3 grid gap-2">
+            {account ? (
+              <div className="grid gap-1 rounded-lg border border-border bg-black/20 p-1">
+                <DropdownMenuItem onSelect={onOpenContacts}><BookUser className="size-4" /> Address book</DropdownMenuItem>
+                <DropdownMenuItem onSelect={onOpenSettings}><Settings2 className="size-4" /> Preferences & notifications</DropdownMenuItem>
+                <DropdownMenuItem onSelect={onOpenSessions}><Laptop className="size-4" /> Signed-in devices</DropdownMenuItem>
+              </div>
+            ) : null}
             {connected && !account && onSignIn ? (
               <Button type="button" onClick={onSignIn} className="justify-start">
                 <LogIn className="size-4" /> Sign in with {connected.name}
@@ -174,7 +194,8 @@ export function AppHeader<TProvider extends BrowserWalletProvider<BrowserWalletA
             ) : null}
           </div>
         </DropdownMenuContent>
-      </DropdownMenu>
+        </DropdownMenu>
+      </div>
     </header>
   );
 }

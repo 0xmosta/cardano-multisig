@@ -119,7 +119,9 @@ export async function action({ request }: { request: Request }) {
         keyHash: verified.keyHash,
         addressHex,
       });
-      const created = await createSession(identity, String(input.network || challenge.network));
+      const created = await createSession(identity, String(input.network || challenge.network), {
+        userAgent: request.headers.get("user-agent") || undefined,
+      });
       const snapshot = await loadAccountSnapshot(created.session);
       return Response.json(
         {

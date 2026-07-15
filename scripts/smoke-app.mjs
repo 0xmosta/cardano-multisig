@@ -19,6 +19,7 @@ const checks = [
   { path: "/sign", expect: ["Cardano multisig"] },
   { path: "/favicon.svg", contentType: "image/svg+xml" },
   { path: "/api/cardano/provider", json: true, expectJson: ["ready", "network"] },
+  { path: "/api/account/sessions", status: 401, json: true, expectJson: ["error"] },
   { path: "/api/cardano/signer-handles", json: true, expectJson: ["ok", "handles"] },
   { path: "/api/cardano/build-tx", method: "POST", body: {}, status: 401, json: true, expectJson: ["error"] },
   { path: "/api/cardano/submit", method: "POST", body: {}, status: 401, json: true, expectJson: ["error"] },

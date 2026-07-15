@@ -6,7 +6,8 @@ import {
   loadSession,
   replaceAccountSnapshot,
 } from "../lib/server/account-store";
-import type { MultisigWallet, TxDraft } from "../lib/multisig";
+import type { AccountPreferences, AddressBookContact, MultisigWallet, TxDraft } from "../lib/multisig";
+import { DEFAULT_ACCOUNT_PREFERENCES } from "../lib/multisig";
 import { enforceRateLimit, rateLimitErrorResponse } from "../lib/server/rate-limit";
 
 type StateRequest = {
@@ -14,6 +15,8 @@ type StateRequest = {
   baseUpdatedAt?: string;
   wallets?: MultisigWallet[];
   transactions?: TxDraft[];
+  contacts?: AddressBookContact[];
+  preferences?: AccountPreferences;
 };
 
 const MAX_STATE_REQUEST_BYTES = 5_000_000;
@@ -47,6 +50,8 @@ function parseSnapshot(body: unknown) {
     baseUpdatedAt: typeof input.baseUpdatedAt === "string" ? input.baseUpdatedAt : "",
     wallets: Array.isArray(input.wallets) ? input.wallets : [],
     transactions: Array.isArray(input.transactions) ? input.transactions : [],
+    contacts: Array.isArray(input.contacts) ? input.contacts : undefined,
+    preferences: input.preferences && typeof input.preferences === "object" ? input.preferences : undefined,
   };
 }
 
@@ -54,7 +59,7 @@ export async function loader({ request }: { request: Request }) {
   try {
     await enforceRateLimit(request, { scope: "account-state-read", limit: 240, windowMs: 60_000 });
     const session = await loadSession(request);
-    const snapshot = session ? await loadAccountSnapshot(session) : { wallets: [], transactions: [] };
+    const snapshot = session ? await loadAccountSnapshot(session) : { wallets: [], transactions: [], contacts: [], preferences: DEFAULT_ACCOUNT_PREFERENCES };
     return Response.json(
       {
         ok: true,
@@ -91,7 +96,7 @@ export async function action({ request }: { request: Request }) {
     }
     const saved = await replaceAccountSnapshot(
       session,
-      { wallets: snapshot.wallets, transactions: snapshot.transactions },
+      { wallets: snapshot.wallets, transactions: snapshot.transactions, contacts: snapshot.contacts, preferences: snapshot.preferences },
       "state.replace",
       snapshot.baseUpdatedAt,
     );

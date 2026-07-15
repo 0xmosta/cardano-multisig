@@ -39,6 +39,7 @@ import {
   type RelayRoomSessionResponse,
   type RelayRoomViewResponse,
 } from "../lib/relay-room";
+import { signerHandleLabel, useSignerHandles } from "../lib/signer-handles";
 import { cn, userFacingError } from "../lib/utils";
 
 type TransactionState = "pending" | "ready" | "submitted";
@@ -161,6 +162,7 @@ export default function TransactionDetailRoute() {
     () => accountState?.wallets.find((item) => item.id === transaction?.walletId || item.name === transaction?.walletName),
     [accountState?.wallets, transaction?.walletId, transaction?.walletName],
   );
+  const signerHandles = useSignerHandles(transaction?.signerKeyHashes || [], transaction?.network);
 
   async function refreshRelay() {
     if (!transaction?.relayRoom?.roomId || relaySyncInFlightRef.current) return;
@@ -287,7 +289,28 @@ export default function TransactionDetailRoute() {
           <AppWindow title="Signers" contentClassName="space-y-2">
             {transaction.signerKeyHashes.map((keyHash, index) => {
               const hasSigned = hasMatchedSignature(transaction, keyHash);
-              return <div key={keyHash} className={cn("flex min-w-0 items-center justify-between gap-3 rounded-lg border p-3", hasSigned ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/8 bg-black/20")}><div className="flex min-w-0 items-center gap-3"><Avatar label={signerLabel(wallet, keyHash, index)} tone={hasSigned ? "success" : "muted"} /><div className="min-w-0"><div className="font-medium text-zinc-100">{signerLabel(wallet, keyHash, index)}</div><div className="truncate font-mono text-xs text-zinc-500" title={keyHash}>{keyHash}</div></div></div><div className="flex shrink-0 items-center gap-2">{optional.has(normalizeKeyHash(keyHash)) && !hasSigned ? <Badge variant="outline">optional</Badge> : null}<Badge variant={hasSigned ? "default" : "outline"}>{hasSigned ? "signed" : "waiting"}</Badge>{hasSigned ? <Check className="size-4 text-emerald-300" /> : null}</div></div>;
+              const handle = signerHandles[normalizeKeyHash(keyHash)];
+              const handleLabel = signerHandleLabel(handle);
+              const label = signerLabel(wallet, keyHash, index);
+              return (
+                <div key={keyHash} className={cn("flex min-w-0 items-center justify-between gap-3 rounded-lg border p-3", hasSigned ? "border-emerald-400/30 bg-emerald-400/10" : "border-white/8 bg-black/20")}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar label={label} tone={hasSigned ? "success" : "muted"} />
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="font-medium text-zinc-100">{label}</span>
+                        {handleLabel ? <Badge variant="outline" className="border-sky-400/25 bg-sky-400/10 text-sky-200" title="ADA Handle associated with this signer">{handleLabel}</Badge> : null}
+                      </div>
+                      <div className="truncate font-mono text-xs text-zinc-500" title={keyHash}>{keyHash}</div>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {optional.has(normalizeKeyHash(keyHash)) && !hasSigned ? <Badge variant="outline">optional</Badge> : null}
+                    <Badge variant={hasSigned ? "default" : "outline"}>{hasSigned ? "signed" : "waiting"}</Badge>
+                    {hasSigned ? <Check className="size-4 text-emerald-300" /> : null}
+                  </div>
+                </div>
+              );
             })}
           </AppWindow>
 

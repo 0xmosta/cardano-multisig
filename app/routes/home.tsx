@@ -82,6 +82,7 @@ import {
   relayDraftFingerprint,
   relayDraftsPersistenceFingerprint,
 } from "../lib/relay-room";
+import { signerHandleLabel, useSignerHandles } from "../lib/signer-handles";
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
 type Mode = "import" | "create";
@@ -884,6 +885,7 @@ export default function Home() {
 
   const activeDraft = activeDraftId ? drafts.find((draft) => draft.id === activeDraftId) ?? null : null;
   const visibleDraft = relayInviteRoom ? draftFromRelaySignerView(relayInviteRoom) : activeDraft;
+  const signerHandles = useSignerHandles(visibleDraft?.signerKeyHashes || [], visibleDraft?.network);
   const relayInviteActive = Boolean(relayInviteRoom && relayInviteToken);
   const relayRoomSyncKey = useMemo(
     () =>
@@ -1548,6 +1550,7 @@ export default function Home() {
                   {visibleDraft.signerKeyHashes.map((hash, index) => {
                     const signed = hasMatchedSignature(visibleDraft, hash);
                     const isConnectedSigner = Boolean(connected?.keyHash && normalizeKeyHash(connected.keyHash) === normalizeKeyHash(hash));
+                    const handleLabel = signerHandleLabel(signerHandles[normalizeKeyHash(hash)]);
                     const signature = visibleDraft.signatures.find(
                       (item) => normalizeKeyHash(item.matchedSignerKeyHash || item.signerKeyHash || "") === normalizeKeyHash(hash),
                     );
@@ -1563,7 +1566,10 @@ export default function Home() {
                         <div className="flex min-w-0 items-center gap-3">
                           <Avatar label={label} tone={signed ? "success" : "muted"} />
                           <div className="min-w-0">
-                            <div className="font-semibold text-zinc-50">{label}</div>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <span className="font-semibold text-zinc-50">{label}</span>
+                              {handleLabel ? <Badge variant="outline" className="border-sky-400/25 bg-sky-400/10 text-sky-200" title="ADA Handle associated with this signer">{handleLabel}</Badge> : null}
+                            </div>
                             <div className="truncate font-mono text-xs text-zinc-500" title={hash}>{shortHash(hash)}</div>
                             {signature ? (
                               <div className="mt-1 text-xs text-emerald-300">

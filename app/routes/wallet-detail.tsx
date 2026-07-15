@@ -71,6 +71,7 @@ import {
   relayDraftFingerprint,
   relayDraftsPersistenceFingerprint,
 } from "../lib/relay-room";
+import { signerHandleLabel, useSignerHandles } from "../lib/signer-handles";
 import { verifySignatureRecordsForDraft } from "../lib/witness-verification";
 
 type AssetLine = { id: string; unit: string; label: string; quantity: string; decimals?: number };
@@ -546,6 +547,7 @@ export default function WalletDetail() {
   }, [account.authenticated, accountState, hydrated, txs, wallets]);
 
   const wallet = wallets.find((item) => item.id === walletId);
+  const signerHandles = useSignerHandles(wallet?.signers.map((signer) => signer.keyHash) || [], wallet?.network);
   const draftIdFromQuery = searchParams.get("draft");
 
   useEffect(() => {
@@ -1343,6 +1345,7 @@ export default function WalletDetail() {
                             {tx.signerKeyHashes.map((keyHash) => {
                               const hasSigned = hasMatchedSignature(tx, keyHash);
                               const signer = signerDisplay(wallet, keyHash, connected?.keyHash);
+                              const handleLabel = signerHandleLabel(signerHandles[normalizeKeyHash(keyHash)]);
                               const signature = tx.signatures.find(
                                 (item) => normalizeKeyHash(item.matchedSignerKeyHash || item.signerKeyHash || "") === normalizeKeyHash(keyHash),
                               );
@@ -1359,6 +1362,9 @@ export default function WalletDetail() {
                                     <div className="min-w-0">
                                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                                         <span className="font-semibold text-zinc-50">{signer.label}</span>
+                                        {handleLabel ? (
+                                          <Badge variant="outline" className="border-sky-400/25 bg-sky-400/10 text-sky-200" title="ADA Handle associated with this signer">{handleLabel}</Badge>
+                                        ) : null}
                                         {signer.isConnected ? (
                                           <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-sky-200">connected</Badge>
                                         ) : null}

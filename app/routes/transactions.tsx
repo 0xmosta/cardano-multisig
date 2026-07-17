@@ -26,7 +26,7 @@ import {
 import {
   RELAY_SYNC_INTERVAL_MS,
   applyRelayRoomToDraft,
-  hasActiveRelayRoom,
+  hasRelayRoomProgressToSync,
   relayDraftFingerprint,
   type RelayRoomSessionResponse,
   type RelayRoomViewResponse,
@@ -216,7 +216,7 @@ export default function TransactionsRoute() {
   const relaySyncKey = useMemo(
     () =>
       transactions
-        .filter(hasActiveRelayRoom)
+        .filter(hasRelayRoomProgressToSync)
         .map((tx) => `${tx.id}:${tx.relayRoom?.roomId}`)
         .sort()
         .join("|"),
@@ -225,7 +225,7 @@ export default function TransactionsRoute() {
 
   async function refreshRelayRooms(source = transactionsRef.current) {
     if (relaySyncInFlightRef.current) return false;
-    const relayTransactions = source.filter(hasActiveRelayRoom);
+    const relayTransactions = source.filter(hasRelayRoomProgressToSync);
     if (!relayTransactions.length) return false;
     relaySyncInFlightRef.current = true;
     setSyncing(true);

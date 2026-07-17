@@ -36,7 +36,7 @@ import {
 import {
   RELAY_SYNC_INTERVAL_MS,
   applyRelayRoomToDraft,
-  hasActiveRelayRoom,
+  hasRelayRoomProgressToSync,
   type RelayRoomSessionResponse,
   type RelayRoomViewResponse,
 } from "../lib/relay-room";
@@ -164,6 +164,7 @@ export default function TransactionDetailRoute() {
     [accountState?.wallets, transaction?.walletId, transaction?.walletName],
   );
   const signerHandles = useSignerHandles(transaction?.signerKeyHashes || [], transaction?.network);
+  const relayProgressNeedsSync = Boolean(transaction && hasRelayRoomProgressToSync(transaction));
 
   async function refreshRelay() {
     if (!transaction?.relayRoom?.roomId || relaySyncInFlightRef.current) return;
@@ -188,7 +189,7 @@ export default function TransactionDetailRoute() {
   }
 
   useEffect(() => {
-    if (!transaction || !hasActiveRelayRoom(transaction)) return;
+    if (!transaction || !relayProgressNeedsSync) return;
     let cancelled = false;
     const sync = () => {
       if (!cancelled && document.visibilityState !== "hidden") void refreshRelay();
@@ -199,7 +200,7 @@ export default function TransactionDetailRoute() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [transaction?.id, transaction?.relayRoom?.roomId]);
+  }, [transaction?.id, transaction?.relayRoom?.roomId, relayProgressNeedsSync]);
 
   if (loading) {
     return (

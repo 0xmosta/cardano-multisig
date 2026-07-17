@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mergeSignatures, sortTransactionDraftsNewestFirst, type SignatureRecord, type TxDraft } from "../app/lib/multisig.ts";
-import { persistableRelayDraft } from "../app/lib/relay-room.ts";
+import { hasRelayRoomProgressToSync, persistableRelayDraft } from "../app/lib/relay-room.ts";
 import { stableJsonStringify } from "../app/lib/utils.ts";
 import { sanitizeAccountSnapshotInput } from "../app/lib/server/account-state-validation.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../app/lib/server/sensitive-data.ts";
@@ -111,6 +111,18 @@ assert.equal(mergedSignatures.length, 1);
 assert.equal(mergedSignatures[0].witnessCbor, witnessSignature.witnessCbor);
 const progressDraft = { ...normal.transactions[0], signatures: [progressSignature] } as TxDraft;
 assert.deepEqual(persistableRelayDraft(progressDraft).signatures, []);
+assert.equal(hasRelayRoomProgressToSync(normal.transactions[0]), true, "open relay rooms should sync");
+const incompleteSubmittedDraft = {
+  ...normal.transactions[0],
+  txHash: "cd".repeat(32),
+  relayRoom: { ...normal.transactions[0].relayRoom!, status: "submitted" as const },
+};
+assert.equal(hasRelayRoomProgressToSync(incompleteSubmittedDraft), true, "submitted rooms should sync while signatures are missing");
+assert.equal(
+  hasRelayRoomProgressToSync({ ...incompleteSubmittedDraft, signatures: [witnessSignature] }),
+  false,
+  "complete submitted rooms should stop syncing",
+);
 assert.equal(stableJsonStringify({ beta: 2, alpha: { delta: 4, charlie: 3 } }), stableJsonStringify({ alpha: { charlie: 3, delta: 4 }, beta: 2 }));
 const olderDraft = { ...normal.transactions[0], id: "tx-older", createdAt: "2026-07-15T09:00:00.000Z" } as TxDraft;
 const newerDraft = { ...normal.transactions[0], id: "tx-newer", createdAt: "2026-07-15T10:00:00.000Z" } as TxDraft;

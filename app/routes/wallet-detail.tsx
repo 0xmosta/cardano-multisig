@@ -67,7 +67,7 @@ import {
   type RelayRoomSignerView,
   RELAY_SYNC_INTERVAL_MS,
   applyRelayRoomToDraft,
-  hasActiveRelayRoom,
+  hasRelayRoomProgressToSync,
   relayDraftFingerprint,
   relayDraftsPersistenceFingerprint,
 } from "../lib/relay-room";
@@ -614,7 +614,7 @@ export default function WalletDetail() {
           (tx) =>
             tx.walletId === walletId &&
             (tx.relayRoom?.coordinatorToken || tx.relayRoom?.sharedInviteUrl || tx.relayRoom?.roomId) &&
-            hasActiveRelayRoom(tx),
+            hasRelayRoomProgressToSync(tx),
         )
         .map((tx) => `${tx.id}:${tx.relayRoom!.coordinatorToken || tx.relayRoom!.sharedInviteUrl || tx.relayRoom!.roomId}:${tx.relayRoom!.status || "open"}`)
         .join("|"),
@@ -626,7 +626,7 @@ export default function WalletDetail() {
       (tx) =>
         tx.walletId === walletId &&
         (tx.relayRoom?.coordinatorToken || tx.relayRoom?.sharedInviteUrl || tx.relayRoom?.roomId) &&
-        hasActiveRelayRoom(tx),
+        hasRelayRoomProgressToSync(tx),
     ) as Array<TxDraft & { relayRoom: RelayRoomRef }>;
   }
 

@@ -1,5 +1,5 @@
 import type { AssetLine, NativeScript, Network, RelayRoomRef, SignatureRecord, TxDraft } from "./multisig";
-import { mergeSignatures, normalizeKeyHash, nowIso } from "./multisig";
+import { mergeSignatures, normalizeKeyHash, nowIso, pendingSignatureCount } from "./multisig";
 import { stableJsonStringify } from "./utils";
 
 export type RelayRoomStatus = "open" | "submitted" | "cancelled" | "expired";
@@ -276,6 +276,15 @@ export function relayDraftsPersistenceFingerprint(drafts: TxDraft[]) {
 
 export function hasActiveRelayRoom(draft: Pick<TxDraft, "relayRoom" | "txHash">) {
   return Boolean(draft.relayRoom?.roomId && (draft.relayRoom.status || "open") === "open" && !draft.txHash);
+}
+
+export function hasRelayRoomProgressToSync(
+  draft: Pick<TxDraft, "relayRoom" | "txHash" | "signatures" | "signerKeyHashes" | "requiredSignatures">,
+) {
+  if (!draft.relayRoom?.roomId) return false;
+  if (hasActiveRelayRoom(draft)) return true;
+  const submitted = Boolean(draft.txHash || draft.relayRoom.status === "submitted");
+  return submitted && pendingSignatureCount(draft) > 0;
 }
 
 export function draftFromRelaySignerView(room: RelayRoomSignerView): TxDraft {

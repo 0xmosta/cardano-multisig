@@ -144,10 +144,9 @@ export async function readRelayRoomPostgres(roomId: string) {
   });
 }
 
-export async function writeRelayRoomPostgres(room: RelayRoomRecord) {
-  await withTransaction(async (client) => {
-    await client.query(
-      `insert into cm_relay_rooms (
+async function writeRelayRoomWithClient(client: PoolClient, room: RelayRoomRecord) {
+  await client.query(
+    `insert into cm_relay_rooms (
         id, network, owner_subject, status, created_at, updated_at, expires_at, tx_json,
         coordinator_token_hash, coordinator_last_seen_at,
         shared_signer_token_hash, shared_signer_last_seen_at,
@@ -172,56 +171,78 @@ export async function writeRelayRoomPostgres(room: RelayRoomRecord) {
         submission_submitted_at = excluded.submission_submitted_at,
         submission_failure_error = excluded.submission_failure_error,
         submission_failure_failed_at = excluded.submission_failure_failed_at`,
-      [
-        room.id,
-        room.network,
-        room.ownerSubject || null,
-        room.status,
-        room.createdAt,
-        room.updatedAt,
-        room.expiresAt,
-        JSON.stringify(room.tx),
-        room.coordinator.tokenHash,
-        room.coordinator.lastSeenAt || null,
-        room.sharedSigner?.tokenHash || null,
-        room.sharedSigner?.lastSeenAt || null,
-        room.submission?.txHash || null,
-        room.submission?.submittedAt || null,
-        room.submissionFailure?.error || null,
-        room.submissionFailure?.failedAt || null,
-      ],
-    );
-    await client.query(`delete from cm_relay_room_signers where room_id = $1`, [room.id]);
-    for (const signer of room.signers) {
-      await client.query(
-        `insert into cm_relay_room_signers (
+    [
+      room.id,
+      room.network,
+      room.ownerSubject || null,
+      room.status,
+      room.createdAt,
+      room.updatedAt,
+      room.expiresAt,
+      JSON.stringify(room.tx),
+      room.coordinator.tokenHash,
+      room.coordinator.lastSeenAt || null,
+      room.sharedSigner?.tokenHash || null,
+      room.sharedSigner?.lastSeenAt || null,
+      room.submission?.txHash || null,
+      room.submission?.submittedAt || null,
+      room.submissionFailure?.error || null,
+      room.submissionFailure?.failedAt || null,
+    ],
+  );
+  await client.query(`delete from cm_relay_room_signers where room_id = $1`, [room.id]);
+  for (const signer of room.signers) {
+    await client.query(
+      `insert into cm_relay_room_signers (
           room_id, key_hash, label, token_hash, created_at, last_seen_at, delivered_at
         ) values ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz, $7::timestamptz)`,
-        [room.id, signer.keyHash, signer.label || null, signer.tokenHash, signer.createdAt, signer.lastSeenAt || null, signer.deliveredAt || null],
-      );
-    }
-    await client.query(`delete from cm_relay_room_witnesses where room_id = $1`, [room.id]);
-    for (const witness of room.witnesses) {
-      await client.query(
-        `insert into cm_relay_room_witnesses (
+      [room.id, signer.keyHash, signer.label || null, signer.tokenHash, signer.createdAt, signer.lastSeenAt || null, signer.deliveredAt || null],
+    );
+  }
+  await client.query(`delete from cm_relay_room_witnesses where room_id = $1`, [room.id]);
+  for (const witness of room.witnesses) {
+    await client.query(
+      `insert into cm_relay_room_witnesses (
           room_id, witness_id, source, signer_key_hash_claim, matched_signer_key_hash,
           witness_cbor, wallet_name, signer_name, signed_at, received_at, match_status
         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11)`,
-        [
-          room.id,
-          witness.id,
-          witness.source,
-          witness.signerKeyHashClaim || null,
-          witness.matchedSignerKeyHash || null,
-          encryptWitness(witness.witnessCbor),
-          witness.walletName || null,
-          witness.signerName || null,
-          witness.signedAt,
-          witness.receivedAt,
-          witness.matchStatus,
-        ],
-      );
-    }
+      [
+        room.id,
+        witness.id,
+        witness.source,
+        witness.signerKeyHashClaim || null,
+        witness.matchedSignerKeyHash || null,
+        encryptWitness(witness.witnessCbor),
+        witness.walletName || null,
+        witness.signerName || null,
+        witness.signedAt,
+        witness.receivedAt,
+        witness.matchStatus,
+      ],
+    );
+  }
+}
+
+export async function writeRelayRoomPostgres(room: RelayRoomRecord) {
+  await withTransaction(async (client) => {
+    await writeRelayRoomWithClient(client, room);
+  });
+}
+
+export async function replaceRelayRoomPostgres(
+  roomId: string,
+  updater: (current: RelayRoomRecord) => RelayRoomRecord | Promise<RelayRoomRecord>,
+) {
+  return withTransaction(async (client) => {
+    const roomResult = await client.query<RelayRoomRow>(`select * from cm_relay_rooms where id = $1 for update`, [roomId]);
+    const room = roomResult.rows[0];
+    if (!room) throw new Error(`Relay room ${roomId} was not found.`);
+    const { signersByRoom, witnessesByRoom } = await loadRelated(client, [roomId]);
+    const current = roomFromRows(room, signersByRoom.get(roomId) || [], witnessesByRoom.get(roomId) || []);
+    const next = await updater(current);
+    if (next.id !== roomId) throw new Error("Relay room updater cannot change room id.");
+    await writeRelayRoomWithClient(client, next);
+    return next;
   });
 }
 

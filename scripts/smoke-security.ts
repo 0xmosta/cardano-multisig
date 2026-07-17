@@ -5,6 +5,7 @@ import { stableJsonStringify } from "../app/lib/utils.ts";
 import { sanitizeAccountSnapshotInput } from "../app/lib/server/account-state-validation.ts";
 import { decryptSensitiveJson, encryptSensitiveJson } from "../app/lib/server/sensitive-data.ts";
 import { enforceRateLimit, RateLimitError } from "../app/lib/server/rate-limit.ts";
+import { fetchSubmittedTransactionCbor } from "../app/lib/server/cardano-submit.ts";
 
 process.env.CARDANO_MULTISIG_SESSION_SECRET ||= "security-smoke-session-secret-at-least-32-bytes";
 
@@ -115,6 +116,23 @@ const olderDraft = { ...normal.transactions[0], id: "tx-older", createdAt: "2026
 const newerDraft = { ...normal.transactions[0], id: "tx-newer", createdAt: "2026-07-15T10:00:00.000Z" } as TxDraft;
 assert.deepEqual(sortTransactionDraftsNewestFirst([olderDraft, newerDraft]).map((draft) => draft.id), ["tx-newer", "tx-older"]);
 
+const originalFetch = globalThis.fetch;
+const originalBlockfrostUrl = process.env.BLOCKFROST_URL;
+const originalBlockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
+process.env.BLOCKFROST_URL = "https://cardano-preprod.blockfrost.io/api/v0";
+process.env.BLOCKFROST_PROJECT_ID = "security-smoke-project";
+globalThis.fetch = async (input, init) => {
+  assert.equal(String(input), `https://cardano-preprod.blockfrost.io/api/v0/txs/${"ab".repeat(32)}/cbor`);
+  assert.equal(new Headers(init?.headers).get("project_id"), "security-smoke-project");
+  return Response.json({ cbor: "84a0" });
+};
+assert.equal(await fetchSubmittedTransactionCbor("ab".repeat(32), "preprod"), "84a0");
+globalThis.fetch = originalFetch;
+if (originalBlockfrostUrl === undefined) delete process.env.BLOCKFROST_URL;
+else process.env.BLOCKFROST_URL = originalBlockfrostUrl;
+if (originalBlockfrostProjectId === undefined) delete process.env.BLOCKFROST_PROJECT_ID;
+else process.env.BLOCKFROST_PROJECT_ID = originalBlockfrostProjectId;
+
 const request = new Request("http://localhost/security", { headers: { "x-forwarded-for": "192.0.2.1" } });
 await enforceRateLimit(request, { scope: "security-smoke", limit: 2, windowMs: 60_000 });
 await enforceRateLimit(request, { scope: "security-smoke", limit: 2, windowMs: 60_000 });
@@ -123,4 +141,4 @@ await assert.rejects(
   RateLimitError,
 );
 
-console.log(JSON.stringify({ ok: true, strictSnapshotValidation: true, archivedStatePreserved: true, sensitiveEnvelopeRoundTrip: true, relayProgressPersistenceSafe: true, rateLimitEnforced: true }));
+console.log(JSON.stringify({ ok: true, strictSnapshotValidation: true, archivedStatePreserved: true, sensitiveEnvelopeRoundTrip: true, relayProgressPersistenceSafe: true, onchainCborLookupVerified: true, rateLimitEnforced: true }));

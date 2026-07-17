@@ -9,7 +9,7 @@ import {
   type RelayRoomWitnessRecord,
   relayInviteUrl,
 } from "../lib/relay-room";
-import { submitErrorMessage, submitSignedTransaction } from "../lib/server/cardano-submit";
+import { fetchSubmittedTransactionCbor, submitErrorMessage, submitSignedTransaction } from "../lib/server/cardano-submit";
 import { buildSignedRelayTransactionCbor } from "../lib/server/relay-submit";
 import type { RelayRoomRecord } from "../lib/server/relay-room-store";
 import { verifiedWitnessKeyHashes } from "../lib/witness-verification";
@@ -247,6 +247,62 @@ async function autoSubmitRelayRoomIfReady(room: RelayRoomRecord) {
   return { room: nextRoom, submitError };
 }
 
+async function repairSubmittedRelayRoomWitnesses(room: RelayRoomRecord) {
+  if (room.status !== "submitted" || !room.submission?.txHash) return room;
+  const { relayProgress, replaceRelayRoomFile } = await relayStore();
+  const progress = relayProgress(room);
+  if (progress.matchedCount >= progress.requiredSignatures) return room;
+
+  try {
+    const submittedTxCbor = await fetchSubmittedTransactionCbor(room.submission.txHash, room.network);
+    if (!submittedTxCbor) return room;
+    const submittedTx = CSL.Transaction.from_hex(submittedTxCbor);
+    const unsignedTx = CSL.Transaction.from_hex(room.tx.unsignedTxCbor);
+    if (Buffer.from(submittedTx.body().to_bytes()).toString("hex") !== Buffer.from(unsignedTx.body().to_bytes()).toString("hex")) {
+      return room;
+    }
+
+    const witnessCbor = submittedTx.witness_set().to_hex();
+    const expected = new Set(room.tx.signerKeyHashes.map(normalizeKeyHash));
+    const verified = verifiedWitnessKeyHashes(room.tx.unsignedTxCbor, witnessCbor).filter((keyHash) => expected.has(normalizeKeyHash(keyHash)));
+    if (!verified.length) return room;
+
+    return replaceRelayRoomFile(room, (current) => {
+      if (current.status !== "submitted" || current.submission?.txHash !== room.submission?.txHash) return current;
+      const existing = new Set(
+        current.witnesses
+          .filter((witness) => witness.matchStatus === "matched" && witness.matchedSignerKeyHash)
+          .map((witness) => normalizeKeyHash(witness.matchedSignerKeyHash!)),
+      );
+      const missing = verified.map(normalizeKeyHash).filter((keyHash) => !existing.has(keyHash));
+      if (!missing.length) return current;
+      const recoveredAt = current.submission?.submittedAt || new Date().toISOString();
+      return {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        witnesses: [
+          ...current.witnesses,
+          ...missing.map((keyHash) => ({
+            id: `onchain-${keyHash}`,
+            source: "manual" as const,
+            signerKeyHashClaim: keyHash,
+            matchedSignerKeyHash: keyHash,
+            witnessCbor,
+            signerName: current.signers.find((signer) => signer.keyHash === keyHash)?.label || keyHash,
+            walletName: "On-chain transaction",
+            signedAt: recoveredAt,
+            receivedAt: recoveredAt,
+            matchStatus: "matched" as const,
+          })),
+        ],
+      };
+    });
+  } catch (error) {
+    console.warn(`could not reconcile submitted relay room ${room.id}: ${submitErrorMessage(error)}`);
+    return room;
+  }
+}
+
 async function handleCreate(request: Request, raw: Record<string, unknown>, ownerSubject: string) {
   const { assertRelayCreatePayload, createRelayRoom } = await relayStore();
   const payload = assertRelayCreatePayload(raw as unknown as RelayRoomCreateRequest);
@@ -307,17 +363,18 @@ async function handleSession(raw: Record<string, unknown>) {
   });
   const synced = await syncEquivalentRelayRoomWitnesses(current);
   const autoSubmitted = await autoSubmitRelayRoomIfReady(synced);
+  const repaired = await repairSubmittedRelayRoomWitnesses(autoSubmitted.room);
 
   if (session.role === "coordinator") {
-    return Response.json({ ok: true, role: "coordinator", room: coordinatorRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
+    return Response.json({ ok: true, role: "coordinator", room: coordinatorRoomView(repaired), autoSubmitError: autoSubmitted.submitError || undefined });
   }
   if (session.role === "shared-signer") {
-    return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(autoSubmitted.room), autoSubmitError: autoSubmitted.submitError || undefined });
+    return Response.json({ ok: true, role: "signer", room: sharedSignerRoomView(repaired), autoSubmitError: autoSubmitted.submitError || undefined });
   }
 
-  const signer = autoSubmitted.room.signers.find((item) => item.keyHash === session.signer.keyHash);
+  const signer = repaired.signers.find((item) => item.keyHash === session.signer.keyHash);
   if (!signer) throw new Error("Relay signer is no longer available for this room.");
-  return Response.json({ ok: true, role: "signer", room: signerRoomView(autoSubmitted.room, signer), autoSubmitError: autoSubmitted.submitError || undefined });
+  return Response.json({ ok: true, role: "signer", room: signerRoomView(repaired, signer), autoSubmitError: autoSubmitted.submitError || undefined });
 }
 
 async function handleSign(raw: Record<string, unknown>) {
@@ -432,7 +489,8 @@ async function handleView(raw: Record<string, unknown>) {
   const { publicRelayRoomView, readRelayRoom } = await relayStore();
   const room = await readRelayRoom(roomId);
   await configuredNetworkGuard(room.network);
-  return Response.json({ ok: true, role: "viewer", room: publicRelayRoomView(room) });
+  const repaired = await repairSubmittedRelayRoomWitnesses(room);
+  return Response.json({ ok: true, role: "viewer", room: publicRelayRoomView(repaired) });
 }
 
 export async function action({ request }: { request: Request }) {

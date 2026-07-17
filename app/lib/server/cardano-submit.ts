@@ -56,6 +56,30 @@ function getBlockfrostConfig() {
   return { network, url, projectId };
 }
 
+export async function fetchSubmittedTransactionCbor(txHash: string, requestedNetwork: string) {
+  const network = normalizeSubmitNetwork(requestedNetwork);
+  const blockfrost = getBlockfrostConfig();
+  if (network !== blockfrost.network) {
+    throw new Error(`Transaction targets ${network}, but the configured Blockfrost backend is ${blockfrost.network}.`);
+  }
+  if (!blockfrost.projectId.trim()) return null;
+  const normalizedTxHash = txHash.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalizedTxHash)) throw new Error("Submitted transaction hash is invalid.");
+
+  const response = await fetch(`${blockfrost.url}/txs/${normalizedTxHash}/cbor`, {
+    headers: { accept: "application/json", project_id: blockfrost.projectId },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Blockfrost transaction lookup failed (${response.status}).`);
+  const body = (await response.json()) as { cbor?: unknown };
+  const cbor = typeof body.cbor === "string" ? body.cbor.trim().toLowerCase() : "";
+  if (!cbor || cbor.length > 500_000 || cbor.length % 2 !== 0 || !/^[0-9a-f]+$/.test(cbor)) {
+    throw new Error("Blockfrost returned invalid transaction CBOR.");
+  }
+  return cbor;
+}
+
 function submitUrl() {
   return (
     process.env.CARDANO_SUBMIT_URL ||

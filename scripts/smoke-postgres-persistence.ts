@@ -9,6 +9,7 @@ import { createIdentity, createSession, listAccountSessions, loadAccountSnapshot
 import { query } from "../app/lib/server/postgres.ts";
 import { savePushSubscription } from "../app/lib/server/push-notifications.ts";
 import { coordinatorRoomView, createRelayRoom, readRelayRoom, resolveRelayTokenSession, writeRelayRoom } from "../app/lib/server/relay-room-store.ts";
+import { replaceRelayRoomPostgres } from "../app/lib/server/relay-room-postgres.ts";
 import { action as accountStateAction } from "../app/routes/api.account.state.ts";
 
 const execFile = promisify(execFileCallback);
@@ -332,6 +333,52 @@ async function main() {
   const reloadedRoom = await readRelayRoom(relayRoom.room.id);
   assert.equal(reloadedRoom.submission?.txHash, "b4".repeat(32));
 
+  const concurrentRoom = await createRelayRoom({
+    network: "preprod",
+    ownerSubject: session.subject,
+    tx: {
+      draftId: `concurrent-${txId}`,
+      walletId,
+      walletName: "QA wallet",
+      title: "Concurrent relay signing",
+      note: "postgres locking smoke",
+      recipient: "addr_test1vr9dummy000000000000000000000000000000000000000000000",
+      lovelace: "1000000",
+      assets: [],
+      unsignedTxCbor: "84a40081825820deadbeef",
+      requiredSignatures: 4,
+      signerKeyHashes: ["31".repeat(28), "32".repeat(28), "33".repeat(28), "34".repeat(28)],
+    },
+    signers: ["31", "32", "33", "34"].map((prefix, index) => ({ keyHash: prefix.repeat(28), label: `Concurrent signer ${index + 1}` })),
+  });
+  await Promise.all(
+    concurrentRoom.room.tx.signerKeyHashes.map((keyHash, index) =>
+      replaceRelayRoomPostgres(concurrentRoom.room.id, async (current) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const receivedAt = nowIso();
+        return {
+          ...current,
+          updatedAt: receivedAt,
+          witnesses: [
+            ...current.witnesses,
+            {
+              id: `concurrent-witness-${index}`,
+              source: "relay" as const,
+              signerKeyHashClaim: keyHash,
+              matchedSignerKeyHash: keyHash,
+              witnessCbor: `84a10081825820${index.toString(16).padStart(2, "0")}`,
+              signerName: `Concurrent signer ${index + 1}`,
+              signedAt: receivedAt,
+              receivedAt,
+              matchStatus: "matched" as const,
+            },
+          ],
+        };
+      }),
+    ),
+  );
+  assert.equal((await readRelayRoom(concurrentRoom.room.id)).witnesses.length, 4, "concurrent relay signatures must not overwrite each other");
+
   const importFixture = await writeImportFixture();
   await execFile("node", [path.resolve("scripts/import-file-store.mjs")], {
     cwd: path.resolve("."),
@@ -382,6 +429,7 @@ async function main() {
         identicalSnapshotWriteSkipped: true,
         importedTransactionEncrypted: true,
         relayCapabilitiesEncrypted: true,
+        concurrentRelaySignaturesPreserved: true,
         mixedNetworkImportRejected: true,
         relayRoomId: relayRoom.room.id,
         submissionTxHash: reloadedRoom.submission?.txHash,

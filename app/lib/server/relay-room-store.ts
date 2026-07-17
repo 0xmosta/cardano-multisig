@@ -26,6 +26,7 @@ import {
   listRelayRoomsPostgres,
   readRelayRoomPostgres,
   removeRelayRoomPostgres,
+  replaceRelayRoomPostgres,
   resolveRelayTokenSessionPostgres,
   writeRelayRoomPostgres,
 } from "./relay-room-postgres";
@@ -645,6 +646,9 @@ export function assertRelayCreatePayload(raw: unknown) {
 }
 
 export async function replaceRelayRoomFile(room: RelayRoomRecord, updater: (current: RelayRoomRecord) => RelayRoomRecord | Promise<RelayRoomRecord>) {
+  if (postgresEnabled()) {
+    return replaceRelayRoomPostgres(room.id, updater);
+  }
   return withRoomLock(room.id, async () => {
     const current = await readRelayRoom(room.id);
     const next = await updater(current);
@@ -670,12 +674,15 @@ export async function syncEquivalentRelayRoomWitnesses(sourceRoom: RelayRoomReco
       continue;
     }
 
-    const updated = await replaceRelayRoomFile(room, (current) => ({
-      ...current,
-      updatedAt: nowIso(),
-      signers: applyDeliveredAtFromWitnesses(current, witnesses),
-      witnesses,
-    }));
+    const updated = await replaceRelayRoomFile(room, (current) => {
+      const nextWitnesses = mergeRoomWitnesses([current, { ...current, witnesses }]);
+      return {
+        ...current,
+        updatedAt: nowIso(),
+        signers: applyDeliveredAtFromWitnesses(current, nextWitnesses),
+        witnesses: nextWitnesses,
+      };
+    });
     if (updated.id === sourceRoom.id) syncedSource = updated;
   }
 

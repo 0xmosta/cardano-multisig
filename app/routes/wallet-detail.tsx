@@ -483,6 +483,7 @@ export default function WalletDetail() {
   const pendingServerSaveKeyRef = useRef<string | null>(null);
   const txsRef = useRef<TxDraft[]>([]);
   const relaySyncInFlightRef = useRef(false);
+  const submissionInFlightRef = useRef(new Set<string>());
   const assetRequestIdRef = useRef(0);
   const previousPendingSignaturesRef = useRef(new Map<string, number>());
   const [signStatus, setSignStatus] = useState("");
@@ -498,6 +499,7 @@ export default function WalletDetail() {
   const [showArchivedTransactions, setShowArchivedTransactions] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingWallet, setDeletingWallet] = useState(false);
+  const [submittingTransactionId, setSubmittingTransactionId] = useState<string | null>(null);
 
   txsRef.current = txs;
 
@@ -900,6 +902,7 @@ export default function WalletDetail() {
   }
 
   async function submitTransaction(tx: TxDraft) {
+    if (submissionInFlightRef.current.has(tx.id)) return;
     if (!wallet) {
       setSignStatus("Wallet not loaded, so the signed transaction cannot be assembled yet.");
       return;
@@ -917,6 +920,8 @@ export default function WalletDetail() {
       return;
     }
 
+    submissionInFlightRef.current.add(tx.id);
+    setSubmittingTransactionId(tx.id);
     try {
       if (!account.authenticated || !account.session) {
         throw new Error("Sign in with a wallet before submitting a transaction.");
@@ -936,25 +941,26 @@ export default function WalletDetail() {
         throw new Error(body.error || "Could not submit transaction.");
       }
 
-      const next = txs.map((item) =>
-        item.id === tx.id
-          ? {
-              ...item,
-              txHash: String(body.txHash || ""),
-              status: "succeeded" as const,
-              failureReason: undefined,
-              relayRoom: item.relayRoom
-                ? {
-                    ...item.relayRoom,
-                    status: "submitted" as const,
-                    lastSyncAt: nowIso(),
-                  }
-                : item.relayRoom,
-              updatedAt: nowIso(),
-            }
-          : item,
+      setTxs((current) =>
+        current.map((item) =>
+          item.id === tx.id
+            ? {
+                ...item,
+                txHash: String(body.txHash || ""),
+                status: "succeeded" as const,
+                failureReason: undefined,
+                relayRoom: item.relayRoom
+                  ? {
+                      ...item.relayRoom,
+                      status: "submitted" as const,
+                      lastSyncAt: nowIso(),
+                    }
+                  : item.relayRoom,
+                updatedAt: nowIso(),
+              }
+            : item,
+        ),
       );
-      setTxs(next);
       let relayNote = "";
       if (tx.relayRoom?.coordinatorToken) {
         const relayResponse = await fetch("/api/cardano/relay-room", {
@@ -973,23 +979,41 @@ export default function WalletDetail() {
       });
     } catch (error) {
       const message = userFacingError(error, "We could not submit the transaction.");
-      const next = txs.map((item) =>
-        item.id === tx.id
-          ? {
-              ...item,
-              status: "failed" as const,
-              failureReason: message,
-              updatedAt: nowIso(),
-            }
-          : item,
+      setTxs((current) =>
+        current.map((item) =>
+          item.id === tx.id
+            ? {
+                ...item,
+                status: "failed" as const,
+                failureReason: message,
+                updatedAt: nowIso(),
+              }
+            : item,
+        ),
       );
-      setTxs(next);
       setSignStatus(message);
       toast.error("Submit failed", {
         description: message,
       });
+    } finally {
+      submissionInFlightRef.current.delete(tx.id);
+      setSubmittingTransactionId((current) => current === tx.id ? null : current);
     }
   }
+
+  useEffect(() => {
+    if (!wallet || !account.authenticated || !account.session || !providerStatus?.services.submit) return;
+    const ready = txs.find(
+      (tx) =>
+        tx.walletId === wallet.id &&
+        !tx.txHash &&
+        !tx.failureReason &&
+        txPhase(tx) === "ready" &&
+        !submissionInFlightRef.current.has(tx.id),
+    );
+    if (!ready) return;
+    void submitTransaction(ready);
+  }, [account.authenticated, account.session, providerStatus?.services.submit, txs, wallet?.id]);
 
   function importReturnedSignatures() {
     try {
@@ -1509,7 +1533,9 @@ export default function WalletDetail() {
                                         ? "Share the signer link with the remaining people. Their signatures will appear here automatically."
                                         : "Create a signer link and send it privately to the remaining people."
                                     : providerStatus?.services.submit
-                                      ? "All required signatures are present. Submission runs automatically."
+                                      ? submittingTransactionId === tx.id
+                                        ? "All required signatures are present. Submitting the transaction now…"
+                                        : "All required signatures are present. Submission runs automatically."
                                       : "All required signatures are present. Submission is not currently available."}
                               </div>
                           </div>
@@ -1517,8 +1543,14 @@ export default function WalletDetail() {
                           {phase === "ready" && providerStatus?.services.submit ? (
                             <Card>
                               <CardContent className="p-4">
-                                <div className="font-medium text-foreground">Ready to submit</div>
-                                <div className="mt-1 text-sm text-muted-foreground">All required signatures are present. Submission completes automatically; use Advanced recovery only if it does not finish.</div>
+                                <div className="font-medium text-foreground">
+                                  {submittingTransactionId === tx.id ? "Submitting transaction" : "Ready to submit"}
+                                </div>
+                                <div className="mt-1 text-sm text-muted-foreground">
+                                  {submittingTransactionId === tx.id
+                                    ? "The signed transaction is being sent to the configured Cardano provider."
+                                    : "All required signatures are present. Submission starts automatically; use Advanced recovery only to retry a failed attempt."}
+                                </div>
                               </CardContent>
                             </Card>
                           ) : null}
@@ -1599,8 +1631,8 @@ export default function WalletDetail() {
                               <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void copySignatures(tx)} disabled={!tx.signatures?.length}>
                                 <Copy className="size-4" /> Copy signature backup
                               </Button>
-                              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void submitTransaction(tx)} disabled={phase !== "ready" || !providerStatus?.services.submit}>
-                                <ShieldCheck className="size-4" /> Submit manually
+                              <Button className="h-auto min-h-10 w-full whitespace-normal px-3 py-2" variant="secondary" onClick={() => void submitTransaction(tx)} disabled={phase !== "ready" || !providerStatus?.services.submit || submittingTransactionId === tx.id}>
+                                <ShieldCheck className="size-4" /> {submittingTransactionId === tx.id ? "Submitting…" : "Submit manually"}
                               </Button>
                             </CollapsibleContent>
                           </Collapsible>

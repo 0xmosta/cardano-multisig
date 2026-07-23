@@ -1045,9 +1045,12 @@ export default function WalletDetail() {
     }
 
     const nextWallets = wallets.filter((item) => item.id !== wallet.id);
+    const nextStateKey = stateSnapshotKey(nextWallets, txs);
     const nextPreferences = accountState?.preferences.preferredWalletId === wallet.id
       ? { ...accountState.preferences, preferredWalletId: undefined }
       : undefined;
+    pendingServerSaveKeyRef.current = nextStateKey;
+    setWallets(nextWallets);
     setDeletingWallet(true);
     setSignStatus("");
     try {
@@ -1063,9 +1066,11 @@ export default function WalletDetail() {
       navigate("/wallets", { replace: true });
     } catch (error) {
       const message = userFacingError(error, "We could not delete this wallet.");
+      setWallets(wallets);
       setSignStatus(message);
       toast.error("Could not delete wallet", { description: message });
     } finally {
+      if (pendingServerSaveKeyRef.current === nextStateKey) pendingServerSaveKeyRef.current = null;
       setDeletingWallet(false);
     }
   }

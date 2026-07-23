@@ -1,4 +1,4 @@
-import { Link, useSearchParams, useParams } from "react-router";
+import { Link, useNavigate, useSearchParams, useParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -27,6 +27,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { DataTable } from "../components/ui/data-table";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -472,6 +473,7 @@ async function buildSignedTxCbor(wallet: Wallet, tx: TxDraft) {
 
 export default function WalletDetail() {
   const { walletId } = useParams();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { account, accountState, connected, providerStatus, providers, refreshServerState, saveServerState } = useAppShell();
 
@@ -494,6 +496,8 @@ export default function WalletDetail() {
   const [relaySync, setRelaySync] = useState<RelaySyncState>({ status: "idle" });
   const [expandedTransactions, setExpandedTransactions] = useState<Record<string, boolean>>({});
   const [showArchivedTransactions, setShowArchivedTransactions] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingWallet, setDeletingWallet] = useState(false);
 
   txsRef.current = txs;
 
@@ -1031,6 +1035,41 @@ export default function WalletDetail() {
     void refreshAssets({ ...wallet, name: label, handle: clean || undefined });
   }
 
+  async function deleteCurrentWallet() {
+    if (!wallet || deletingWallet) return;
+    if (allWalletTxs.length) {
+      toast.error("Wallet has saved transactions", {
+        description: "Remove its transaction drafts before deleting this wallet.",
+      });
+      return;
+    }
+
+    const nextWallets = wallets.filter((item) => item.id !== wallet.id);
+    const nextPreferences = accountState?.preferences.preferredWalletId === wallet.id
+      ? { ...accountState.preferences, preferredWalletId: undefined }
+      : undefined;
+    setDeletingWallet(true);
+    setSignStatus("");
+    try {
+      await saveServerState({
+        wallets: nextWallets,
+        transactions: txs,
+        ...(nextPreferences ? { preferences: nextPreferences } : {}),
+      });
+      setDeleteDialogOpen(false);
+      toast.success("Wallet deleted", {
+        description: `${wallet.name || wallet.id} was removed from your account.`,
+      });
+      navigate("/wallets", { replace: true });
+    } catch (error) {
+      const message = userFacingError(error, "We could not delete this wallet.");
+      setSignStatus(message);
+      toast.error("Could not delete wallet", { description: message });
+    } finally {
+      setDeletingWallet(false);
+    }
+  }
+
   async function copyAssetUnit(asset: AssetOption) {
     await navigator.clipboard.writeText(asset.unit);
     toast.success("Asset unit copied", {
@@ -1208,19 +1247,52 @@ export default function WalletDetail() {
               ) : null}
             </div>
           </div>
-          <div className="flex shrink-0 justify-end max-sm:w-full max-sm:justify-start">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 max-sm:w-full max-sm:justify-start">
             {isWatchOnly ? (
               <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">native script not imported</Badge>
             ) : (
-              <Button asChild className="max-sm:w-full">
+              <Button asChild className="max-sm:flex-1">
                 <Link to={`/wallets/${encodeURIComponent(wallet.id)}/transactions/new`}>
                   <Plus className="size-4" /> Create transaction
                 </Link>
               </Button>
             )}
+            <Button type="button" variant="destructive" className="max-sm:flex-1" onClick={() => setDeleteDialogOpen(true)}>
+              <Trash2 className="size-4" /> Delete wallet
+            </Button>
           </div>
         </div>
       </section>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={(open) => !deletingWallet && setDeleteDialogOpen(open)}>
+        <DialogContent className="max-w-lg" onClose={() => !deletingWallet && setDeleteDialogOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Delete this wallet?</DialogTitle>
+            <DialogDescription>
+              This permanently removes {wallet.name || wallet.id} from your synced account. The native script can be imported again later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            {allWalletTxs.length ? (
+              <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
+                This wallet has {allWalletTxs.length} saved transaction{allWalletTxs.length === 1 ? "" : "s"}. Remove those drafts before deleting the wallet.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-white/8 bg-black/20 p-3 text-sm text-zinc-400">
+                Wallet ID: <span className="break-all font-mono text-zinc-200">{wallet.id}</span>
+              </div>
+            )}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)} disabled={deletingWallet}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => void deleteCurrentWallet()} disabled={deletingWallet || allWalletTxs.length > 0}>
+                <Trash2 className="size-4" /> {deletingWallet ? "Deleting…" : "Delete wallet"}
+              </Button>
+            </div>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
 
       {connectWarning ? (
         <Card>
